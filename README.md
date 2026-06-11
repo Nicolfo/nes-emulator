@@ -6,11 +6,16 @@ A NES (Nintendo Entertainment System) emulator written in Rust, targeting mapper
 ## Running
 
 ```
-cargo run --release                  # loads "Super Mario Bros. (Japan, USA).nes"
-cargo run --release -- path\to\rom.nes
+cargo run --release                  # opens the home menu
+cargo run --release -- path\to\rom.nes   # skips the menu, boots the ROM directly
 ```
 
-## Controls
+The home menu offers **Load ROM** (native file picker), **Settings**, **Resume**
+(when a game is loaded) and **Quit**. Settings lets you rebind every controller
+button (select a row, press Enter, then press the new key) and change the window
+scale; everything is persisted to `nes-emulator-config.json`.
+
+## Default controls
 
 | NES button | Key |
 |---|---|
@@ -18,8 +23,10 @@ cargo run --release -- path\to\rom.nes
 | A | Z |
 | B | X |
 | Start | Enter |
-| Select | Right Shift or Tab |
-| Quit | Escape |
+| Select | Right Shift |
+| Back to menu | Escape |
+
+All bindings except Escape can be changed in Settings.
 
 ## Architecture
 
@@ -35,7 +42,11 @@ cargo run --release -- path\to\rom.nes
 - `src/mapper.rs` — `Mapper` trait + NROM implementation (extension point for more mappers).
 - `src/cartridge.rs` — iNES header parsing.
 - `src/controller.rs` — standard joypad strobe/shift register.
-- `src/main.rs` — winit 0.30 + pixels frontend, paced at the NTSC rate of 60.0988 FPS.
+- `src/main.rs` — winit 0.30 + pixels frontend, home/settings/running state machine,
+  paced at the NTSC rate of 60.0988 FPS while a game runs.
+- `src/menu.rs`, `src/font.rs` — NES-style menu UI rendered into the same 256x240
+  framebuffer (embedded 8x8 bitmap font, pixel-art icons).
+- `src/config.rs` — persisted settings (key bindings, window scale).
 
 Timing: NTSC, 1 CPU cycle = 3 PPU dots, interleaved at instruction granularity
 (89,342 dots/frame). The odd-frame dot skip and the $2002 NMI-suppression race are

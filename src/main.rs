@@ -1,3 +1,7 @@
+mod config;
+mod font;
+mod menu;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,20 +13,162 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use nes_emulator::controller::{
-    BTN_A, BTN_B, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_SELECT, BTN_START, BTN_UP,
-};
 use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
+
+use config::{BUTTON_MASKS, Config};
+use menu::{HomeAction, ROW_BACK, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
 
 // NTSC: 89342 PPU dots per frame at 5,369,318 dots/sec = 60.0988 FPS
 const FRAME_PERIOD: Duration = Duration::from_nanos(16_639_267);
 
+enum View {
+    Home { sel: usize },
+    Settings { sel: usize, waiting: bool },
+    Running,
+}
+
 struct App {
     window: Option<Arc<Window>>,
     pixels: Option<Pixels<'static>>,
-    nes: Nes,
+    nes: Option<Nes>,
+    view: View,
+    cfg: Config,
+    error: Option<String>,
     next_frame: Instant,
+}
+
+impl App {
+    fn redraw(&self) {
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    fn load_rom_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .add_filter("NES ROM", &["nes"])
+            .set_title("Load NES ROM")
+            .pick_file();
+        let Some(path) = picked else { return };
+        match std::fs::read(&path) {
+            Ok(rom) => match Nes::new(&rom) {
+                Ok(nes) => {
+                    self.nes = Some(nes);
+                    self.error = None;
+                    if let Some(w) = &self.window {
+                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("NES");
+                        w.set_title(&format!("NES Emulator - {name}"));
+                    }
+                    self.start_running();
+                }
+                Err(e) => self.error = Some(e),
+            },
+            Err(e) => self.error = Some(format!("READ FAILED: {e}")),
+        }
+    }
+
+    fn start_running(&mut self) {
+        self.view = View::Running;
+        self.next_frame = Instant::now();
+    }
+
+    fn apply_scale(&self) {
+        if let Some(w) = &self.window {
+            let _ = w.request_inner_size(LogicalSize::new(
+                (WIDTH as u32 * self.cfg.scale) as f64,
+                (HEIGHT as u32 * self.cfg.scale) as f64,
+            ));
+        }
+    }
+
+    fn home_key(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
+        let View::Home { sel } = &mut self.view else { return };
+        let items = home_items(self.nes.is_some());
+        match code {
+            KeyCode::ArrowUp => *sel = (*sel + items.len() - 1) % items.len(),
+            KeyCode::ArrowDown => *sel = (*sel + 1) % items.len(),
+            KeyCode::Enter | KeyCode::Space => {
+                self.error = None;
+                match items[*sel].action {
+                    HomeAction::Resume => self.start_running(),
+                    HomeAction::LoadRom => self.load_rom_dialog(),
+                    HomeAction::Settings => self.view = View::Settings { sel: 0, waiting: false },
+                    HomeAction::Quit => event_loop.exit(),
+                }
+            }
+            KeyCode::Escape => event_loop.exit(),
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    fn settings_key(&mut self, code: KeyCode) {
+        let View::Settings { sel, waiting } = &mut self.view else { return };
+
+        if *waiting {
+            // capture next key as the new binding (Escape cancels)
+            if code != KeyCode::Escape {
+                let row = *sel;
+                let old = self.cfg.keys[row];
+                // if the key is already bound elsewhere, swap to keep all buttons usable
+                if let Some(other) = self.cfg.keys.iter().position(|&k| k == code) {
+                    self.cfg.keys[other] = old;
+                }
+                self.cfg.keys[row] = code;
+                self.cfg.save();
+            }
+            *waiting = false;
+            self.redraw();
+            return;
+        }
+
+        match code {
+            KeyCode::ArrowUp => *sel = (*sel + SETTINGS_ROWS - 1) % SETTINGS_ROWS,
+            KeyCode::ArrowDown => *sel = (*sel + 1) % SETTINGS_ROWS,
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if *sel == ROW_SCALE => {
+                let delta = if code == KeyCode::ArrowLeft { -1i32 } else { 1 };
+                self.cfg.scale = (self.cfg.scale as i32 + delta).clamp(1, 5) as u32;
+                self.cfg.save();
+                self.apply_scale();
+            }
+            KeyCode::Enter | KeyCode::Space => match *sel {
+                0..=7 => *waiting = true,
+                ROW_SCALE => {
+                    self.cfg.scale = self.cfg.scale % 5 + 1;
+                    self.cfg.save();
+                    self.apply_scale();
+                }
+                ROW_RESET => {
+                    let scale = self.cfg.scale;
+                    self.cfg = Config { scale, ..Config::default() };
+                    self.cfg.save();
+                }
+                ROW_BACK => self.view = View::Home { sel: 0 },
+                _ => {}
+            },
+            KeyCode::Escape => self.view = View::Home { sel: 0 },
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    fn running_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        if repeat {
+            return;
+        }
+        if code == KeyCode::Escape && pressed {
+            self.view = View::Home { sel: 0 };
+            self.redraw();
+            return;
+        }
+        let Some(nes) = &mut self.nes else { return };
+        for (i, &k) in self.cfg.keys.iter().enumerate() {
+            if k == code {
+                nes.cpu.bus.controller1.set_button(BUTTON_MASKS[i], pressed);
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -32,7 +178,10 @@ impl ApplicationHandler for App {
         }
         let attrs = Window::default_attributes()
             .with_title("NES Emulator")
-            .with_inner_size(LogicalSize::new((WIDTH * 3) as f64, (HEIGHT * 3) as f64));
+            .with_inner_size(LogicalSize::new(
+                (WIDTH as u32 * self.cfg.scale) as f64,
+                (HEIGHT as u32 * self.cfg.scale) as f64,
+            ));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, window.clone());
@@ -41,6 +190,7 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.pixels = Some(pixels);
         self.next_frame = Instant::now();
+        self.redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -50,35 +200,37 @@ impl ApplicationHandler for App {
                 if let Some(pixels) = &mut self.pixels {
                     let _ = pixels.resize_surface(size.width.max(1), size.height.max(1));
                 }
+                self.redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.repeat {
-                    return;
-                }
+                let PhysicalKey::Code(code) = event.physical_key else { return };
                 let pressed = event.state.is_pressed();
-                let pad = &mut self.nes.cpu.bus.controller1;
-                match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Escape) if pressed => event_loop.exit(),
-                    PhysicalKey::Code(KeyCode::ArrowUp) => pad.set_button(BTN_UP, pressed),
-                    PhysicalKey::Code(KeyCode::ArrowDown) => pad.set_button(BTN_DOWN, pressed),
-                    PhysicalKey::Code(KeyCode::ArrowLeft) => pad.set_button(BTN_LEFT, pressed),
-                    PhysicalKey::Code(KeyCode::ArrowRight) => pad.set_button(BTN_RIGHT, pressed),
-                    PhysicalKey::Code(KeyCode::KeyZ) => pad.set_button(BTN_A, pressed),
-                    PhysicalKey::Code(KeyCode::KeyX) => pad.set_button(BTN_B, pressed),
-                    PhysicalKey::Code(KeyCode::Enter) => pad.set_button(BTN_START, pressed),
-                    PhysicalKey::Code(KeyCode::ShiftRight) | PhysicalKey::Code(KeyCode::Tab) => {
-                        pad.set_button(BTN_SELECT, pressed)
-                    }
+                match self.view {
+                    View::Running => self.running_key(code, pressed, event.repeat),
+                    View::Home { .. } if pressed => self.home_key(code, event_loop),
+                    View::Settings { .. } if pressed => self.settings_key(code),
                     _ => {}
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(pixels) = &mut self.pixels {
-                    pixels.frame_mut().copy_from_slice(self.nes.framebuffer());
-                    if let Err(e) = pixels.render() {
-                        eprintln!("render error: {e}");
-                        event_loop.exit();
+                let Some(pixels) = &mut self.pixels else { return };
+                let frame = pixels.frame_mut();
+                match &self.view {
+                    View::Running => {
+                        if let Some(nes) = &self.nes {
+                            frame.copy_from_slice(nes.framebuffer());
+                        }
                     }
+                    View::Home { sel } => {
+                        menu::render_home(frame, *sel, self.nes.is_some(), self.error.as_deref());
+                    }
+                    View::Settings { sel, waiting } => {
+                        menu::render_settings(frame, &self.cfg, *sel, *waiting);
+                    }
+                }
+                if let Err(e) = pixels.render() {
+                    eprintln!("render error: {e}");
+                    event_loop.exit();
                 }
             }
             _ => {}
@@ -86,11 +238,16 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !matches!(self.view, View::Running) || self.nes.is_none() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+        let nes = self.nes.as_mut().unwrap();
         let now = Instant::now();
         let mut ran = false;
         let mut catch_up = 0;
         while now >= self.next_frame && catch_up < 3 {
-            self.nes.run_frame();
+            nes.run_frame();
             self.next_frame += FRAME_PERIOD;
             ran = true;
             catch_up += 1;
@@ -99,33 +256,42 @@ impl ApplicationHandler for App {
             // fell too far behind (e.g. window drag); resync instead of spiraling
             self.next_frame = now + FRAME_PERIOD;
         }
-        if ran && let Some(w) = &self.window {
-            w.request_redraw();
+        if ran {
+            self.redraw();
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "Super Mario Bros. (Japan, USA).nes".to_string());
-    let rom = match std::fs::read(&path) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("failed to read ROM '{path}': {e}");
-            std::process::exit(1);
+    let cfg = Config::load();
+
+    // optional CLI arg still works: jump straight into a ROM
+    let mut nes = None;
+    let mut view = View::Home { sel: 0 };
+    let mut error = None;
+    if let Some(path) = std::env::args().nth(1) {
+        match std::fs::read(&path) {
+            Ok(rom) => match Nes::new(&rom) {
+                Ok(n) => {
+                    nes = Some(n);
+                    view = View::Running;
+                }
+                Err(e) => error = Some(e),
+            },
+            Err(e) => error = Some(format!("READ FAILED: {e}")),
         }
-    };
-    let nes = match Nes::new(&rom) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("failed to load ROM '{path}': {e}");
-            std::process::exit(1);
-        }
-    };
+    }
 
     let event_loop = EventLoop::new().expect("create event loop");
-    let mut app = App { window: None, pixels: None, nes, next_frame: Instant::now() };
+    let mut app = App {
+        window: None,
+        pixels: None,
+        nes,
+        view,
+        cfg,
+        error,
+        next_frame: Instant::now(),
+    };
     event_loop.run_app(&mut app).expect("event loop");
 }

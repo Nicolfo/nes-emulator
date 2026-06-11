@@ -360,6 +360,84 @@ impl Cpu {
         let _ = self.bus.read(a);
     }
 
+    // ---- unofficial instruction bodies ----
+
+    fn lax(&mut self, m: Mode) {
+        let a = self.addr(m, true);
+        let v = self.bus.read(a);
+        self.a = v;
+        self.x = v;
+        self.set_zn(v);
+    }
+
+    fn sax(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        self.bus.write(a, self.a & self.x);
+    }
+
+    fn dcp(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a).wrapping_sub(1);
+        self.bus.write(a, v);
+        self.set_flag(C, self.a >= v);
+        self.set_zn(self.a.wrapping_sub(v));
+    }
+
+    fn isc(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a).wrapping_add(1);
+        self.bus.write(a, v);
+        self.adc_val(v ^ 0xFF);
+    }
+
+    fn slo(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a);
+        let r = self.asl_val(v);
+        self.bus.write(a, r);
+        self.a |= r;
+        self.set_zn(self.a);
+    }
+
+    fn rla(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a);
+        let r = self.rol_val(v);
+        self.bus.write(a, r);
+        self.a &= r;
+        self.set_zn(self.a);
+    }
+
+    fn sre(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a);
+        let r = self.lsr_val(v);
+        self.bus.write(a, r);
+        self.a ^= r;
+        self.set_zn(self.a);
+    }
+
+    fn rra(&mut self, m: Mode) {
+        let a = self.addr(m, false);
+        let v = self.bus.read(a);
+        let r = self.ror_val(v);
+        self.bus.write(a, r);
+        self.adc_val(r);
+    }
+
+    // SHA/SHX/SHY/TAS: store val & (high byte of base + 1); on page cross the
+    // corrupted value also replaces the high byte of the effective address
+    fn sh_write(&mut self, base: u16, index: u8, val: u8) {
+        let target = base.wrapping_add(index as u16);
+        let v = val & ((base >> 8) as u8).wrapping_add(1);
+        let addr = if (base & 0xFF00) != (target & 0xFF00) {
+            ((v as u16) << 8) | (target & 0x00FF)
+        } else {
+            target
+        };
+        self.bus.write(addr, v);
+    }
+
     fn exec(&mut self, op: u8) {
         match op {
             // LDA
@@ -612,7 +690,150 @@ impl Cpu {
             0x14 | 0x34 | 0x54 | 0x74 | 0xD4 | 0xF4 => self.nop_read(Mode::ZpX, false),
             0x0C => self.nop_read(Mode::Abs, false),
             0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => self.nop_read(Mode::AbsX, true),
-            _ => panic!("unknown opcode {:02X} at {:04X}", op, self.pc.wrapping_sub(1)),
+            // LAX
+            0xA7 => self.lax(Mode::Zp),
+            0xB7 => self.lax(Mode::ZpY),
+            0xAF => self.lax(Mode::Abs),
+            0xBF => self.lax(Mode::AbsY),
+            0xA3 => self.lax(Mode::IndX),
+            0xB3 => self.lax(Mode::IndY),
+            // SAX
+            0x87 => self.sax(Mode::Zp),
+            0x97 => self.sax(Mode::ZpY),
+            0x8F => self.sax(Mode::Abs),
+            0x83 => self.sax(Mode::IndX),
+            // DCP (DEC + CMP)
+            0xC7 => self.dcp(Mode::Zp),
+            0xD7 => self.dcp(Mode::ZpX),
+            0xCF => self.dcp(Mode::Abs),
+            0xDF => self.dcp(Mode::AbsX),
+            0xDB => self.dcp(Mode::AbsY),
+            0xC3 => self.dcp(Mode::IndX),
+            0xD3 => self.dcp(Mode::IndY),
+            // ISC (INC + SBC)
+            0xE7 => self.isc(Mode::Zp),
+            0xF7 => self.isc(Mode::ZpX),
+            0xEF => self.isc(Mode::Abs),
+            0xFF => self.isc(Mode::AbsX),
+            0xFB => self.isc(Mode::AbsY),
+            0xE3 => self.isc(Mode::IndX),
+            0xF3 => self.isc(Mode::IndY),
+            // SLO (ASL + ORA)
+            0x07 => self.slo(Mode::Zp),
+            0x17 => self.slo(Mode::ZpX),
+            0x0F => self.slo(Mode::Abs),
+            0x1F => self.slo(Mode::AbsX),
+            0x1B => self.slo(Mode::AbsY),
+            0x03 => self.slo(Mode::IndX),
+            0x13 => self.slo(Mode::IndY),
+            // RLA (ROL + AND)
+            0x27 => self.rla(Mode::Zp),
+            0x37 => self.rla(Mode::ZpX),
+            0x2F => self.rla(Mode::Abs),
+            0x3F => self.rla(Mode::AbsX),
+            0x3B => self.rla(Mode::AbsY),
+            0x23 => self.rla(Mode::IndX),
+            0x33 => self.rla(Mode::IndY),
+            // SRE (LSR + EOR)
+            0x47 => self.sre(Mode::Zp),
+            0x57 => self.sre(Mode::ZpX),
+            0x4F => self.sre(Mode::Abs),
+            0x5F => self.sre(Mode::AbsX),
+            0x5B => self.sre(Mode::AbsY),
+            0x43 => self.sre(Mode::IndX),
+            0x53 => self.sre(Mode::IndY),
+            // RRA (ROR + ADC)
+            0x67 => self.rra(Mode::Zp),
+            0x77 => self.rra(Mode::ZpX),
+            0x6F => self.rra(Mode::Abs),
+            0x7F => self.rra(Mode::AbsX),
+            0x7B => self.rra(Mode::AbsY),
+            0x63 => self.rra(Mode::IndX),
+            0x73 => self.rra(Mode::IndY),
+            // ANC: AND imm, then C = bit 7
+            0x0B | 0x2B => {
+                let v = self.fetch8();
+                self.a &= v;
+                self.set_zn(self.a);
+                self.set_flag(C, self.a & 0x80 != 0);
+            }
+            // ALR: AND imm, then LSR A
+            0x4B => {
+                let v = self.fetch8();
+                self.a &= v;
+                let r = self.lsr_val(self.a);
+                self.a = r;
+            }
+            // ARR: AND imm, ROR A; C = bit 6, V = bit 6 ^ bit 5
+            0x6B => {
+                let v = self.fetch8();
+                self.a &= v;
+                self.a = (self.a >> 1) | ((self.p & C) << 7);
+                self.set_zn(self.a);
+                self.set_flag(C, self.a & 0x40 != 0);
+                self.set_flag(V, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
+            }
+            // AXS (SBX): X = (A & X) - imm, C set like CMP
+            0xCB => {
+                let v = self.fetch8();
+                let t = self.a & self.x;
+                self.set_flag(C, t >= v);
+                self.x = t.wrapping_sub(v);
+                self.set_zn(self.x);
+            }
+            // XAA (ANE), unstable: A = (A | magic) & X & imm
+            0x8B => {
+                let v = self.fetch8();
+                self.a = (self.a | 0xEE) & self.x & v;
+                self.set_zn(self.a);
+            }
+            // LXA (LAX imm), unstable: A = X = (A | magic) & imm
+            0xAB => {
+                let v = self.fetch8();
+                let r = (self.a | 0xEE) & v;
+                self.a = r;
+                self.x = r;
+                self.set_zn(r);
+            }
+            // SHA / SHX / SHY / TAS
+            0x9F => {
+                let base = self.fetch16();
+                self.sh_write(base, self.y, self.a & self.x);
+            }
+            0x93 => {
+                let zp = self.fetch8();
+                let lo = self.bus.read(zp as u16) as u16;
+                let hi = self.bus.read(zp.wrapping_add(1) as u16) as u16;
+                let base = (hi << 8) | lo;
+                self.sh_write(base, self.y, self.a & self.x);
+            }
+            0x9E => {
+                let base = self.fetch16();
+                self.sh_write(base, self.y, self.x);
+            }
+            0x9C => {
+                let base = self.fetch16();
+                self.sh_write(base, self.x, self.y);
+            }
+            0x9B => {
+                let base = self.fetch16();
+                self.sp = self.a & self.x;
+                self.sh_write(base, self.y, self.sp);
+            }
+            // LAS: A = X = SP = mem & SP
+            0xBB => {
+                let a = self.addr(Mode::AbsY, true);
+                let v = self.bus.read(a) & self.sp;
+                self.a = v;
+                self.x = v;
+                self.sp = v;
+                self.set_zn(v);
+            }
+            // KIL / JAM: halt the CPU by looping on the same opcode
+            0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2
+            | 0xF2 => {
+                self.pc = self.pc.wrapping_sub(1);
+            }
         }
     }
 }
