@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lints:
+    name: Lints (Fmt & Clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libasound2-dev \
+            libgtk-3-dev \
+            libudev-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libwayland-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  test-and-build:
+    name: Test and Build (${{ matrix.os }})
+    needs: lints
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: nes-emulator-linux-x64
+            binary_name: nes-emulator
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: nes-emulator-windows-x64
+            binary_name: nes-emulator.exe
+            archive_ext: zip
+          - os: macos-latest
+            target: universal-apple-darwin
+            artifact_name: nes-emulator-macos-universal
+            binary_name: nes-emulator
+            archive_ext: zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux Only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libasound2-dev \
+            libgtk-3-dev \
+            libudev-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libwayland-dev
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target != 'universal-apple-darwin' && matrix.target || 'x86_64-apple-darwin,aarch64-apple-darwin' }}
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Run Tests
+        run: cargo test --verbose
+
+      - name: Build Release (Linux / Windows)
+        if: matrix.target != 'universal-apple-darwin'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build Release (macOS Universal)
+        if: matrix.target == 'universal-apple-darwin'
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          mkdir -p target/release
+          lipo -create \
+            -output target/release/nes-emulator \
+            target/x86_64-apple-darwin/release/nes-emulator \
+            target/aarch64-apple-darwin/release/nes-emulator
+
+      - name: Package Artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p ${{ matrix.artifact_name }}
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
+          cp README.md ${{ matrix.artifact_name }}/
+          tar -czf ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+
+      - name: Package Artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ${{ matrix.artifact_name }}
+          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary_name }}" -Destination "${{ matrix.artifact_name }}\"
+          Copy-Item "README.md" -Destination "${{ matrix.artifact_name }}\"
+          Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.artifact_name }}.${{ matrix.archive_ext }}"
+
+      - name: Package Artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p ${{ matrix.artifact_name }}
+          cp target/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
+          cp README.md ${{ matrix.artifact_name }}/
+          zip -r ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
+          if-no-files-found: error
