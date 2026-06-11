@@ -295,6 +295,9 @@ struct Dmc {
     silence: bool,
     buffer: Option<u8>,
     fetch_pending: bool,
+    // The next DMA is a "load" (triggered by a $4015 write), which asserts
+    // RDY later than a reload DMA.
+    load_dma: bool,
     irq: bool,
 }
 
@@ -315,6 +318,7 @@ impl Dmc {
             silence: true,
             buffer: None,
             fetch_pending: false,
+            load_dma: false,
             irq: false,
         }
     }
@@ -436,6 +440,8 @@ pub struct Apu {
     pending_mode5: bool,
     irq_inhibit: bool,
     frame_irq: bool,
+    // $4015 reads clear the frame IRQ flag, but only on the next "get" cycle.
+    frame_irq_clear_pending: bool,
     frame_reset_delay: u8,
 
     pulse_table: [f32; 31],
@@ -474,6 +480,7 @@ impl Apu {
             pending_mode5: false,
             irq_inhibit: false,
             frame_irq: false,
+            frame_irq_clear_pending: false,
             frame_reset_delay: 0,
             pulse_table,
             tnd_table,
@@ -505,9 +512,11 @@ impl Apu {
         std::mem::take(&mut self.samples)
     }
 
-    /// Frame IRQ and DMC IRQ are level-triggered.
+    /// Frame IRQ and DMC IRQ are level-triggered. The frame flag only pulls
+    /// the IRQ line when the inhibit bit is clear (the flag itself can be
+    /// transiently set even when inhibited).
     pub fn irq(&self) -> bool {
-        self.frame_irq || self.dmc.irq
+        (self.frame_irq && !self.irq_inhibit) || self.dmc.irq
     }
 
     pub fn read_status(&mut self) -> u8 {
@@ -533,8 +542,9 @@ impl Apu {
         if self.dmc.irq {
             v |= 0x80;
         }
-        // reading $4015 clears the frame IRQ flag (but not the DMC IRQ)
-        self.frame_irq = false;
+        // reading $4015 clears the frame IRQ flag (but not the DMC IRQ);
+        // the clear takes effect on the next put-to-get transition
+        self.frame_irq_clear_pending = true;
         v
     }
 
@@ -634,6 +644,7 @@ impl Apu {
                 if v & 0x10 != 0 {
                     if self.dmc.bytes_remaining == 0 {
                         self.dmc.restart();
+                        self.dmc.load_dma = true;
                     }
                 } else {
                     self.dmc.bytes_remaining = 0;
@@ -652,10 +663,15 @@ impl Apu {
         }
     }
 
-    /// Advance one CPU cycle. Returns `Some(addr)` when the DMC DMA unit
-    /// needs a sample byte fetched from memory (deliver it via `dmc_supply`).
-    pub fn tick(&mut self) -> Option<u16> {
+    /// Advance one CPU cycle. Returns `Some((addr, is_load))` when the DMC
+    /// DMA unit needs a sample byte fetched (deliver it via `dmc_supply`).
+    pub fn tick(&mut self) -> Option<(u16, bool)> {
         self.cycle += 1;
+
+        if self.frame_irq_clear_pending && self.cycle & 1 == 1 {
+            self.frame_irq = false;
+            self.frame_irq_clear_pending = false;
+        }
 
         if self.frame_reset_delay > 0 {
             self.frame_reset_delay -= 1;
@@ -683,7 +699,7 @@ impl Apu {
         let mut fetch = None;
         if self.dmc.buffer.is_none() && self.dmc.bytes_remaining > 0 && !self.dmc.fetch_pending {
             self.dmc.fetch_pending = true;
-            fetch = Some(self.dmc.current_addr);
+            fetch = Some((self.dmc.current_addr, std::mem::take(&mut self.dmc.load_dma)));
         }
 
         // boxcar decimation to the output rate, then the analog filter chain
@@ -705,6 +721,11 @@ impl Apu {
         self.dmc.supply(v);
     }
 
+    /// A $4015 write disabling the DMC aborts a DMA that has not fetched yet.
+    pub fn dmc_abort_fetch(&mut self) {
+        self.dmc.fetch_pending = false;
+    }
+
     fn mix(&self) -> f32 {
         let p = (self.pulse1.output() + self.pulse2.output()) as usize;
         let tnd = 3 * self.triangle.output() as usize
@@ -713,9 +734,15 @@ impl Apu {
         self.pulse_table[p] + self.tnd_table[tnd]
     }
 
-    fn set_frame_irq(&mut self) {
-        if !self.irq_inhibit {
+    /// The flag is driven on cycles 29828-29830 after the frame counter
+    /// reset. Even with IRQ inhibit set, the first two cycles still set the
+    /// readable flag; only the final one respects the inhibit bit (and with
+    /// inhibit set it stops driving the flag, dropping it back to 0).
+    fn set_frame_irq(&mut self, last: bool) {
+        if !last {
             self.frame_irq = true;
+        } else {
+            self.frame_irq = !self.irq_inhibit;
         }
     }
 
@@ -729,14 +756,14 @@ impl Apu {
                     self.clock_half();
                 }
                 22371 => self.clock_quarter(),
-                29828 => self.set_frame_irq(),
+                29828 => self.set_frame_irq(false),
                 29829 => {
                     self.clock_quarter();
                     self.clock_half();
-                    self.set_frame_irq();
+                    self.set_frame_irq(false);
                 }
                 29830 => {
-                    self.set_frame_irq();
+                    self.set_frame_irq(true);
                     self.frame_cycle = 0;
                 }
                 _ => {}
@@ -800,8 +827,9 @@ mod tests {
         run(&mut apu, 1); // flag window starts at CPU cycle 29828
         assert!(apu.irq(), "IRQ at sequence end");
         run(&mut apu, 3); // get past the 29828-29830 window where the flag re-sets
-        // reading $4015 reports and clears the flag
+        // reading $4015 reports the flag; the clear lands on the next get cycle
         assert_eq!(apu.read_status() & 0x40, 0x40);
+        run(&mut apu, 2);
         assert!(!apu.irq());
     }
 
@@ -867,7 +895,7 @@ mod tests {
         apu.write(0x4015, 0x10);
         let mut fetched = 0;
         for _ in 0..10_000 {
-            if let Some(addr) = apu.tick() {
+            if let Some((addr, _is_load)) = apu.tick() {
                 assert_eq!(addr, 0xC000);
                 apu.dmc_supply(0xFF);
                 fetched += 1;

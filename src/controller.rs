@@ -16,8 +16,14 @@ pub struct Controller {
 }
 
 impl Controller {
+    /// Writes only set the strobe line level; the shift register reloads on
+    /// "put" CPU cycles while the line is high (see `clock_put_cycle`).
     pub fn write(&mut self, val: u8) {
         self.strobe = val & 1 != 0;
+    }
+
+    /// Called by the bus once per "put" CPU cycle.
+    pub fn clock_put_cycle(&mut self) {
         if self.strobe {
             self.shift = self.state;
         }
@@ -51,6 +57,7 @@ mod tests {
         c.set_button(BTN_A, true);
         c.set_button(BTN_START, true);
         c.write(1);
+        c.clock_put_cycle();
         c.write(0);
         let bits: Vec<u8> = (0..10).map(|_| c.read() & 1).collect();
         // A, B, Select, Start, Up, Down, Left, Right, then 1s

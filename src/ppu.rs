@@ -20,23 +20,28 @@ pub struct Ppu {
     fine_x: u8,
     w: bool,
 
-    ctrl: u8,
-    mask: u8,
+    pub ctrl: u8,
+    pub mask: u8,
     pub status: u8,
-    pub open_bus: u8,
+    // PPU I/O data bus latch: holds the last value driven on the $200x bus.
+    // Each bit decays to 0 independently if not refreshed (analog behavior).
+    io_bus: u8,
+    io_bus_ts: [u64; 8],
+    dots: u64,
 
     oam_addr: u8,
     pub oam: [u8; 256],
     sprites: [SpriteRow; 8],
     sprite_count: usize,
 
-    vram: [u8; 0x800],
+    pub vram: [u8; 0x800],
     palette: [u8; 32],
     read_buffer: u8,
 
     pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank
-    dot: u16,      // 0..340
-    nmi_pending: bool,
+    pub dot: u16,  // 0..340
+    odd_frame: bool,
+    suppress_vbl: bool,
     pub frame_complete: bool,
 
     // background pipeline
@@ -68,7 +73,9 @@ impl Ppu {
             ctrl: 0,
             mask: 0,
             status: 0,
-            open_bus: 0,
+            io_bus: 0,
+            io_bus_ts: [0; 8],
+            dots: 0,
             oam_addr: 0,
             oam: [0; 256],
             sprites: [SpriteRow::default(); 8],
@@ -78,7 +85,8 @@ impl Ppu {
             read_buffer: 0,
             scanline: -1,
             dot: 0,
-            nmi_pending: false,
+            odd_frame: false,
+            suppress_vbl: false,
             frame_complete: false,
             bg_pat_lo: 0,
             bg_pat_hi: 0,
@@ -92,16 +100,37 @@ impl Ppu {
         }
     }
 
-    pub fn take_nmi(&mut self) -> bool {
-        std::mem::take(&mut self.nmi_pending)
-    }
-
-    pub fn oam_addr_for_dma(&self) -> u8 {
-        self.oam_addr
+    /// Level of the NMI output: VBlank flag AND NMI-enable bit.
+    pub fn nmi_line(&self) -> bool {
+        self.ctrl & 0x80 != 0 && self.status & 0x80 != 0
     }
 
     fn rendering_enabled(&self) -> bool {
         self.mask & 0x18 != 0
+    }
+
+    // ---- I/O bus latch (open bus) ----
+
+    /// Bits decay to 0 if not refreshed for ~25 frames.
+    const IO_BUS_DECAY_DOTS: u64 = 25 * 89_342;
+
+    fn io_bus_read(&self) -> u8 {
+        let mut v = self.io_bus;
+        for bit in 0..8 {
+            if self.dots.saturating_sub(self.io_bus_ts[bit]) > Self::IO_BUS_DECAY_DOTS {
+                v &= !(1 << bit);
+            }
+        }
+        v
+    }
+
+    fn io_bus_refresh(&mut self, mask: u8, val: u8) {
+        self.io_bus = (self.io_bus & !mask) | (val & mask);
+        for bit in 0..8 {
+            if mask & (1 << bit) != 0 {
+                self.io_bus_ts[bit] = self.dots;
+            }
+        }
     }
 
     // ---- register interface ($2000-$2007) ----
@@ -109,41 +138,54 @@ impl Ppu {
     pub fn read_register(&mut self, reg: u16, cart: &mut dyn Mapper) -> u8 {
         match reg & 7 {
             2 => {
-                let res = (self.status & 0xE0) | (self.open_bus & 0x1F);
+                let res = (self.status & 0xE0) | (self.io_bus_read() & 0x1F);
+                // Race: reading one PPU clock before VBlank is set returns
+                // clear and prevents the flag (and thus the NMI) entirely.
+                if self.scanline == 241 && self.dot == 1 {
+                    self.suppress_vbl = true;
+                }
                 self.status &= !0x80; // clear vblank
                 self.w = false;
+                self.io_bus_refresh(0xE0, res); // only the top 3 bits are driven
                 res
             }
-            4 => self.oam[self.oam_addr as usize],
+            4 => {
+                let mut res = self.oam[self.oam_addr as usize];
+                if self.oam_addr & 3 == 2 {
+                    res &= 0xE3; // attribute bits 2-4 don't exist in OAM
+                }
+                self.io_bus_refresh(0xFF, res);
+                res
+            }
             7 => {
                 let addr = self.v & 0x3FFF;
                 let res;
                 if addr >= 0x3F00 {
-                    res = self.palette_read(addr);
+                    // Palette reads: 6 bits from palette RAM, top 2 from the
+                    // bus. Greyscale mode forces the low 4 bits to zero.
+                    let grey_mask = if self.mask & 1 != 0 { 0x30 } else { 0x3F };
+                    res = (self.palette_read(addr) & grey_mask) | (self.io_bus_read() & 0xC0);
                     // buffer gets the nametable byte "underneath" the palette
                     self.read_buffer = self.mem_read(addr & 0x2FFF, cart);
+                    self.io_bus_refresh(0x3F, res);
                 } else {
                     res = self.read_buffer;
                     self.read_buffer = self.mem_read(addr, cart);
+                    self.io_bus_refresh(0xFF, res);
                 }
-                self.v = self.v.wrapping_add(self.vram_increment()) & 0x7FFF;
+                self.increment_v_after_2007();
                 res
             }
-            _ => self.open_bus,
+            _ => self.io_bus_read(),
         }
     }
 
     pub fn write_register(&mut self, reg: u16, val: u8, cart: &mut dyn Mapper) {
-        self.open_bus = val;
+        self.io_bus_refresh(0xFF, val);
         match reg & 7 {
             0 => {
-                let old_nmi = self.ctrl & 0x80;
                 self.ctrl = val;
                 self.t = (self.t & !0x0C00) | (((val & 3) as u16) << 10);
-                // NMI fires immediately if enabled during vblank
-                if old_nmi == 0 && val & 0x80 != 0 && self.status & 0x80 != 0 {
-                    self.nmi_pending = true;
-                }
             }
             1 => self.mask = val,
             3 => self.oam_addr = val,
@@ -173,14 +215,22 @@ impl Ppu {
             }
             7 => {
                 self.mem_write(self.v & 0x3FFF, val, cart);
-                self.v = self.v.wrapping_add(self.vram_increment()) & 0x7FFF;
+                self.increment_v_after_2007();
             }
             _ => {}
         }
     }
 
-    fn vram_increment(&self) -> u16 {
-        if self.ctrl & 0x04 != 0 { 32 } else { 1 }
+    /// $2007 access increments v; during rendering this glitches into a
+    /// simultaneous coarse-X and Y increment.
+    fn increment_v_after_2007(&mut self) {
+        if self.rendering_enabled() && self.scanline < 240 {
+            self.increment_coarse_x();
+            self.increment_y();
+        } else {
+            let inc = if self.ctrl & 0x04 != 0 { 32 } else { 1 };
+            self.v = self.v.wrapping_add(inc) & 0x7FFF;
+        }
     }
 
     // ---- internal memory ----
@@ -422,6 +472,10 @@ impl Ppu {
             if self.dot == 257 && self.scanline < 239 {
                 self.evaluate_sprites(cart);
             }
+            // OAMADDR is reset during sprite tile fetches on rendered lines.
+            if (257..=320).contains(&self.dot) {
+                self.oam_addr = 0;
+            }
         }
 
         if prerender && self.dot == 1 {
@@ -433,19 +487,23 @@ impl Ppu {
         }
 
         if self.scanline == 241 && self.dot == 1 {
-            self.status |= 0x80;
             self.frame_complete = true;
-            if self.ctrl & 0x80 != 0 {
-                self.nmi_pending = true;
+            if !std::mem::take(&mut self.suppress_vbl) {
+                self.status |= 0x80;
             }
         }
 
+        self.dots += 1;
         self.dot += 1;
-        if self.dot > 340 {
+        // NTSC: odd frames skip the last dot of the pre-render line when
+        // rendering is enabled.
+        let skip = prerender && self.odd_frame && rendering && self.dot == 340;
+        if self.dot > 340 || skip {
             self.dot = 0;
             self.scanline += 1;
             if self.scanline > 260 {
                 self.scanline = -1;
+                self.odd_frame = !self.odd_frame;
             }
         }
     }
@@ -482,7 +540,9 @@ impl Ppu {
             }
         };
 
-        let color = self.palette[Self::palette_index(0x3F00 | palette_idx as u16)] as usize & 0x3F;
+        let grey = if self.mask & 1 != 0 { 0x30 } else { 0x3F };
+        let color =
+            self.palette[Self::palette_index(0x3F00 | palette_idx as u16)] as usize & grey;
         let rgb = NES_PALETTE[color];
         let off = (py as usize * WIDTH + px as usize) * 4;
         self.framebuffer[off] = rgb[0];
@@ -570,6 +630,6 @@ mod tests {
             ppu.tick(&mut c);
         }
         assert!(ppu.status & 0x80 != 0);
-        assert!(ppu.take_nmi());
+        assert!(ppu.nmi_line());
     }
 }
