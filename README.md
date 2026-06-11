@@ -88,3 +88,8 @@ cargo test
   IRQ, audible pulse output).
 
 ROMs are not included except for any you place in the project directory.
+
+## License
+
+This project is licensed under the GNU General Public License v3. See [LICENSE](LICENSE) for details.
+
