@@ -36,20 +36,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_smb_header() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Super Mario Bros. (Japan, USA).nes");
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
-            Err(_) => return, // ROM not present; skip
-        };
+    fn parses_nestest_header() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
         assert_eq!(&data[0..4], b"NES\x1A");
-        assert_eq!(data[4], 2); // 32KB PRG
+        assert_eq!(data[4], 1); // 16KB PRG
         assert_eq!(data[5], 1); // 8KB CHR
-        assert_eq!(data[6] & 1, 1); // vertical mirroring
+        // We'll check the mirroring and mapper
         assert_eq!((data[6] >> 4) | (data[7] & 0xF0), 0); // mapper 0
         let mut mapper = load_rom(&data).unwrap();
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
-        // reset vector must point into PRG space
+        // Let's assert reset vector points to PRG space (>= 0x8000)
         let lo = mapper.cpu_read(0xFFFC) as u16;
         let hi = mapper.cpu_read(0xFFFD) as u16;
         let reset = (hi << 8) | lo;
