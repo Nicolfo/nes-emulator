@@ -25,12 +25,14 @@ const TRIANGLE_SEQ: [u8; 32] = [
 ];
 
 // NTSC noise timer periods, in CPU cycles.
-const NOISE_PERIOD: [u16; 16] =
-    [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
+const NOISE_PERIOD: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
 
 // NTSC DMC timer periods, in CPU cycles.
-const DMC_RATE: [u16; 16] =
-    [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+const DMC_RATE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
 
 #[derive(Default)]
 struct Envelope {
@@ -61,7 +63,11 @@ impl Envelope {
     }
 
     fn volume(&self) -> u8 {
-        if self.constant { self.period } else { self.decay }
+        if self.constant {
+            self.period
+        } else {
+            self.decay
+        }
     }
 }
 
@@ -117,8 +123,7 @@ impl Pulse {
     }
 
     fn clock_sweep(&mut self) {
-        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift != 0 && !self.muted()
-        {
+        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift != 0 && !self.muted() {
             self.timer_period = self.sweep_target().max(0) as u16;
         }
         if self.sweep_divider == 0 || self.sweep_reload {
@@ -260,7 +265,11 @@ impl Noise {
     }
 
     fn output(&self) -> u8 {
-        if self.length == 0 || self.shift & 1 == 1 { 0 } else { self.env.volume() }
+        if self.length == 0 || self.shift & 1 == 1 {
+            0
+        } else {
+            self.env.volume()
+        }
     }
 
     fn set_enabled(&mut self, on: bool) {
@@ -353,8 +362,11 @@ impl Dmc {
     fn supply(&mut self, v: u8) {
         self.buffer = Some(v);
         self.fetch_pending = false;
-        self.current_addr =
-            if self.current_addr == 0xFFFF { 0x8000 } else { self.current_addr + 1 };
+        self.current_addr = if self.current_addr == 0xFFFF {
+            0x8000
+        } else {
+            self.current_addr + 1
+        };
         self.bytes_remaining -= 1;
         if self.bytes_remaining == 0 {
             if self.loop_flag {
@@ -375,7 +387,11 @@ struct HighPass {
 impl HighPass {
     fn new(fc: f64, rate: f64) -> Self {
         let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
-        HighPass { a: (rc / (rc + 1.0 / rate)) as f32, prev_in: 0.0, prev_out: 0.0 }
+        HighPass {
+            a: (rc / (rc + 1.0 / rate)) as f32,
+            prev_in: 0.0,
+            prev_out: 0.0,
+        }
     }
 
     fn process(&mut self, x: f32) -> f32 {
@@ -395,7 +411,10 @@ impl LowPass {
     fn new(fc: f64, rate: f64) -> Self {
         let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
         let dt = 1.0 / rate;
-        LowPass { b: (dt / (rc + dt)) as f32, prev: 0.0 }
+        LowPass {
+            b: (dt / (rc + dt)) as f32,
+            prev: 0.0,
+        }
     }
 
     fn process(&mut self, x: f32) -> f32 {
@@ -522,14 +541,22 @@ impl Apu {
     pub fn write(&mut self, addr: u16, v: u8) {
         match addr {
             0x4000 | 0x4004 => {
-                let p = if addr == 0x4000 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4000 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.duty = v >> 6;
                 p.env.loop_flag = v & 0x20 != 0;
                 p.env.constant = v & 0x10 != 0;
                 p.env.period = v & 0x0F;
             }
             0x4001 | 0x4005 => {
-                let p = if addr == 0x4001 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4001 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.sweep_enabled = v & 0x80 != 0;
                 p.sweep_period = (v >> 4) & 7;
                 p.sweep_negate = v & 0x08 != 0;
@@ -537,11 +564,19 @@ impl Apu {
                 p.sweep_reload = true;
             }
             0x4002 | 0x4006 => {
-                let p = if addr == 0x4002 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4002 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.timer_period = (p.timer_period & 0x0700) | v as u16;
             }
             0x4003 | 0x4007 => {
-                let p = if addr == 0x4003 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4003 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.timer_period = (p.timer_period & 0x00FF) | (((v & 7) as u16) << 8);
                 if p.enabled {
                     p.length = LENGTH_TABLE[(v >> 3) as usize];
@@ -854,6 +889,9 @@ mod tests {
         run(&mut apu, 50_000);
         let s = apu.take_samples();
         // skip the initial high-pass transient from the idle triangle DC level
-        assert!(s[500..].iter().all(|v| v.abs() < 0.005), "muted pulse leaked audio");
+        assert!(
+            s[500..].iter().all(|v| v.abs() < 0.005),
+            "muted pulse leaked audio"
+        );
     }
 }

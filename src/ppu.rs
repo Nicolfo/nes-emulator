@@ -22,8 +22,8 @@ pub struct Ppu {
 
     ctrl: u8,
     mask: u8,
-    status: u8,
-    open_bus: u8,
+    pub status: u8,
+    pub open_bus: u8,
 
     oam_addr: u8,
     pub oam: [u8; 256],
@@ -34,7 +34,7 @@ pub struct Ppu {
     palette: [u8; 32],
     read_buffer: u8,
 
-    scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank
+    pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank
     dot: u16,      // 0..340
     nmi_pending: bool,
     pub frame_complete: bool,
@@ -50,6 +50,12 @@ pub struct Ppu {
     pat_hi_latch: u8,
 
     pub framebuffer: Vec<u8>, // RGBA, 256*240*4
+}
+
+impl Default for Ppu {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ppu {
@@ -284,10 +290,8 @@ impl Ppu {
                 self.nt_latch = self.mem_read(0x2000 | (self.v & 0x0FFF), cart);
             }
             2 => {
-                let addr = 0x23C0
-                    | (self.v & 0x0C00)
-                    | ((self.v >> 4) & 0x38)
-                    | ((self.v >> 2) & 0x07);
+                let addr =
+                    0x23C0 | (self.v & 0x0C00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
                 let mut at = self.mem_read(addr, cart);
                 if (self.v >> 5) & 2 != 0 {
                     at >>= 4;
@@ -358,8 +362,13 @@ impl Ppu {
                 pat_lo = pat_lo.reverse_bits(); // horizontal flip
                 pat_hi = pat_hi.reverse_bits();
             }
-            self.sprites[self.sprite_count] =
-                SpriteRow { x, pat_lo, pat_hi, attr, is_zero: i == 0 };
+            self.sprites[self.sprite_count] = SpriteRow {
+                x,
+                pat_lo,
+                pat_hi,
+                attr,
+                is_zero: i == 0,
+            };
             self.sprite_count += 1;
         }
         if overflow {

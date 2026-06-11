@@ -77,11 +77,7 @@ cargo test
 - `tests/nestest.rs` — CPU validated against the nestest golden log (registers and
   cycle counts for all official opcodes + unofficial NOPs, log lines 1–5259).
   Requires `tests/data/nestest.nes` and `tests/data/nestest.log` (skipped if absent).
-- `tests/smb.rs` — headless SMB smoke tests (title screen renders, gameplay
-  reachable, gameplay music produces non-clipping audio — the title screen itself
-  is silent). The ignored `dump_frame_bmp` test writes `frame.bmp` for visual
-  inspection: `cargo test --test smb -- --ignored` with env vars `SMB_FRAMES`,
-  `SMB_PRESS_START`, `SMB_RUN_RIGHT`.
+- `tests/accuracy_coin.rs` — cycle accuracy integration tests validating CPU instruction behaviors, addressing mode wraparounds, open bus, dummy reads/writes, and unofficial instructions. The test assertions replicate the specifications checked by the MIT-licensed [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) diagnostic suite.
 - Unit tests cover loopy scroll register sequences, palette mirroring, $2007 read
   buffering, controller shifting, RAM mirroring, OAM DMA, and the APU (frame IRQ
   timing and inhibit, length counter load/countdown, sweep muting, DMC fetch and

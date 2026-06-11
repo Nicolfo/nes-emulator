@@ -17,7 +17,9 @@ pub struct Audio {
 impl Audio {
     pub fn new() -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or("no audio output device")?;
+        let device = host
+            .default_output_device()
+            .ok_or("no audio output device")?;
         let config = device.default_output_config().map_err(|e| e.to_string())?;
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
@@ -31,7 +33,11 @@ impl Audio {
         }?;
         stream.play().map_err(|e| e.to_string())?;
 
-        Ok(Audio { sample_rate, queue, _stream: stream })
+        Ok(Audio {
+            sample_rate,
+            queue,
+            _stream: stream,
+        })
     }
 
     pub fn push(&self, samples: &[f32]) {

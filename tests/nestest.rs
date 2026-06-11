@@ -54,16 +54,28 @@ fn nestest_golden_log() {
     for (i, line) in log.lines().take(5259).enumerate() {
         let exp = parse_line(line);
         let lineno = i + 1;
-        assert_eq!(nes.cpu.pc, exp.pc, "line {lineno}: PC (expected {:04X}, got {:04X})\n{line}", exp.pc, nes.cpu.pc);
+        assert_eq!(
+            nes.cpu.pc, exp.pc,
+            "line {lineno}: PC (expected {:04X}, got {:04X})\n{line}",
+            exp.pc, nes.cpu.pc
+        );
         assert_eq!(nes.cpu.a, exp.a, "line {lineno}: A\n{line}");
         assert_eq!(nes.cpu.x, exp.x, "line {lineno}: X\n{line}");
         assert_eq!(nes.cpu.y, exp.y, "line {lineno}: Y\n{line}");
-        assert_eq!(nes.cpu.p, exp.p, "line {lineno}: P (expected {:02X}, got {:02X})\n{line}", exp.p, nes.cpu.p);
+        assert_eq!(
+            nes.cpu.p, exp.p,
+            "line {lineno}: P (expected {:02X}, got {:02X})\n{line}",
+            exp.p, nes.cpu.p
+        );
         assert_eq!(nes.cpu.sp, exp.sp, "line {lineno}: SP\n{line}");
         assert_eq!(nes.cpu.cycles, exp.cyc, "line {lineno}: CYC\n{line}");
         nes.cpu.step();
     }
 
     // official-opcode test result code at $0002 must be 0 (no failure)
-    assert_eq!(nes.cpu.bus.read(0x0002), 0, "nestest reported official-opcode failure");
+    assert_eq!(
+        nes.cpu.bus.read(0x0002),
+        0,
+        "nestest reported official-opcode failure"
+    );
 }

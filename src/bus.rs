@@ -12,6 +12,7 @@ pub struct Bus {
     nmi_line: bool,
     dma_stall: u64,
     pub cycles: u64,
+    pub open_bus: u8,
 }
 
 impl Bus {
@@ -25,22 +26,56 @@ impl Bus {
             nmi_line: false,
             dma_stall: 0,
             cycles: 0,
+            open_bus: 0,
         }
     }
 
     pub fn read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
-            0x2000..=0x3FFF => self.ppu.read_register(addr & 7, &mut *self.cart),
-            0x4015 => self.apu.read_status(),
-            0x4016 => self.controller1.read(),
-            0x4017 => 0x40, // controller 2 not connected
-            0x4000..=0x401F => 0,
-            _ => self.cart.cpu_read(addr),
+            0x0000..=0x1FFF => {
+                let r = self.ram[(addr & 0x07FF) as usize];
+                self.open_bus = r;
+                self.ppu.open_bus = r;
+                r
+            }
+            0x2000..=0x3FFF => {
+                let r = self.ppu.read_register(addr & 7, &mut *self.cart);
+                self.open_bus = r;
+                self.ppu.open_bus = r;
+                r
+            }
+            0x4015 => {
+                let apu_val = self.apu.read_status();
+                (apu_val & 0xDF) | (self.open_bus & 0x20)
+            }
+            0x4016 => {
+                let ctrl_val = self.controller1.read();
+                let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
+                self.open_bus = r;
+                self.ppu.open_bus = r;
+                r
+            }
+            0x4017 => {
+                let ctrl_val = 0x40; // controller 2 not connected
+                let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
+                self.open_bus = r;
+                self.ppu.open_bus = r;
+                r
+            }
+            0x4000..=0x401F => self.open_bus,
+            0x4020..=0x7FFF => self.open_bus,
+            _ => {
+                let r = self.cart.cpu_read(addr);
+                self.open_bus = r;
+                self.ppu.open_bus = r;
+                r
+            }
         }
     }
 
     pub fn write(&mut self, addr: u16, val: u8) {
+        self.open_bus = val;
+        self.ppu.open_bus = val;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = val,
             0x2000..=0x3FFF => self.ppu.write_register(addr & 7, val, &mut *self.cart),
@@ -101,7 +136,11 @@ mod tests {
     use crate::mapper::{Mirroring, Nrom};
 
     fn bus() -> Bus {
-        Bus::new(Box::new(Nrom::new(vec![0; 0x8000], vec![0; 0x2000], Mirroring::Vertical)))
+        Bus::new(Box::new(Nrom::new(
+            vec![0; 0x8000],
+            vec![0; 0x2000],
+            Mirroring::Vertical,
+        )))
     }
 
     #[test]

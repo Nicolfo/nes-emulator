@@ -51,11 +51,27 @@ pub enum HomeAction {
 pub fn home_items(game_loaded: bool) -> Vec<HomeItem> {
     let mut items = Vec::new();
     if game_loaded {
-        items.push(HomeItem { label: "RESUME", icon: &ICON_PLAY, action: HomeAction::Resume });
+        items.push(HomeItem {
+            label: "RESUME",
+            icon: &ICON_PLAY,
+            action: HomeAction::Resume,
+        });
     }
-    items.push(HomeItem { label: "LOAD ROM", icon: &ICON_CART, action: HomeAction::LoadRom });
-    items.push(HomeItem { label: "SETTINGS", icon: &ICON_GEAR, action: HomeAction::Settings });
-    items.push(HomeItem { label: "QUIT", icon: &ICON_POWER, action: HomeAction::Quit });
+    items.push(HomeItem {
+        label: "LOAD ROM",
+        icon: &ICON_CART,
+        action: HomeAction::LoadRom,
+    });
+    items.push(HomeItem {
+        label: "SETTINGS",
+        icon: &ICON_GEAR,
+        action: HomeAction::Settings,
+    });
+    items.push(HomeItem {
+        label: "QUIT",
+        icon: &ICON_POWER,
+        action: HomeAction::Quit,
+    });
     items
 }
 
@@ -93,6 +109,7 @@ pub const ROW_SCALE: usize = 8;
 pub const ROW_RESET: usize = 9;
 pub const ROW_BACK: usize = 10;
 
+#[allow(clippy::needless_range_loop)]
 pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool) {
     clear(frame, BG);
 

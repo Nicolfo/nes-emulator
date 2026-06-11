@@ -23,7 +23,12 @@ impl Nrom {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
         let chr_is_ram = chr.is_empty();
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
-        Nrom { prg, chr, chr_is_ram, mirroring }
+        Nrom {
+            prg,
+            chr,
+            chr_is_ram,
+            mirroring,
+        }
     }
 }
 

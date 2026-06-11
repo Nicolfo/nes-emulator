@@ -10,8 +10,9 @@ use nes_emulator::controller::{
 pub const CONFIG_PATH: &str = "nes-emulator-config.json";
 
 pub const BUTTON_LABELS: [&str; 8] = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
-pub const BUTTON_MASKS: [u8; 8] =
-    [BTN_A, BTN_B, BTN_SELECT, BTN_START, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT];
+pub const BUTTON_MASKS: [u8; 8] = [
+    BTN_A, BTN_B, BTN_SELECT, BTN_START, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT,
+];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {

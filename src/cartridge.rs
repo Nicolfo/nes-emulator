@@ -9,11 +9,17 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     let flags6 = data[6];
     let flags7 = data[7];
     let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
-    let mirroring = if flags6 & 1 != 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+    let mirroring = if flags6 & 1 != 0 {
+        Mirroring::Vertical
+    } else {
+        Mirroring::Horizontal
+    };
     let has_trainer = flags6 & 0x04 != 0;
 
     if mapper_id != 0 {
-        return Err(format!("unsupported mapper {mapper_id} (only NROM/mapper 0)"));
+        return Err(format!(
+            "unsupported mapper {mapper_id} (only NROM/mapper 0)"
+        ));
     }
 
     let prg_size = prg_banks * 16 * 1024;

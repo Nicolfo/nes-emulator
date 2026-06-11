@@ -56,7 +56,17 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new(bus: Bus) -> Self {
-        Cpu { a: 0, x: 0, y: 0, sp: 0xFD, pc: 0, p: I | U, cycles: 0, extra: 0, bus }
+        Cpu {
+            a: 0,
+            x: 0,
+            y: 0,
+            sp: 0xFD,
+            pc: 0,
+            p: I | U,
+            cycles: 0,
+            extra: 0,
+            bus,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -165,16 +175,30 @@ impl Cpu {
             Mode::AbsX => {
                 let base = self.fetch16();
                 let a = base.wrapping_add(self.x as u16);
-                if penalty && (base & 0xFF00) != (a & 0xFF00) {
-                    self.extra += 1;
+                if penalty {
+                    if (base & 0xFF00) != (a & 0xFF00) {
+                        let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                        self.bus.read(uncorrected);
+                        self.extra += 1;
+                    }
+                } else {
+                    let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                    self.bus.read(uncorrected);
                 }
                 a
             }
             Mode::AbsY => {
                 let base = self.fetch16();
                 let a = base.wrapping_add(self.y as u16);
-                if penalty && (base & 0xFF00) != (a & 0xFF00) {
-                    self.extra += 1;
+                if penalty {
+                    if (base & 0xFF00) != (a & 0xFF00) {
+                        let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                        self.bus.read(uncorrected);
+                        self.extra += 1;
+                    }
+                } else {
+                    let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                    self.bus.read(uncorrected);
                 }
                 a
             }
@@ -190,8 +214,15 @@ impl Cpu {
                 let hi = self.bus.read(zp.wrapping_add(1) as u16) as u16;
                 let base = (hi << 8) | lo;
                 let a = base.wrapping_add(self.y as u16);
-                if penalty && (base & 0xFF00) != (a & 0xFF00) {
-                    self.extra += 1;
+                if penalty {
+                    if (base & 0xFF00) != (a & 0xFF00) {
+                        let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                        self.bus.read(uncorrected);
+                        self.extra += 1;
+                    }
+                } else {
+                    let uncorrected = (base & 0xFF00) | (a & 0x00FF);
+                    self.bus.read(uncorrected);
                 }
                 a
             }
@@ -346,6 +377,7 @@ impl Cpu {
     fn rmw(&mut self, m: Mode, f: fn(&mut Cpu, u8) -> u8) {
         let a = self.addr(m, false);
         let v = self.bus.read(a);
+        self.bus.write(a, v);
         let r = f(self, v);
         self.bus.write(a, r);
     }
@@ -384,7 +416,9 @@ impl Cpu {
 
     fn dcp(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a).wrapping_sub(1);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let v = original.wrapping_sub(1);
         self.bus.write(a, v);
         self.set_flag(C, self.a >= v);
         self.set_zn(self.a.wrapping_sub(v));
@@ -392,15 +426,18 @@ impl Cpu {
 
     fn isc(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a).wrapping_add(1);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let v = original.wrapping_add(1);
         self.bus.write(a, v);
         self.adc_val(v ^ 0xFF);
     }
 
     fn slo(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a);
-        let r = self.asl_val(v);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let r = self.asl_val(original);
         self.bus.write(a, r);
         self.a |= r;
         self.set_zn(self.a);
@@ -408,8 +445,9 @@ impl Cpu {
 
     fn rla(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a);
-        let r = self.rol_val(v);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let r = self.rol_val(original);
         self.bus.write(a, r);
         self.a &= r;
         self.set_zn(self.a);
@@ -417,8 +455,9 @@ impl Cpu {
 
     fn sre(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a);
-        let r = self.lsr_val(v);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let r = self.lsr_val(original);
         self.bus.write(a, r);
         self.a ^= r;
         self.set_zn(self.a);
@@ -426,8 +465,9 @@ impl Cpu {
 
     fn rra(&mut self, m: Mode) {
         let a = self.addr(m, false);
-        let v = self.bus.read(a);
-        let r = self.ror_val(v);
+        let original = self.bus.read(a);
+        self.bus.write(a, original);
+        let r = self.ror_val(original);
         self.bus.write(a, r);
         self.adc_val(r);
     }
@@ -646,7 +686,11 @@ impl Cpu {
                 let ptr = self.fetch16();
                 // 6502 bug: indirect JMP wraps within the page
                 let lo = self.bus.read(ptr) as u16;
-                let hi_addr = if ptr & 0x00FF == 0x00FF { ptr & 0xFF00 } else { ptr + 1 };
+                let hi_addr = if ptr & 0x00FF == 0x00FF {
+                    ptr & 0xFF00
+                } else {
+                    ptr + 1
+                };
                 let hi = self.bus.read(hi_addr) as u16;
                 self.pc = (hi << 8) | lo;
             }
@@ -837,8 +881,7 @@ impl Cpu {
                 self.set_zn(v);
             }
             // KIL / JAM: halt the CPU by looping on the same opcode
-            0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2
-            | 0xF2 => {
+            0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
                 self.pc = self.pc.wrapping_sub(1);
             }
         }
