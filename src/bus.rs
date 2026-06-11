@@ -1,3 +1,4 @@
+use crate::apu::Apu;
 use crate::controller::Controller;
 use crate::mapper::Mapper;
 use crate::ppu::Ppu;
@@ -5,6 +6,7 @@ use crate::ppu::Ppu;
 pub struct Bus {
     ram: [u8; 0x800],
     pub ppu: Ppu,
+    pub apu: Apu,
     pub cart: Box<dyn Mapper>,
     pub controller1: Controller,
     nmi_line: bool,
@@ -17,6 +19,7 @@ impl Bus {
         Bus {
             ram: [0; 0x800],
             ppu: Ppu::new(),
+            apu: Apu::new(),
             cart,
             controller1: Controller::default(),
             nmi_line: false,
@@ -29,7 +32,7 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
             0x2000..=0x3FFF => self.ppu.read_register(addr & 7, &mut *self.cart),
-            0x4015 => 0, // APU status (not emulated)
+            0x4015 => self.apu.read_status(),
             0x4016 => self.controller1.read(),
             0x4017 => 0x40, // controller 2 not connected
             0x4000..=0x401F => 0,
@@ -43,7 +46,8 @@ impl Bus {
             0x2000..=0x3FFF => self.ppu.write_register(addr & 7, val, &mut *self.cart),
             0x4014 => self.oam_dma(val),
             0x4016 => self.controller1.write(val),
-            0x4000..=0x401F => {} // APU registers ignored
+            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),
+            0x4018..=0x401F => {}
             _ => self.cart.cpu_write(addr, val),
         }
     }
@@ -58,11 +62,19 @@ impl Bus {
         self.dma_stall = 513 + (self.cycles & 1);
     }
 
-    /// Advance the PPU 3 dots per CPU cycle; latch NMI edge.
+    /// Advance the APU 1 step and the PPU 3 dots per CPU cycle; latch NMI edge.
     pub fn tick(&mut self, cpu_cycles: u64) {
-        self.cycles += cpu_cycles;
-        for _ in 0..cpu_cycles * 3 {
-            self.ppu.tick(&mut *self.cart);
+        for _ in 0..cpu_cycles {
+            self.cycles += 1;
+            if let Some(addr) = self.apu.tick() {
+                // DMC DMA: fetch the sample byte and stall the CPU
+                let v = self.cart.cpu_read(addr);
+                self.apu.dmc_supply(v);
+                self.dma_stall += 4;
+            }
+            for _ in 0..3 {
+                self.ppu.tick(&mut *self.cart);
+            }
         }
         if self.ppu.take_nmi() {
             self.nmi_line = true;
@@ -71,6 +83,11 @@ impl Bus {
 
     pub fn take_nmi(&mut self) -> bool {
         std::mem::take(&mut self.nmi_line)
+    }
+
+    /// Level-triggered IRQ line (APU frame counter and DMC).
+    pub fn irq_asserted(&self) -> bool {
+        self.apu.irq()
     }
 
     pub fn take_dma_stall(&mut self) -> u64 {

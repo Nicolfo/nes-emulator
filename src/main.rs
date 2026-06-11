@@ -1,3 +1,4 @@
+mod audio;
 mod config;
 mod font;
 mod menu;
@@ -36,6 +37,7 @@ struct App {
     cfg: Config,
     error: Option<String>,
     next_frame: Instant,
+    audio: Option<audio::Audio>,
 }
 
 impl App {
@@ -53,7 +55,10 @@ impl App {
         let Some(path) = picked else { return };
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
-                Ok(nes) => {
+                Ok(mut nes) => {
+                    if let Some(a) = &self.audio {
+                        nes.set_sample_rate(a.sample_rate as f64);
+                    }
                     self.nes = Some(nes);
                     self.error = None;
                     if let Some(w) = &self.window {
@@ -159,6 +164,9 @@ impl App {
         }
         if code == KeyCode::Escape && pressed {
             self.view = View::Home { sel: 0 };
+            if let Some(a) = &self.audio {
+                a.clear();
+            }
             self.redraw();
             return;
         }
@@ -257,6 +265,15 @@ impl ApplicationHandler for App {
             self.next_frame = now + FRAME_PERIOD;
         }
         if ran {
+            let samples = nes.take_audio();
+            if let Some(audio) = &self.audio {
+                audio.push(&samples);
+                // dynamic rate control: nudge resampling so the queue hovers
+                // around ~50 ms instead of slowly drifting to under/overflow
+                let target = audio.sample_rate as f64 * 0.05;
+                let err = ((audio.buffered() as f64 - target) / target).clamp(-1.0, 1.0);
+                nes.tune_audio(audio.sample_rate as f64 * (1.0 - 0.003 * err));
+            }
             self.redraw();
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
@@ -266,6 +283,14 @@ impl ApplicationHandler for App {
 fn main() {
     let cfg = Config::load();
 
+    let audio = match audio::Audio::new() {
+        Ok(a) => Some(a),
+        Err(e) => {
+            eprintln!("audio disabled: {e}");
+            None
+        }
+    };
+
     // optional CLI arg still works: jump straight into a ROM
     let mut nes = None;
     let mut view = View::Home { sel: 0 };
@@ -273,7 +298,10 @@ fn main() {
     if let Some(path) = std::env::args().nth(1) {
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
-                Ok(n) => {
+                Ok(mut n) => {
+                    if let Some(a) = &audio {
+                        n.set_sample_rate(a.sample_rate as f64);
+                    }
                     nes = Some(n);
                     view = View::Running;
                 }
@@ -292,6 +320,7 @@ fn main() {
         cfg,
         error,
         next_frame: Instant::now(),
+        audio,
     };
     event_loop.run_app(&mut app).expect("event loop");
 }

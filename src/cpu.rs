@@ -75,6 +75,13 @@ impl Cpu {
             self.post_tick();
             return 7;
         }
+        if self.bus.irq_asserted() && self.p & I == 0 {
+            self.interrupt(0xFFFE);
+            self.cycles += 7;
+            self.bus.tick(7);
+            self.post_tick();
+            return 7;
+        }
         let op = self.fetch8();
         self.extra = 0;
         self.exec(op);

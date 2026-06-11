@@ -47,6 +47,27 @@ fn sprite_zero_hit_occurs() {
 }
 
 #[test]
+fn gameplay_music_produces_audio() {
+    let Some(mut nes) = load_smb() else { return };
+    nes.set_sample_rate(48_000.0);
+    // the title screen is silent; press Start so the overworld theme plays
+    for f in 0..300 {
+        nes.cpu.bus.controller1.set_button(BTN_START, (180..185).contains(&f));
+        nes.run_frame();
+    }
+    nes.take_audio(); // discard startup transient
+    for _ in 0..120 {
+        nes.run_frame();
+    }
+    let samples = nes.take_audio();
+    // 120 frames at 60.1 fps should yield ~2 s of audio
+    assert!(samples.len() > 90_000, "too few samples: {}", samples.len());
+    let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+    assert!(peak > 0.02, "gameplay music inaudible, peak {peak}");
+    assert!(peak < 1.0, "output clipping, peak {peak}");
+}
+
+#[test]
 #[ignore]
 fn dump_frame_bmp() {
     let Some(mut nes) = load_smb() else { return };

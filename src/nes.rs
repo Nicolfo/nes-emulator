@@ -25,4 +25,19 @@ impl Nes {
     pub fn framebuffer(&self) -> &[u8] {
         &self.cpu.bus.ppu.framebuffer
     }
+
+    /// Set the host audio output rate (resets the APU filter chain).
+    pub fn set_sample_rate(&mut self, hz: f64) {
+        self.cpu.bus.apu.set_sample_rate(hz);
+    }
+
+    /// Nudge the resampling ratio for dynamic rate control.
+    pub fn tune_audio(&mut self, hz: f64) {
+        self.cpu.bus.apu.tune(hz);
+    }
+
+    /// Drain audio samples generated since the last call.
+    pub fn take_audio(&mut self) -> Vec<f32> {
+        self.cpu.bus.apu.take_samples()
+    }
 }
