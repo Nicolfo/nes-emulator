@@ -298,6 +298,8 @@ struct Dmc {
     // The next DMA is a "load" (triggered by a $4015 write), which asserts
     // RDY later than a reload DMA.
     load_dma: bool,
+    // Cycles until a $4015 disable takes effect (zeroing bytes_remaining).
+    pending_disable: u8,
     irq: bool,
 }
 
@@ -319,6 +321,7 @@ impl Dmc {
             buffer: None,
             fetch_pending: false,
             load_dma: false,
+            pending_disable: 0,
             irq: false,
         }
     }
@@ -371,12 +374,16 @@ impl Dmc {
         } else {
             self.current_addr + 1
         };
-        self.bytes_remaining -= 1;
-        if self.bytes_remaining == 0 {
-            if self.loop_flag {
-                self.restart();
-            } else if self.irq_enabled {
-                self.irq = true;
+        // bytes_remaining may already be 0 if a $4015 disable landed while
+        // this fetch was in flight.
+        if self.bytes_remaining > 0 {
+            self.bytes_remaining -= 1;
+            if self.bytes_remaining == 0 {
+                if self.loop_flag {
+                    self.restart();
+                } else if self.irq_enabled {
+                    self.irq = true;
+                }
             }
         }
     }
@@ -636,18 +643,37 @@ impl Apu {
             0x4012 => self.dmc.sample_addr = 0xC000 | ((v as u16) << 6),
             0x4013 => self.dmc.sample_len = ((v as u16) << 4) | 1,
             0x4015 => {
+                if std::env::var("NES_DMA_LOG").is_ok() {
+                    eprintln!(
+                        "apucyc {} WRITE4015 v={:02X} buffer={:?} bytes={} pending_dis={}",
+                        self.cycle, v, self.dmc.buffer, self.dmc.bytes_remaining,
+                        self.dmc.pending_disable
+                    );
+                }
                 self.pulse1.set_enabled(v & 0x01 != 0);
                 self.pulse2.set_enabled(v & 0x02 != 0);
                 self.triangle.set_enabled(v & 0x04 != 0);
                 self.noise.set_enabled(v & 0x08 != 0);
                 self.dmc.irq = false;
                 if v & 0x10 != 0 {
+                    if self.dmc.pending_disable > 0 {
+                        // A disable still in its grace period applies first.
+                        self.dmc.pending_disable = 0;
+                        self.dmc.bytes_remaining = 0;
+                    }
                     if self.dmc.bytes_remaining == 0 {
                         self.dmc.restart();
-                        self.dmc.load_dma = true;
+                        // The write only schedules a delayed "load" DMA when
+                        // the sample buffer is empty; with a full buffer the
+                        // next fetch waits for the shifter to consume it and
+                        // uses normal reload timing.
+                        self.dmc.load_dma = self.dmc.buffer.is_none();
                     }
                 } else {
-                    self.dmc.bytes_remaining = 0;
+                    // Disabling takes a few cycles to propagate: a timer
+                    // expiry in the grace window still asserts RDY for one
+                    // "ghost" halt cycle before the DMA is aborted.
+                    self.dmc.pending_disable = 3;
                 }
             }
             0x4017 => {
@@ -663,9 +689,11 @@ impl Apu {
         }
     }
 
-    /// Advance one CPU cycle. Returns `Some((addr, is_load))` when the DMC
-    /// DMA unit needs a sample byte fetched (deliver it via `dmc_supply`).
-    pub fn tick(&mut self) -> Option<(u16, bool)> {
+    /// Advance one CPU cycle. Returns `Some((addr, is_load, is_ghost))` when
+    /// the DMC DMA unit needs a sample byte fetched (deliver it via
+    /// `dmc_supply`). A "ghost" request comes from a timer expiry inside the
+    /// disable grace window: it halts the CPU for one cycle, then aborts.
+    pub fn tick(&mut self) -> Option<(u16, bool, bool)> {
         self.cycle += 1;
 
         if self.frame_irq_clear_pending && self.cycle & 1 == 1 {
@@ -696,10 +724,27 @@ impl Apu {
         self.noise.clock_timer();
         self.dmc.clock_timer();
 
+        if self.dmc.pending_disable > 0 {
+            self.dmc.pending_disable -= 1;
+            if self.dmc.pending_disable == 0 {
+                self.dmc.bytes_remaining = 0;
+            }
+        }
         let mut fetch = None;
-        if self.dmc.buffer.is_none() && self.dmc.bytes_remaining > 0 && !self.dmc.fetch_pending {
+        // The DMC's fetch request asserts on the APU clock (every other CPU
+        // cycle), so it always lands on the same get/put parity; an expiry on
+        // the off cycle is raised one cycle later.
+        if self.cycle & 1 == 1
+            && self.dmc.buffer.is_none()
+            && self.dmc.bytes_remaining > 0
+            && !self.dmc.fetch_pending
+        {
             self.dmc.fetch_pending = true;
-            fetch = Some((self.dmc.current_addr, std::mem::take(&mut self.dmc.load_dma)));
+            fetch = Some((
+                self.dmc.current_addr,
+                std::mem::take(&mut self.dmc.load_dma),
+                self.dmc.pending_disable > 0,
+            ));
         }
 
         // boxcar decimation to the output rate, then the analog filter chain
@@ -721,9 +766,12 @@ impl Apu {
         self.dmc.supply(v);
     }
 
-    /// A $4015 write disabling the DMC aborts a DMA that has not fetched yet.
+    /// A ghost DMA was aborted after its lone halt cycle: the disable takes
+    /// full effect, so no further fetches are raised.
     pub fn dmc_abort_fetch(&mut self) {
         self.dmc.fetch_pending = false;
+        self.dmc.pending_disable = 0;
+        self.dmc.bytes_remaining = 0;
     }
 
     fn mix(&self) -> f32 {
@@ -895,7 +943,7 @@ mod tests {
         apu.write(0x4015, 0x10);
         let mut fetched = 0;
         for _ in 0..10_000 {
-            if let Some((addr, _is_load)) = apu.tick() {
+            if let Some((addr, _is_load, _is_ghost)) = apu.tick() {
                 assert_eq!(addr, 0xC000);
                 apu.dmc_supply(0xFF);
                 fetched += 1;

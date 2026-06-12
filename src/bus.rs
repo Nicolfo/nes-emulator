@@ -11,7 +11,7 @@ pub fn dmc_load_delay() -> u8 {
         std::env::var("NES_DMC_LOAD_DELAY")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(2)
+            .unwrap_or(1)
     })
 }
 
@@ -35,8 +35,15 @@ pub struct Bus {
     pub controller1: Controller,
     pub cycles: u64,
     pub open_bus: u8,
+    /// The CPU's internal data bus: latched on every CPU read/write cycle,
+    /// but NOT by a DMC DMA sample fetch (the CPU is halted). Bit 5 of a
+    /// $4015 read comes from here, not from the external bus.
+    pub internal_bus: u8,
     /// DMC sample fetch requested by the APU; serviced by the CPU's DMA logic.
     pub dmc_request: Option<u16>,
+    /// The pending DMC request was raised inside the disable grace window:
+    /// it steals a single halt cycle, then aborts without fetching.
+    pub dmc_ghost: bool,
     /// Cycles until the DMC DMA may halt the CPU (models RDY assertion delay
     /// after a $4015 load).
     pub dmc_delay: u8,
@@ -60,7 +67,9 @@ impl Bus {
             controller1: Controller::default(),
             cycles: 0,
             open_bus: 0,
+            internal_bus: 0,
             dmc_request: None,
+            dmc_ghost: false,
             dmc_delay: 0,
             oam_dma_page: None,
             watch_addr: None,
@@ -89,7 +98,7 @@ impl Bus {
             // $4015 is internal to the 2A03: reading it does not drive the data bus.
             0x4015 => {
                 let apu_val = self.apu.read_status();
-                (apu_val & 0xDF) | (self.open_bus & 0x20)
+                (apu_val & 0xDF) | (self.internal_bus & 0x20)
             }
             // Controller reads drive D0-D4 only; D5-D7 stay open bus.
             0x4016 => {
@@ -124,15 +133,7 @@ impl Bus {
             0x2000..=0x3FFF => self.ppu.write_register(addr & 7, val, &mut *self.cart),
             0x4014 => self.oam_dma_page = Some(val),
             0x4016 => self.controller1.write(val),
-            0x4015 => {
-                self.apu.write(addr, val);
-                // Disabling the DMC aborts a pending DMA before its fetch.
-                if val & 0x10 == 0 && self.dmc_request.is_some() {
-                    self.dmc_request = None;
-                    self.apu.dmc_abort_fetch();
-                }
-            }
-            0x4000..=0x4013 | 0x4017 => self.apu.write(addr, val),
+            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),
             0x4018..=0x401F => {}
             _ => self.cart.cpu_write(addr, val),
         }
@@ -162,10 +163,16 @@ impl Bus {
         if self.dmc_request.is_some() && self.dmc_delay > 0 {
             self.dmc_delay -= 1;
         }
-        if let Some((addr, load)) = self.apu.tick() {
+        if let Some((addr, load, ghost)) = self.apu.tick() {
             self.dmc_request = Some(addr);
+            self.dmc_ghost = ghost;
             if load {
+                // Load DMA: RDY asserts a fixed delay after the (grid-aligned)
+                // request, so the DMA is always 3 cycles.
                 self.dmc_delay = dmc_load_delay();
+            }
+            if std::env::var("NES_DMA_LOG").is_ok() {
+                eprintln!("cyc {} RAISE load={} ghost={}", self.cycles, load, ghost);
             }
         }
         for _ in 0..2 {

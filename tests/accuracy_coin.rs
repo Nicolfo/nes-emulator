@@ -204,10 +204,12 @@ fn test_open_bus_controller_bits() {
 
 #[test]
 fn test_open_bus_4015_read_bit5() {
+    // Bit 5 of a $4015 read comes from the CPU's internal data bus, which a
+    // DMC DMA fetch does not update (unlike the external open bus).
     let mut nes = make_nes(&[0x00]);
-    nes.cpu.bus.open_bus = 0x20;
+    nes.cpu.bus.internal_bus = 0x20;
     let val = nes.cpu.bus.read(0x4015);
-    assert_eq!(val & 0x20, 0x20, "Bit 5 of $4015 read should be open bus bit 5");
+    assert_eq!(val & 0x20, 0x20, "Bit 5 of $4015 read should be internal bus bit 5");
 }
 
 // ==========================================

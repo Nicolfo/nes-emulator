@@ -92,9 +92,28 @@ impl Cpu {
     pub fn step(&mut self) -> u64 {
         let start = self.cycles;
         if self.take_interrupt {
+            if std::env::var("NES_EXEC_TRACE").is_ok() {
+                eprintln!("cyc {} IRQ/NMI seq at pc={:04X}", self.cycles, self.pc);
+            }
             self.interrupt_sequence();
         } else {
+            let pc = self.pc;
             let op = self.fetch8();
+            let in_window = std::env::var("NES_EXEC_WINDOW").ok().is_some_and(|w| {
+                w.split_once(':').is_some_and(|(a, b)| {
+                    a.parse::<u64>().is_ok_and(|a| self.cycles >= a)
+                        && b.parse::<u64>().is_ok_and(|b| self.cycles <= b)
+                })
+            });
+            if in_window
+                || std::env::var("NES_EXEC_TRACE").is_ok()
+                    && (pc < 0x0800 || (0x4000..=0x401F).contains(&pc))
+            {
+                eprintln!(
+                    "cyc {} EXEC {:04X} op={:02X} a={:02X} x={:02X} sp={:02X} p={:02X}",
+                    self.cycles, pc, op, self.a, self.x, self.sp, self.p
+                );
+            }
             self.exec(op);
             self.run_oam_dma_if_pending();
         }
@@ -119,6 +138,14 @@ impl Cpu {
     /// One read cycle: the access samples mid-cycle (after 2 of 3 PPU dots);
     /// the interrupt lines are polled at the end of the cycle.
     fn read_cycle(&mut self, addr: u16) -> u8 {
+        let v = self.fetch_cycle(addr);
+        self.bus.internal_bus = v;
+        v
+    }
+
+    /// A DMA engine's sample-fetch read cycle: drives the external bus but
+    /// leaves the halted CPU's internal data bus latch untouched.
+    fn fetch_cycle(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.bus.tick_cycle_pre();
         let v = self.bus.read(addr);
@@ -131,6 +158,7 @@ impl Cpu {
     fn write_cycle(&mut self, addr: u16, val: u8) {
         self.cycles += 1;
         self.bus.tick_cycle_pre();
+        self.bus.internal_bus = val;
         self.bus.write(addr, val);
         self.bus.tick_cycle_post();
         self.poll_lines();
@@ -141,7 +169,18 @@ impl Cpu {
     fn rd(&mut self, addr: u16) -> u8 {
         self.dmc_stalled = false;
         if self.bus.dmc_request.is_some() && self.bus.dmc_delay == 0 && !self.in_oam_dma {
-            self.dmc_dma(addr);
+            if self.bus.dmc_ghost {
+                // Aborted DMA: one halt cycle, no fetch.
+                self.bus.dmc_request = None;
+                self.bus.dmc_ghost = false;
+                self.bus.apu.dmc_abort_fetch();
+                if std::env::var("NES_DMA_LOG").is_ok() {
+                    eprintln!("cyc {} GHOST halt at {:04X}", self.cycles, addr);
+                }
+                self.read_cycle(addr);
+            } else {
+                self.dmc_dma(addr);
+            }
             self.dmc_stalled = true;
         }
         self.read_cycle(addr)
@@ -160,6 +199,9 @@ impl Cpu {
         let Some(sample_addr) = self.bus.dmc_request.take() else {
             return;
         };
+        if std::env::var("NES_DMA_LOG").is_ok() {
+            eprintln!("cyc {} HALT at addr {:04X}", self.cycles, addr);
+        }
         // A reload DMA steals 3-4 cycles: halt, dummy, an alignment cycle if
         // the next cycle is not a "get" cycle, then the fetch on a get cycle.
         // The halted CPU repeats its read (with side effects) every cycle.
@@ -184,8 +226,11 @@ impl Cpu {
             self.poll_lines();
             v
         } else {
-            self.read_cycle(sample_addr)
+            self.fetch_cycle(sample_addr)
         };
+        if std::env::var("NES_DMA_LOG").is_ok() {
+            eprintln!("cyc {} FETCH", self.cycles);
+        }
         self.bus.apu.dmc_supply(v);
     }
 
@@ -210,7 +255,12 @@ impl Cpu {
         macro_rules! dmc_track {
             () => {
                 if self.bus.dmc_request.is_some() {
-                    if !dmc_pending {
+                    if self.bus.dmc_ghost {
+                        // An aborted DMA's halt overlaps the OAM DMA's cycle.
+                        self.bus.dmc_request = None;
+                        self.bus.dmc_ghost = false;
+                        self.bus.apu.dmc_abort_fetch();
+                    } else if !dmc_pending {
                         dmc_pending = true;
                         dmc_served = 0;
                     } else if dmc_served < 3 {
@@ -231,7 +281,7 @@ impl Cpu {
             // then the OAM DMA runs one alignment cycle before resuming.
             if dmc_pending && dmc_served >= 2 && self.bus.dmc_request.is_some() {
                 let sample_addr = self.bus.dmc_request.take().unwrap();
-                let v = self.read_cycle(sample_addr);
+                let v = self.fetch_cycle(sample_addr);
                 self.bus.apu.dmc_supply(v);
                 dmc_pending = false;
                 self.dma_read_cycle(base + i, apu_active); // alignment
@@ -254,7 +304,7 @@ impl Cpu {
             while (self.cycles + 1) & 1 != parity {
                 self.read_cycle(halt_addr); // alignment
             }
-            let v = self.read_cycle(sample_addr);
+            let v = self.fetch_cycle(sample_addr);
             self.bus.apu.dmc_supply(v);
         }
         self.in_oam_dma = false;
