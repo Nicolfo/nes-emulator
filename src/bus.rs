@@ -118,7 +118,14 @@ impl Bus {
                 r
             }
             0x4000..=0x401F => self.open_bus,
-            0x4020..=0x7FFF => self.open_bus,
+            0x4020..=0x5FFF => self.open_bus,
+            0x6000..=0x7FFF => match self.cart.prg_ram_read(addr) {
+                Some(v) => {
+                    self.open_bus = v;
+                    v
+                }
+                None => self.open_bus,
+            },
             _ => {
                 let r = self.cart.cpu_read(addr);
                 self.open_bus = r;
@@ -233,9 +240,9 @@ impl Bus {
         }
     }
 
-    /// Level-triggered IRQ line (APU frame counter and DMC).
+    /// Level-triggered IRQ line (APU frame counter, DMC, and cartridge).
     pub fn irq_asserted(&self) -> bool {
-        self.apu.irq()
+        self.apu.irq() || self.cart.irq()
     }
 }
 
