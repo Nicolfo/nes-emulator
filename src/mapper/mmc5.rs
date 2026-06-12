@@ -272,6 +272,11 @@ impl Mapper for Mmc5 {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         self.ppu_activity();
         if addr < 0x2000 {
+            // Scanline detection needs three *consecutive PPU reads* of the
+            // same NT address; a pattern fetch in between breaks the run
+            // (the sprite window's paired garbage NT reads share one
+            // address and would otherwise false-trigger).
+            self.nt_streak = 0;
             let bg_set = if self.in_frame && self.rendering && self.sprites_8x16 {
                 self.fetch_count += 1;
                 // Fetches 65-80 of a scanline are the sprite window.
@@ -299,7 +304,9 @@ impl Mapper for Mmc5 {
 
     fn ppu_write(&mut self, addr: u16, val: u8) {
         self.ppu_activity();
-        if addr >= 0x2000 {
+        if addr < 0x2000 {
+            self.nt_streak = 0;
+        } else {
             let q = (self.nt_map >> (((addr >> 10) & 3) * 2)) & 3;
             if q == 2 && self.exram_mode < 2 {
                 self.exram[(addr & 0x3FF) as usize] = val;
@@ -716,6 +723,31 @@ mod tests {
             m.cpu_clock();
         }
         assert_eq!(m.cpu_reg_read(0x5204).unwrap() & 0x40, 0);
+    }
+
+    #[test]
+    fn sprite_window_garbage_nt_reads_do_not_false_trigger() {
+        let mut m = mmc5();
+        m.cpu_write(0x5203, 1); // IRQ at scanline 1
+        m.cpu_write(0x5204, 0x80);
+        // Real scanline detection: three identical NT reads in a row.
+        for _ in 0..3 {
+            m.nt_target(0x2000);
+        }
+        // Sprite window: 8 units of paired garbage NT reads at a single
+        // address, each pair followed by the two pattern-plane fetches.
+        for _ in 0..8 {
+            m.nt_target(0x20A5);
+            m.nt_target(0x20A5);
+            m.ppu_read(0x0000);
+            m.ppu_read(0x0008);
+        }
+        assert!(!m.irq(), "garbage NT pairs must not clock the counter");
+        // The next real detection clocks scanline 1 and fires.
+        for _ in 0..3 {
+            m.nt_target(0x2042);
+        }
+        assert!(m.irq());
     }
 
     #[test]
