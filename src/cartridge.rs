@@ -1,6 +1,6 @@
 use crate::mapper::{
-    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, N163, Nrom,
-    Uxrom, Vrc6,
+    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc5, N163,
+    Nrom, Uxrom, Vrc6,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -58,6 +58,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
         2 => Box::new(Uxrom::new(prg, chr, mirroring)),
         3 => Box::new(Cnrom::new(prg, chr, mirroring)),
         4 => Box::new(Mmc3::new(prg, chr, mirroring)),
+        5 => Box::new(Mmc5::new(prg, chr, mirroring)),
         7 => Box::new(Axrom::new(prg, chr)), // single-screen, register-controlled
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),

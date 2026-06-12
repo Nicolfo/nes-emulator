@@ -6,6 +6,7 @@ mod gxrom;
 mod mmc1;
 mod mmc2;
 mod mmc3;
+mod mmc5;
 mod n163;
 mod nrom;
 mod uxrom;
@@ -19,6 +20,7 @@ pub use gxrom::Gxrom;
 pub use mmc1::Mmc1;
 pub use mmc2::Mmc2;
 pub use mmc3::Mmc3;
+pub use mmc5::Mmc5;
 pub use n163::N163;
 pub use nrom::Nrom;
 pub use uxrom::Uxrom;
@@ -83,4 +85,7 @@ pub trait Mapper {
     fn nt_target(&mut self, addr: u16) -> NtTarget {
         NtTarget::Ciram(mirror_nt(self.mirroring(), addr))
     }
+    /// Observe CPU writes to the PPU registers ($2000-$3FFF); the MMC5
+    /// snoops $2000/$2001 for sprite size and rendering state.
+    fn cpu_bus_write(&mut self, _addr: u16, _val: u8) {}
 }
