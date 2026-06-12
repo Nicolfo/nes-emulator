@@ -1001,10 +1001,7 @@ mod tests {
         // All four nametables map to the same 1KB page.
         for nt in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
             assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenLo), 0x123);
-            assert_eq!(
-                ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenHi),
-                0x523
-            );
+            assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenHi), 0x523);
         }
     }
 
