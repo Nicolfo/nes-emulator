@@ -113,9 +113,12 @@ jobs:
       - name: Run AccuracyCoin suite
         run: cargo test --release --test accuracycoin_rom -- --nocapture
 
+      # No explicit --target: the host triple matches matrix.target, and using
+      # the default target dir shares the release artifacts already built by
+      # the AccuracyCoin test step above.
       - name: Build Release (Linux / Windows)
         if: matrix.target != 'universal-apple-darwin'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release
 
       - name: Build Release (macOS Universal)
         if: matrix.target == 'universal-apple-darwin'
@@ -134,7 +137,7 @@ jobs:
         if: github.event_name == 'push' && matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p ${{ matrix.artifact_name }}
-          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
+          cp target/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
           cp README.md ${{ matrix.artifact_name }}/
           tar -czf ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
 
@@ -143,7 +146,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path ${{ matrix.artifact_name }}
-          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary_name }}" -Destination "${{ matrix.artifact_name }}\"
+          Copy-Item "target\release\${{ matrix.binary_name }}" -Destination "${{ matrix.artifact_name }}\"
           Copy-Item "README.md" -Destination "${{ matrix.artifact_name }}\"
           Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.artifact_name }}.${{ matrix.archive_ext }}"
 
