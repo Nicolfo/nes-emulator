@@ -215,7 +215,11 @@ impl Mapper for Mmc5 {
             return 0;
         }
         let (is_rom, off) = self.prg_resolve(addr);
-        if is_rom { self.prg[off] } else { self.prg_ram[off] }
+        if is_rom {
+            self.prg[off]
+        } else {
+            self.prg_ram[off]
+        }
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
@@ -343,9 +347,7 @@ impl Mapper for Mmc5 {
             }
             0x5205 => Some((self.multiplicand as u16 * self.multiplier as u16) as u8),
             0x5206 => Some(((self.multiplicand as u16 * self.multiplier as u16) >> 8) as u8),
-            0x5C00..=0x5FFF if self.exram_mode >= 2 => {
-                Some(self.exram[(addr & 0x3FF) as usize])
-            }
+            0x5C00..=0x5FFF if self.exram_mode >= 2 => Some(self.exram[(addr & 0x3FF) as usize]),
             _ => None,
         }
     }
@@ -529,7 +531,7 @@ impl Mmc5Audio {
             self.pulses[1].clock_timer();
         }
         // ~240 Hz envelope clock, ~120 Hz length clock.
-        if self.cycle % 7457 == 0 {
+        if self.cycle.is_multiple_of(7457) {
             self.frame_step = (self.frame_step + 1) & 3;
             for p in &mut self.pulses {
                 p.clock_quarter();
@@ -542,7 +544,11 @@ impl Mmc5Audio {
 
     fn sample(&self) -> f32 {
         let p = (self.pulses[0].output() + self.pulses[1].output()) as f32;
-        let pulse_out = if p > 0.0 { 95.52 / (8128.0 / p + 100.0) } else { 0.0 };
+        let pulse_out = if p > 0.0 {
+            95.52 / (8128.0 / p + 100.0)
+        } else {
+            0.0
+        };
         pulse_out + self.pcm_level as f32 * 0.002
     }
 }
@@ -728,6 +734,9 @@ mod tests {
         let before = m.audio_sample();
         m.cpu_write(0x5011, 0x40);
         let delta = m.audio_sample() - before;
-        assert!((delta - 0x40 as f32 * 0.002).abs() < 1e-6, "PCM delta {delta}");
+        assert!(
+            (delta - 0x40 as f32 * 0.002).abs() < 1e-6,
+            "PCM delta {delta}"
+        );
     }
 }

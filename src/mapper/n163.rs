@@ -206,7 +206,11 @@ impl N163Audio {
         self.ram[base + 5] = (phase >> 16) as u8;
         let index = (self.ram[base + 6] as u32 + (phase >> 16)) & 0xFF;
         let byte = self.ram[(index as usize / 2) & 0x7F];
-        let sample = if index & 1 != 0 { byte >> 4 } else { byte & 0x0F };
+        let sample = if index & 1 != 0 {
+            byte >> 4
+        } else {
+            byte & 0x0F
+        };
         let vol = self.ram[base + 7] & 0x0F;
         self.outputs[ch] = (sample as f32 - 8.0) / 8.0 * (vol as f32 / 15.0);
     }

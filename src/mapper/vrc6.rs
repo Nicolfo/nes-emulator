@@ -213,8 +213,20 @@ impl Vrc6Audio {
     fn new() -> Self {
         Vrc6Audio {
             pulses: [
-                Vrc6Pulse { ctrl: 0, period: 0, enabled: false, counter: 0, step: 0 },
-                Vrc6Pulse { ctrl: 0, period: 0, enabled: false, counter: 0, step: 0 },
+                Vrc6Pulse {
+                    ctrl: 0,
+                    period: 0,
+                    enabled: false,
+                    counter: 0,
+                    step: 0,
+                },
+                Vrc6Pulse {
+                    ctrl: 0,
+                    period: 0,
+                    enabled: false,
+                    counter: 0,
+                    step: 0,
+                },
             ],
             saw_rate: 0,
             saw_period: 0,
