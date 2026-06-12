@@ -6,7 +6,14 @@ pub const HEIGHT: usize = 240;
 
 #[derive(Clone, Copy, Default)]
 struct SpriteRow {
-    x: u8,
+    /// X-position down-counter: decrements every visible dot regardless of
+    /// rendering enable; the shifter outputs once it reaches 0.
+    counter: u8,
+    /// Counter mode. Counters are armed ("counting") on dot 339 only if
+    /// rendering is enabled there; once they hit 0 they go "halted" (drawing)
+    /// and stay halted until re-armed.
+    counting: bool,
+    /// Pattern shifters: shift (MSB out) only while rendering is enabled.
     pat_lo: u8,
     pat_hi: u8,
     attr: u8,
@@ -390,10 +397,15 @@ impl Ppu {
     }
 
     fn shift(&mut self) {
+        // Serial inputs: 0 into the low pattern plane, 1 into the high
+        // plane; attribute shifters pull from the current attribute latch.
+        // Reloads normally overwrite these bits before they reach the
+        // output; they only become visible when a reload is skipped
+        // (rendering blanked around the load dot).
         self.bg_pat_lo <<= 1;
-        self.bg_pat_hi <<= 1;
-        self.bg_attr_lo <<= 1;
-        self.bg_attr_hi <<= 1;
+        self.bg_pat_hi = (self.bg_pat_hi << 1) | 1;
+        self.bg_attr_lo = (self.bg_attr_lo << 1) | (self.at_latch as u16 & 1);
+        self.bg_attr_hi = (self.bg_attr_hi << 1) | ((self.at_latch as u16 >> 1) & 1);
     }
 
     fn bg_fetch(&mut self, cart: &mut dyn Mapper) {
@@ -621,13 +633,45 @@ impl Ppu {
             pat_lo = pat_lo.reverse_bits(); // horizontal flip
             pat_hi = pat_hi.reverse_bits();
         }
+        // Fetch reloads the counter and shifter; the mode is only changed at
+        // dot 339 (if rendering) — a fetch alone leaves a halted counter
+        // halted.
+        let counting = self.sprites[g].counting;
         self.sprites[g] = SpriteRow {
-            x,
+            counter: x,
+            counting,
             pat_lo,
             pat_hi,
             attr,
             is_zero: g == 0 && self.sprite0_cur,
         };
+    }
+
+    /// Per-dot sprite counter/shifter update (visible lines, dots 1-256).
+    /// Counters tick even with rendering disabled; expired sprites shift
+    /// only while rendering is enabled.
+    fn clock_sprite_counters(&mut self, rendering: bool) {
+        for s in self.sprites[..self.sprite_count].iter_mut() {
+            if s.counting {
+                if s.counter > 0 {
+                    s.counter -= 1;
+                }
+                if s.counter == 0 {
+                    s.counting = false; // halt: drawing starts next dot
+                }
+            } else if rendering {
+                s.pat_lo <<= 1;
+                s.pat_hi <<= 1;
+            }
+        }
+    }
+
+    /// Dot 339 with rendering enabled arms the counters; a counter already
+    /// at 0 falls straight back to halted (draws at the first pixel).
+    fn arm_sprite_counters(&mut self) {
+        for s in self.sprites[..self.sprite_count].iter_mut() {
+            s.counting = s.counter != 0;
+        }
     }
 
     /// Returns (pattern 0-3, palette index 4-7, behind_bg, is_zero) for first opaque sprite.
@@ -636,12 +680,10 @@ impl Ppu {
             return (0, 0, false, false);
         }
         for s in &self.sprites[..self.sprite_count] {
-            let off = px.wrapping_sub(s.x as u16);
-            if off >= 8 {
+            if s.counting {
                 continue;
             }
-            let bit = 7 - off;
-            let pat = (((s.pat_hi >> bit) & 1) << 1) | ((s.pat_lo >> bit) & 1);
+            let pat = ((s.pat_hi >> 7) << 1) | (s.pat_lo >> 7);
             if pat != 0 {
                 return (pat, 4 + (s.attr & 3), s.attr & 0x20 != 0, s.is_zero);
             }
@@ -729,6 +771,10 @@ impl Ppu {
 
         if visible && (1..=256).contains(&self.dot) {
             self.render_pixel();
+            self.clock_sprite_counters(rendering);
+        }
+        if (visible || prerender) && rendering && self.dot == 339 {
+            self.arm_sprite_counters();
         }
 
         if self.scanline == 241 && self.dot == 1 {
