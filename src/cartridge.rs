@@ -1,6 +1,6 @@
 use crate::mapper::{
-    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, N163, Nrom,
-    Uxrom, Vrc6,
+    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, N163, Nrom, Uxrom,
+    Vrc6,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
