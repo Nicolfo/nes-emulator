@@ -103,11 +103,13 @@ pub fn render_home(frame: &mut [u8], sel: usize, game_loaded: bool, error: Optio
     draw_text_centered(frame, 226, "BUILT IN RUST", DIM, 1);
 }
 
-/// Settings rows: 0-7 buttons, 8 = scale, 9 = reset defaults, 10 = back.
-pub const SETTINGS_ROWS: usize = 11;
+/// Settings rows: 0-7 buttons, 8 = scale, 9 = overscan, 10 = reset defaults,
+/// 11 = back.
+pub const SETTINGS_ROWS: usize = 12;
 pub const ROW_SCALE: usize = 8;
-pub const ROW_RESET: usize = 9;
-pub const ROW_BACK: usize = 10;
+pub const ROW_OVERSCAN: usize = 9;
+pub const ROW_RESET: usize = 10;
+pub const ROW_BACK: usize = 11;
 
 #[allow(clippy::needless_range_loop)]
 pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool) {
@@ -116,8 +118,8 @@ pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool
     draw_text_centered(frame, 12, "SETTINGS", FG, 2);
     fill_rect(frame, 40, 32, 176, 1, DIM);
 
-    let start_y = 42i32;
-    let spacing = 14i32;
+    let start_y = 40i32;
+    let spacing = 13i32;
     for i in 0..SETTINGS_ROWS {
         let y = start_y + i as i32 * spacing;
         let selected = i == sel;
@@ -139,6 +141,15 @@ pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool
             ROW_SCALE => {
                 draw_text(frame, 44, y, "WINDOW SCALE", color, 1);
                 draw_text(frame, 160, y, &format!("< {}X >", cfg.scale), color, 1);
+            }
+            ROW_OVERSCAN => {
+                draw_text(frame, 44, y, "CROP OVERSCAN", color, 1);
+                let v = if cfg.crop_overscan {
+                    "< ON >"
+                } else {
+                    "< OFF >"
+                };
+                draw_text(frame, 160, y, v, color, 1);
             }
             ROW_RESET => draw_text(frame, 44, y, "RESET DEFAULTS", color, 1),
             ROW_BACK => draw_text(frame, 44, y, "BACK", color, 1),

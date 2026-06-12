@@ -5,9 +5,12 @@ use super::{Mapper, Mirroring};
 /// mirroring (including single-screen), PRG mode (32KB / fix-first /
 /// fix-last) and CHR mode (8KB / two 4KB banks).
 ///
+/// WRAM can be disabled by PRG bank register bit 4, or — on SNROM boards
+/// (8KB CHR RAM, <512KB PRG) — by CHR bank register bit 4. Disabled WRAM
+/// reads as open bus and ignores writes.
+///
 /// Not emulated: the consecutive-cycle write-ignore quirk (only matters for
-/// games doing read-modify-write stores to $8000+), and the PRG RAM disable
-/// bit in the PRG bank register.
+/// games doing read-modify-write stores to $8000+).
 pub struct Mmc1 {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -74,6 +77,22 @@ impl Mmc1 {
         half | off
     }
 
+    /// WRAM disable: PRG bank register bit 4 on all boards; on SNROM
+    /// (8KB CHR RAM, <512KB PRG — bit 4 isn't a CHR bank or SUROM half
+    /// select there) the CHR bank registers' bit 4 too.
+    fn wram_disabled(&self) -> bool {
+        if self.prg_bank & 0x10 != 0 {
+            return true;
+        }
+        let snrom = self.chr_is_ram && self.chr.len() == 0x2000 && self.prg.len() < 0x80000;
+        let chr_bits = if self.control & 0x10 != 0 {
+            self.chr_bank0 | self.chr_bank1
+        } else {
+            self.chr_bank0
+        };
+        snrom && chr_bits & 0x10 != 0
+    }
+
     /// Map a PPU address ($0000-$1FFF) to a CHR offset (4KB banks).
     fn chr_offset(&self, addr: u16) -> usize {
         let banks = self.chr.len() / 0x1000;
@@ -103,7 +122,11 @@ impl Mapper for Mmc1 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x6000..=0x7FFF => self.prg_ram[(addr & 0x1FFF) as usize] = val,
+            0x6000..=0x7FFF => {
+                if !self.wram_disabled() {
+                    self.prg_ram[(addr & 0x1FFF) as usize] = val;
+                }
+            }
             0x8000..=0xFFFF => {
                 if val & 0x80 != 0 {
                     // Reset: clear shift register and force PRG mode 3.
@@ -151,7 +174,18 @@ impl Mapper for Mmc1 {
     }
 
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
+        if self.wram_disabled() {
+            return None; // open bus
+        }
         Some(self.prg_ram[(addr & 0x1FFF) as usize])
+    }
+
+    fn prg_ram(&self) -> Option<&[u8]> {
+        Some(&self.prg_ram)
+    }
+
+    fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
+        Some(&mut self.prg_ram)
     }
 }
 
@@ -254,6 +288,34 @@ mod tests {
         let mut m = mmc1();
         m.cpu_write(0x6123, 0xCD);
         assert_eq!(m.prg_ram_read(0x6123), Some(0xCD));
+    }
+
+    #[test]
+    fn wram_disable_bits() {
+        // SNROM-style board: 8KB CHR RAM, 128KB PRG.
+        let mut m = Mmc1::new(vec![0; 8 * 0x4000], vec![]);
+        m.cpu_write(0x6000, 0xAA);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        // PRG bank register bit 4 disables WRAM on every board.
+        serial_write(&mut m, 0xE000, 0x10);
+        assert_eq!(m.prg_ram_read(0x6000), None);
+        m.cpu_write(0x6000, 0xBB); // ignored while disabled
+        serial_write(&mut m, 0xE000, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        // SNROM only: CHR bank register bit 4 disables WRAM too.
+        serial_write(&mut m, 0xA000, 0x10);
+        assert_eq!(m.prg_ram_read(0x6000), None);
+        serial_write(&mut m, 0xA000, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+    }
+
+    #[test]
+    fn chr_rom_board_bit4_keeps_wram_enabled() {
+        // CHR ROM board: $A000 bit 4 is a CHR bank bit, not WRAM disable.
+        let mut m = mmc1();
+        m.cpu_write(0x6000, 0xAA);
+        serial_write(&mut m, 0xA000, 0x10);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
     }
 
     #[test]

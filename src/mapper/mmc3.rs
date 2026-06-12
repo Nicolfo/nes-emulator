@@ -18,6 +18,10 @@ pub struct Mmc3 {
     irq_enabled: bool,
     irq_line: bool,
     last_a12: bool,
+    // $A001: bit 7 enables PRG RAM, bit 6 write-protects it. Power-on is
+    // undefined on hardware; default to enabled + writable so games that
+    // never touch $A001 keep working.
+    ram_protect: u8,
 }
 
 impl Mmc3 {
@@ -38,6 +42,7 @@ impl Mmc3 {
             irq_enabled: false,
             irq_line: false,
             last_a12: false,
+            ram_protect: 0x80,
         }
     }
 
@@ -115,7 +120,11 @@ impl Mapper for Mmc3 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x6000..=0x7FFF => self.prg_ram[(addr & 0x1FFF) as usize] = val,
+            0x6000..=0x7FFF => {
+                if self.ram_protect & 0xC0 == 0x80 {
+                    self.prg_ram[(addr & 0x1FFF) as usize] = val;
+                }
+            }
             0x8000..=0x9FFF => {
                 if addr & 1 == 0 {
                     self.bank_select = val;
@@ -130,8 +139,9 @@ impl Mapper for Mmc3 {
                     } else {
                         Mirroring::Vertical
                     };
+                } else {
+                    self.ram_protect = val;
                 }
-                // Odd: PRG RAM protect — not emulated.
             }
             0xC000..=0xDFFF => {
                 if addr & 1 == 0 {
@@ -171,7 +181,18 @@ impl Mapper for Mmc3 {
     }
 
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
+        if self.ram_protect & 0x80 == 0 {
+            return None; // open bus
+        }
         Some(self.prg_ram[(addr & 0x1FFF) as usize])
+    }
+
+    fn prg_ram(&self) -> Option<&[u8]> {
+        Some(&self.prg_ram)
+    }
+
+    fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
+        Some(&mut self.prg_ram)
     }
 
     fn irq(&self) -> bool {
@@ -256,6 +277,24 @@ mod tests {
         // $E000 acknowledges and disables.
         m.cpu_write(0xE000, 0);
         assert!(!m.irq());
+    }
+
+    #[test]
+    fn prg_ram_protect() {
+        let mut m = mmc3();
+        m.cpu_write(0x6000, 0xAA);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        // Write-protected: writes ignored, reads still work.
+        m.cpu_write(0xA001, 0xC0);
+        m.cpu_write(0x6000, 0xBB);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        // Disabled: open bus.
+        m.cpu_write(0xA001, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), None);
+        // Re-enabled writable.
+        m.cpu_write(0xA001, 0x80);
+        m.cpu_write(0x6000, 0xBB);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xBB));
     }
 
     #[test]

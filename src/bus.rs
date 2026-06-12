@@ -165,7 +165,10 @@ impl Bus {
         self.open_bus = val;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = val,
-            0x2000..=0x3FFF => self.ppu.write_register(addr & 7, val, &mut *self.cart),
+            0x2000..=0x3FFF => {
+                self.cart.cpu_bus_write(addr, val);
+                self.ppu.write_register(addr & 7, val, &mut *self.cart);
+            }
             0x4014 => self.oam_dma_page = Some(val),
             0x4016 => self.controller1.write(val),
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),

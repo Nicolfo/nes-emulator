@@ -4,6 +4,7 @@ mod font;
 mod icon;
 mod menu;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,13 @@ use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
 
 use config::{BUTTON_MASKS, Config};
-use menu::{HomeAction, ROW_BACK, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
+use menu::{HomeAction, ROW_BACK, ROW_OVERSCAN, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
+
+/// Scanlines hidden by NTSC overscan. Top crop is deeper: raster-split
+/// games (e.g. Castlevania III) finish their scanline-IRQ bank switch a
+/// line or two into the frame, so garbage can extend past the classic 8.
+const OVERSCAN_TOP: usize = 16;
+const OVERSCAN_BOTTOM: usize = 8;
 
 // NTSC: 89342 PPU dots per frame at 5,369,318 dots/sec = 60.0988 FPS
 const FRAME_PERIOD: Duration = Duration::from_nanos(16_639_267);
@@ -49,12 +56,36 @@ struct App {
     error: Option<String>,
     next_frame: Instant,
     audio: Option<audio::Audio>,
+    /// .sav file next to the loaded ROM; battery RAM is written back here.
+    sav_path: Option<PathBuf>,
+}
+
+/// Restore <rom>.sav into battery RAM (no-op without a battery) and return
+/// the path so it can be written back later.
+fn restore_battery_ram(nes: &mut Nes, rom_path: &Path) -> PathBuf {
+    let sav = rom_path.with_extension("sav");
+    if let Ok(data) = std::fs::read(&sav) {
+        nes.load_battery_ram(&data);
+    }
+    sav
 }
 
 impl App {
     fn redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    /// Write battery RAM to the .sav file; no-op without battery/ROM.
+    fn save_battery_ram(&self) {
+        let (Some(nes), Some(path)) = (&self.nes, &self.sav_path) else {
+            return;
+        };
+        if let Some(ram) = nes.battery_ram()
+            && let Err(e) = std::fs::write(path, ram)
+        {
+            eprintln!("failed to write {}: {e}", path.display());
         }
     }
 
@@ -67,9 +98,11 @@ impl App {
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
                 Ok(mut nes) => {
+                    self.save_battery_ram(); // flush the outgoing game first
                     if let Some(a) = &self.audio {
                         nes.set_sample_rate(a.sample_rate as f64);
                     }
+                    self.sav_path = Some(restore_battery_ram(&mut nes, &path));
                     self.nes = Some(nes);
                     self.error = None;
                     if let Some(w) = &self.window {
@@ -87,13 +120,34 @@ impl App {
     fn start_running(&mut self) {
         self.view = View::Running;
         self.next_frame = Instant::now();
+        self.apply_view_size();
     }
 
-    fn apply_scale(&self) {
+    /// (rows cropped from the top, visible height) for the current view.
+    fn crop(&self) -> (usize, usize) {
+        if matches!(self.view, View::Running)
+            && self.cfg.crop_overscan
+            && self
+                .nes
+                .as_ref()
+                .is_some_and(|n| n.region() == Region::Ntsc)
+        {
+            (OVERSCAN_TOP, HEIGHT - OVERSCAN_TOP - OVERSCAN_BOTTOM)
+        } else {
+            (0, HEIGHT)
+        }
+    }
+
+    /// Match pixel buffer and window size to the current view's crop.
+    fn apply_view_size(&mut self) {
+        let (_, h) = self.crop();
+        if let Some(p) = &mut self.pixels {
+            let _ = p.resize_buffer(WIDTH as u32, h as u32);
+        }
         if let Some(w) = &self.window {
             let _ = w.request_inner_size(LogicalSize::new(
                 (WIDTH as u32 * self.cfg.scale) as f64,
-                (HEIGHT as u32 * self.cfg.scale) as f64,
+                (h as u32 * self.cfg.scale) as f64,
             ));
         }
     }
@@ -155,14 +209,22 @@ impl App {
                 let delta = if code == KeyCode::ArrowLeft { -1i32 } else { 1 };
                 self.cfg.scale = (self.cfg.scale as i32 + delta).clamp(1, 5) as u32;
                 self.cfg.save();
-                self.apply_scale();
+                self.apply_view_size();
+            }
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if *sel == ROW_OVERSCAN => {
+                self.cfg.crop_overscan = !self.cfg.crop_overscan;
+                self.cfg.save();
             }
             KeyCode::Enter | KeyCode::Space => match *sel {
                 0..=7 => *waiting = true,
                 ROW_SCALE => {
                     self.cfg.scale = self.cfg.scale % 5 + 1;
                     self.cfg.save();
-                    self.apply_scale();
+                    self.apply_view_size();
+                }
+                ROW_OVERSCAN => {
+                    self.cfg.crop_overscan = !self.cfg.crop_overscan;
+                    self.cfg.save();
                 }
                 ROW_RESET => {
                     let scale = self.cfg.scale;
@@ -186,7 +248,9 @@ impl App {
             return;
         }
         if code == KeyCode::Escape && pressed {
+            self.save_battery_ram();
             self.view = View::Home { sel: 0 };
+            self.apply_view_size();
             if let Some(a) = &self.audio {
                 a.clear();
             }
@@ -229,6 +293,9 @@ impl ApplicationHandler for App {
             Pixels::new(WIDTH as u32, HEIGHT as u32, surface).expect("create pixel buffer");
         self.window = Some(window);
         self.pixels = Some(pixels);
+        // CLI boot starts directly in Running: sync buffer/window to the
+        // overscan crop, which is otherwise only applied on view changes.
+        self.apply_view_size();
         self.next_frame = Instant::now();
         self.redraw();
     }
@@ -255,6 +322,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                let (skip, h) = self.crop();
                 let Some(pixels) = &mut self.pixels else {
                     return;
                 };
@@ -262,7 +330,8 @@ impl ApplicationHandler for App {
                 match &self.view {
                     View::Running => {
                         if let Some(nes) = &self.nes {
-                            frame.copy_from_slice(nes.framebuffer());
+                            let fb = nes.framebuffer();
+                            frame.copy_from_slice(&fb[skip * WIDTH * 4..(skip + h) * WIDTH * 4]);
                         }
                     }
                     View::Home { sel } => {
@@ -332,6 +401,7 @@ fn main() {
     let mut nes = None;
     let mut view = View::Home { sel: 0 };
     let mut error = None;
+    let mut sav_path = None;
     if let Some(path) = std::env::args().nth(1) {
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
@@ -339,6 +409,7 @@ fn main() {
                     if let Some(a) = &audio {
                         n.set_sample_rate(a.sample_rate as f64);
                     }
+                    sav_path = Some(restore_battery_ram(&mut n, Path::new(&path)));
                     nes = Some(n);
                     view = View::Running;
                 }
@@ -358,6 +429,9 @@ fn main() {
         error,
         next_frame: Instant::now(),
         audio,
+        sav_path,
     };
     event_loop.run_app(&mut app).expect("event loop");
+    // single exit point for quit/close/escape-from-home
+    app.save_battery_ram();
 }
