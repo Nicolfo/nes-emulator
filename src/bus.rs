@@ -204,10 +204,11 @@ impl Bus {
     /// access samples after this, mid-cycle.
     pub fn tick_cycle_pre(&mut self) {
         self.cycles += 1;
+        self.cart.cpu_clock();
         if self.dmc_request.is_some() && self.dmc_delay > 0 {
             self.dmc_delay -= 1;
         }
-        if let Some((addr, load, ghost, skip_align)) = self.apu.tick() {
+        if let Some((addr, load, ghost, skip_align)) = self.apu.tick(self.cart.audio_sample()) {
             self.dmc_request = Some(addr);
             self.dmc_ghost = ghost;
             self.dmc_skip_align = skip_align;

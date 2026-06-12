@@ -1,4 +1,6 @@
-use crate::mapper::{Axrom, Cnrom, Gxrom, Mapper, Mirroring, Mmc1, Mmc3, Nrom, Uxrom};
+use crate::mapper::{
+    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Nrom, Uxrom,
+};
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
 /// layout, APU timing and frame pacing.
@@ -56,7 +58,10 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
         3 => Box::new(Cnrom::new(prg, chr, mirroring)),
         4 => Box::new(Mmc3::new(prg, chr, mirroring)),
         7 => Box::new(Axrom::new(prg, chr)), // single-screen, register-controlled
+        9 => Box::new(Mmc2::new(prg, chr, mirroring)),
+        11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
         66 => Box::new(Gxrom::new(prg, chr, mirroring)),
+        69 => Box::new(Fme7::new(prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
     Ok((mapper, region))

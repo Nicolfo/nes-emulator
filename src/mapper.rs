@@ -1,15 +1,21 @@
 mod axrom;
 mod cnrom;
+mod colordreams;
+mod fme7;
 mod gxrom;
 mod mmc1;
+mod mmc2;
 mod mmc3;
 mod nrom;
 mod uxrom;
 
 pub use axrom::Axrom;
 pub use cnrom::Cnrom;
+pub use colordreams::ColorDreams;
+pub use fme7::Fme7;
 pub use gxrom::Gxrom;
 pub use mmc1::Mmc1;
+pub use mmc2::Mmc2;
 pub use mmc3::Mmc3;
 pub use nrom::Nrom;
 pub use uxrom::Uxrom;
@@ -35,5 +41,13 @@ pub trait Mapper {
     /// Level of the cartridge's IRQ output.
     fn irq(&self) -> bool {
         false
+    }
+    /// Called once per CPU cycle; clocks cartridge IRQ counters and
+    /// expansion audio.
+    fn cpu_clock(&mut self) {}
+    /// Instantaneous expansion-audio output, pre-scaled to APU units
+    /// (the APU's own full scale is ~1.0).
+    fn audio_sample(&self) -> f32 {
+        0.0
     }
 }

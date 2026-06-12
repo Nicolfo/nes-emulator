@@ -2,8 +2,10 @@
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
 input, NTSC and PAL machines (auto-detected from the ROM header), and mappers
-0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM) and 66 (GxROM) —
-covering games such as Super Mario Bros. 1–3, Battletoads and Mega Man.
+0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM), 9 (MMC2),
+11 (Color Dreams), 66 (GxROM) and 69 (FME-7, with Sunsoft 5B audio) —
+covering games such as Super Mario Bros. 1–3, Battletoads, Mega Man,
+Punch-Out!! and Gimmick!.
 
 Passes all **140 / 140** tests of the hardware-verified
 [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) accuracy suite and
@@ -75,8 +77,9 @@ All bindings except Escape can be changed in Settings.
   APU register routing ($4000–$4013, $4015, $4017), 3 PPU dots and 1 APU step per
   CPU cycle interleave, NMI edge and level-triggered IRQ propagation.
 - `src/mapper.rs` + `src/mapper/` — `Mapper` trait and implementations: NROM,
-  MMC1, UxROM, CNROM, MMC3 (with the A12-clocked scanline IRQ counter), AxROM
-  and GxROM.
+  MMC1, UxROM, CNROM, MMC3 (with the A12-clocked scanline IRQ counter), AxROM,
+  MMC2 (tile-fetch CHR latches), Color Dreams, GxROM and FME-7 (CPU-cycle IRQ
+  counter plus Sunsoft 5B expansion audio mixed into the APU output).
 - `src/cartridge.rs` — iNES/NES 2.0 header parsing, mapper construction and
   NTSC/PAL region detection (NES 2.0 timing byte, legacy TV-system bit).
 - `src/nes.rs` — frontend-agnostic console facade (run a frame, framebuffer,
