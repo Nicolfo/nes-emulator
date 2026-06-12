@@ -15,6 +15,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use nes_emulator::cartridge::Region;
 use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
 
@@ -23,6 +24,15 @@ use menu::{HomeAction, ROW_BACK, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items
 
 // NTSC: 89342 PPU dots per frame at 5,369,318 dots/sec = 60.0988 FPS
 const FRAME_PERIOD: Duration = Duration::from_nanos(16_639_267);
+// PAL: 106392 PPU dots per frame at 5,320,342.5 dots/sec = 50.0070 FPS
+const PAL_FRAME_PERIOD: Duration = Duration::from_nanos(19_997_200);
+
+fn frame_period(nes: &Nes) -> Duration {
+    match nes.region() {
+        Region::Ntsc => FRAME_PERIOD,
+        Region::Pal => PAL_FRAME_PERIOD,
+    }
+}
 
 enum View {
     Home { sel: usize },
@@ -277,18 +287,19 @@ impl ApplicationHandler for App {
             return;
         }
         let nes = self.nes.as_mut().unwrap();
+        let period = frame_period(nes);
         let now = Instant::now();
         let mut ran = false;
         let mut catch_up = 0;
         while now >= self.next_frame && catch_up < 3 {
             nes.run_frame();
-            self.next_frame += FRAME_PERIOD;
+            self.next_frame += period;
             ran = true;
             catch_up += 1;
         }
         if now >= self.next_frame {
             // fell too far behind (e.g. window drag); resync instead of spiraling
-            self.next_frame = now + FRAME_PERIOD;
+            self.next_frame = now + period;
         }
         if ran {
             let samples = nes.take_audio();

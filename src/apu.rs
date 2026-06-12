@@ -1,11 +1,15 @@
-//! NTSC APU, ticked once per CPU cycle (~1.789773 MHz).
+//! APU (NTSC or PAL), ticked once per CPU cycle (~1.789773 MHz NTSC,
+//! ~1.662607 MHz PAL).
 //!
 //! Implements the five channels (pulse 1/2, triangle, noise, DMC), the frame
 //! counter with both sequencer modes and IRQ timing, the non-linear mixer,
 //! and downsampling to the host sample rate (boxcar decimation followed by
 //! the NES's analog filter chain: 90 Hz and 440 Hz high-pass, 14 kHz low-pass).
 
+use crate::cartridge::Region;
+
 const CPU_HZ: f64 = 1_789_772.727;
+const PAL_CPU_HZ: f64 = 1_662_607.03;
 
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, //
@@ -29,9 +33,17 @@ const NOISE_PERIOD: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
+const PAL_NOISE_PERIOD: [u16; 16] = [
+    4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778,
+];
+
 // NTSC DMC timer periods, in CPU cycles.
 const DMC_RATE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
+
+const PAL_DMC_RATE: [u16; 16] = [
+    398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50,
 ];
 
 #[derive(Default)]
@@ -457,6 +469,7 @@ pub struct Apu {
     triangle: Triangle,
     noise: Noise,
     dmc: Dmc,
+    region: Region,
 
     cycle: u64, // total CPU cycles, used for $4017 write-delay parity
     frame_cycle: u32,
@@ -498,6 +511,7 @@ impl Apu {
             triangle: Triangle::default(),
             noise: Noise::new(),
             dmc: Dmc::new(),
+            region: Region::Ntsc,
             cycle: 0,
             frame_cycle: 0,
             frame_mode5: false,
@@ -519,9 +533,22 @@ impl Apu {
         }
     }
 
+    pub fn set_region(&mut self, region: Region) {
+        self.region = region;
+        // Keep the resampling ratio consistent with the new CPU clock.
+        self.cycles_per_sample = self.cpu_hz() / (CPU_HZ / self.cycles_per_sample);
+    }
+
+    fn cpu_hz(&self) -> f64 {
+        match self.region {
+            Region::Ntsc => CPU_HZ,
+            Region::Pal => PAL_CPU_HZ,
+        }
+    }
+
     /// Set the host output rate; resets the filter chain.
     pub fn set_sample_rate(&mut self, hz: f64) {
-        self.cycles_per_sample = CPU_HZ / hz;
+        self.cycles_per_sample = self.cpu_hz() / hz;
         self.hp1 = HighPass::new(90.0, hz);
         self.hp2 = HighPass::new(440.0, hz);
         self.lp = LowPass::new(14_000.0, hz);
@@ -529,7 +556,7 @@ impl Apu {
 
     /// Nudge the resampling ratio for dynamic rate control (keeps filters).
     pub fn tune(&mut self, hz: f64) {
-        self.cycles_per_sample = CPU_HZ / hz;
+        self.cycles_per_sample = self.cpu_hz() / hz;
     }
 
     pub fn take_samples(&mut self) -> Vec<f32> {
@@ -640,7 +667,11 @@ impl Apu {
             }
             0x400E => {
                 self.noise.mode = v & 0x80 != 0;
-                self.noise.timer_period = NOISE_PERIOD[(v & 0x0F) as usize];
+                let table = match self.region {
+                    Region::Ntsc => &NOISE_PERIOD,
+                    Region::Pal => &PAL_NOISE_PERIOD,
+                };
+                self.noise.timer_period = table[(v & 0x0F) as usize];
             }
             0x400F => {
                 if self.noise.enabled {
@@ -654,7 +685,11 @@ impl Apu {
                     self.dmc.irq = false;
                 }
                 self.dmc.loop_flag = v & 0x40 != 0;
-                self.dmc.period = DMC_RATE[(v & 0x0F) as usize];
+                let table = match self.region {
+                    Region::Ntsc => &DMC_RATE,
+                    Region::Pal => &PAL_DMC_RATE,
+                };
+                self.dmc.period = table[(v & 0x0F) as usize];
             }
             0x4011 => self.dmc.level = v & 0x7F,
             0x4012 => self.dmc.sample_addr = 0xC000 | ((v as u16) << 6),
@@ -864,8 +899,12 @@ impl Apu {
         }
     }
 
-    // NTSC frame counter, counted in CPU cycles (events at APU half-cycles).
+    // Frame counter, counted in CPU cycles (events at APU half-cycles).
     fn clock_frame_events(&mut self) {
+        if self.region == Region::Pal {
+            self.clock_frame_events_pal();
+            return;
+        }
         if !self.frame_mode5 {
             match self.frame_cycle {
                 7457 => self.clock_quarter(),
@@ -899,6 +938,46 @@ impl Apu {
                     self.clock_half();
                 }
                 37282 => self.frame_cycle = 0,
+                _ => {}
+            }
+        }
+    }
+
+    // PAL frame counter: same structure as NTSC, longer periods.
+    fn clock_frame_events_pal(&mut self) {
+        if !self.frame_mode5 {
+            match self.frame_cycle {
+                8313 => self.clock_quarter(),
+                16627 => {
+                    self.clock_quarter();
+                    self.clock_half();
+                }
+                24939 => self.clock_quarter(),
+                33252 => self.set_frame_irq(false),
+                33253 => {
+                    self.clock_quarter();
+                    self.clock_half();
+                    self.set_frame_irq(false);
+                }
+                33254 => {
+                    self.set_frame_irq(true);
+                    self.frame_cycle = 0;
+                }
+                _ => {}
+            }
+        } else {
+            match self.frame_cycle {
+                8313 => self.clock_quarter(),
+                16627 => {
+                    self.clock_quarter();
+                    self.clock_half();
+                }
+                24939 => self.clock_quarter(),
+                41565 => {
+                    self.clock_quarter();
+                    self.clock_half();
+                }
+                41566 => self.frame_cycle = 0,
                 _ => {}
             }
         }

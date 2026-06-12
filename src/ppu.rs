@@ -1,3 +1,4 @@
+use crate::cartridge::Region;
 use crate::mapper::{Mapper, Mirroring};
 use crate::palette::NES_PALETTE;
 
@@ -87,8 +88,9 @@ pub struct Ppu {
     palette: [u8; 32],
     read_buffer: u8,
 
-    pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank
+    pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank (241..310 PAL)
     pub dot: u16,      // 0..340
+    region: Region,
     odd_frame: bool,
     suppress_vbl: bool,
     pub frame_complete: bool,
@@ -153,6 +155,7 @@ impl Ppu {
             read_buffer: 0,
             scanline: -1,
             dot: 0,
+            region: Region::Ntsc,
             odd_frame: false,
             suppress_vbl: false,
             frame_complete: false,
@@ -165,6 +168,18 @@ impl Ppu {
             pat_lo_latch: 0,
             pat_hi_latch: 0,
             framebuffer: vec![0; WIDTH * HEIGHT * 4],
+        }
+    }
+
+    pub fn set_region(&mut self, region: Region) {
+        self.region = region;
+    }
+
+    /// Last vblank scanline before the pre-render line.
+    fn last_line(&self) -> i16 {
+        match self.region {
+            Region::Ntsc => 260,
+            Region::Pal => 310,
         }
     }
 
@@ -900,12 +915,16 @@ impl Ppu {
         self.dots += 1;
         self.dot += 1;
         // NTSC: odd frames skip the last dot of the pre-render line when
-        // rendering is enabled.
-        let skip = prerender && self.odd_frame && rendering && self.dot == 340;
+        // rendering is enabled. PAL has no skipped dot.
+        let skip = self.region == Region::Ntsc
+            && prerender
+            && self.odd_frame
+            && rendering
+            && self.dot == 340;
         if self.dot > 340 || skip {
             self.dot = 0;
             self.scanline += 1;
-            if self.scanline > 260 {
+            if self.scanline > self.last_line() {
                 self.scanline = -1;
                 self.odd_frame = !self.odd_frame;
             }

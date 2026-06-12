@@ -1,6 +1,14 @@
 use crate::mapper::{Axrom, Cnrom, Gxrom, Mapper, Mirroring, Mmc1, Mmc3, Nrom, Uxrom};
 
-pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
+/// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
+/// layout, APU timing and frame pacing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Region {
+    Ntsc,
+    Pal,
+}
+
+pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
     if data.len() < 16 || &data[0..4] != b"NES\x1A" {
         return Err("not an iNES file (bad magic)".into());
     }
@@ -9,6 +17,19 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     let flags6 = data[6];
     let flags7 = data[7];
     let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
+    let region = if flags7 & 0x0C == 0x08 {
+        // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
+        if data[12] & 3 == 1 {
+            Region::Pal
+        } else {
+            Region::Ntsc
+        }
+    } else if data[9] & 1 != 0 {
+        // Legacy iNES TV-system bit; rarely set but free to honor.
+        Region::Pal
+    } else {
+        Region::Ntsc
+    };
     let mirroring = if flags6 & 1 != 0 {
         Mirroring::Vertical
     } else {
@@ -28,16 +49,17 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     let prg = data[prg_start..prg_start + prg_size].to_vec();
     let chr = data[chr_start..chr_start + chr_size].to_vec();
 
-    match mapper_id {
-        0 => Ok(Box::new(Nrom::new(prg, chr, mirroring))),
-        1 => Ok(Box::new(Mmc1::new(prg, chr))), // mirroring register-controlled
-        2 => Ok(Box::new(Uxrom::new(prg, chr, mirroring))),
-        3 => Ok(Box::new(Cnrom::new(prg, chr, mirroring))),
-        4 => Ok(Box::new(Mmc3::new(prg, chr, mirroring))),
-        7 => Ok(Box::new(Axrom::new(prg, chr))), // single-screen, register-controlled
-        66 => Ok(Box::new(Gxrom::new(prg, chr, mirroring))),
-        _ => Err(format!("mapper {mapper_id} is not supported")),
-    }
+    let mapper: Box<dyn Mapper> = match mapper_id {
+        0 => Box::new(Nrom::new(prg, chr, mirroring)),
+        1 => Box::new(Mmc1::new(prg, chr)), // mirroring register-controlled
+        2 => Box::new(Uxrom::new(prg, chr, mirroring)),
+        3 => Box::new(Cnrom::new(prg, chr, mirroring)),
+        4 => Box::new(Mmc3::new(prg, chr, mirroring)),
+        7 => Box::new(Axrom::new(prg, chr)), // single-screen, register-controlled
+        66 => Box::new(Gxrom::new(prg, chr, mirroring)),
+        _ => return Err(format!("mapper {mapper_id} is not supported")),
+    };
+    Ok((mapper, region))
 }
 
 #[cfg(test)]
@@ -53,7 +75,8 @@ mod tests {
         assert_eq!(data[5], 1); // 8KB CHR
         // We'll check the mirroring and mapper
         assert_eq!((data[6] >> 4) | (data[7] & 0xF0), 0); // mapper 0
-        let mut mapper = load_rom(&data).unwrap();
+        let (mut mapper, region) = load_rom(&data).unwrap();
+        assert_eq!(region, Region::Ntsc);
         // Let's assert reset vector points to PRG space (>= 0x8000)
         let lo = mapper.cpu_read(0xFFFC) as u16;
         let hi = mapper.cpu_read(0xFFFD) as u16;
