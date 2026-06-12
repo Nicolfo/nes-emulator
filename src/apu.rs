@@ -763,7 +763,9 @@ impl Apu {
     /// expiry inside the disable grace window: it halts the CPU for one
     /// cycle, then aborts. `skip_align` marks a retry of an attempt blocked
     /// by the $4015 enable pipeline: its DMA is 3 cycles, no alignment.
-    pub fn tick(&mut self) -> Option<(u16, bool, bool, bool)> {
+    /// `ext` is the cartridge's expansion-audio output this cycle; it is
+    /// summed into the mix and rides the decimation and filter chain.
+    pub fn tick(&mut self, ext: f32) -> Option<(u16, bool, bool, bool)> {
         self.cycle += 1;
 
         if self.frame_irq_clear_pending && self.cycle & 1 == 1 {
@@ -853,7 +855,7 @@ impl Apu {
         }
 
         // boxcar decimation to the output rate, then the analog filter chain
-        self.acc += self.mix();
+        self.acc += self.mix() + ext;
         self.acc_n += 1;
         self.sample_frac += 1.0;
         if self.sample_frac >= self.cycles_per_sample {
@@ -1012,7 +1014,7 @@ mod tests {
 
     fn run(apu: &mut Apu, cycles: u32) {
         for _ in 0..cycles {
-            apu.tick();
+            apu.tick(0.0);
         }
     }
 
@@ -1092,7 +1094,7 @@ mod tests {
         apu.write(0x4015, 0x10);
         let mut fetched = 0;
         for _ in 0..10_000 {
-            if let Some((addr, _is_load, _is_ghost, _skip_align)) = apu.tick() {
+            if let Some((addr, _is_load, _is_ghost, _skip_align)) = apu.tick(0.0) {
                 assert_eq!(addr, 0xC000);
                 apu.dmc_supply(0xFF);
                 fetched += 1;
