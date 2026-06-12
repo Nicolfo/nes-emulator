@@ -50,6 +50,10 @@ pub struct Cpu {
     poll_prev: bool,
     poll_cur: bool,
     take_interrupt: bool,
+    // BRK and the interrupt sequence don't poll on their final cycles, so the
+    // first instruction of the handler always executes before a pending
+    // interrupt is serviced.
+    suppress_poll: bool,
     in_oam_dma: bool,
     // Set when the last rd() was stalled by a DMC DMA (SHA/SHX/SHY/TAS lose
     // the & (H+1) on the stored value when the DMA lands before their write).
@@ -72,6 +76,7 @@ impl Cpu {
             poll_prev: false,
             poll_cur: false,
             take_interrupt: false,
+            suppress_poll: false,
             in_oam_dma: false,
             dmc_stalled: false,
         }
@@ -119,7 +124,8 @@ impl Cpu {
         }
         // Decide whether the *next* step services an interrupt, based on the
         // poll state at the penultimate cycle of what just executed.
-        self.take_interrupt = self.poll_prev;
+        let suppressed = std::mem::take(&mut self.suppress_poll);
+        self.take_interrupt = self.poll_prev && !suppressed;
         self.cycles - start
     }
 
@@ -129,6 +135,9 @@ impl Cpu {
         let line = self.bus.nmi_line();
         if line && !self.nmi_line_prev {
             self.nmi_pending = true;
+            if std::env::var("NES_NMI_LOG").is_ok() {
+                eprintln!("cyc {} NMI edge at pc={:04X}", self.cycles, self.pc);
+            }
         }
         self.nmi_line_prev = line;
         self.poll_prev = self.poll_cur;
@@ -187,6 +196,20 @@ impl Cpu {
     }
 
     fn wr(&mut self, addr: u16, val: u8) {
+        // A ghost (1-cycle aborted) DMA landing on a CPU write cycle does not
+        // occur at all: writes ignore RDY, and the abort consumes the request.
+        if self.bus.dmc_request.is_some()
+            && self.bus.dmc_ghost
+            && self.bus.dmc_delay == 0
+            && !self.in_oam_dma
+        {
+            self.bus.dmc_request = None;
+            self.bus.dmc_ghost = false;
+            self.bus.apu.dmc_abort_fetch();
+            if std::env::var("NES_DMA_LOG").is_ok() {
+                eprintln!("cyc {} GHOST dropped on write at {:04X}", self.cycles, addr);
+            }
+        }
         self.write_cycle(addr, val);
     }
 
@@ -205,11 +228,16 @@ impl Cpu {
         // A reload DMA steals 3-4 cycles: halt, dummy, an alignment cycle if
         // the next cycle is not a "get" cycle, then the fetch on a get cycle.
         // The halted CPU repeats its read (with side effects) every cycle.
+        // A blocked-attempt retry already consumed its alignment waiting for
+        // the enable pipeline: halt, put, get (3 cycles, off-parity fetch).
+        let skip_align = std::mem::take(&mut self.bus.dmc_skip_align);
         let parity = crate::bus::dmc_get_parity();
         self.read_cycle(addr); // halt
         self.read_cycle(addr); // dummy
-        while (self.cycles + 1) & 1 != parity {
-            self.read_cycle(addr); // alignment
+        if !skip_align {
+            while (self.cycles + 1) & 1 != parity {
+                self.read_cycle(addr); // alignment
+            }
         }
         let v = if (0x4000..=0x401F).contains(&addr) {
             // Bus conflict: the halted CPU's address keeps the APU registers
@@ -340,6 +368,7 @@ impl Cpu {
         let lo = self.rd(vector) as u16;
         let hi = self.rd(vector + 1) as u16;
         self.pc = (hi << 8) | lo;
+        self.suppress_poll = true;
     }
 
     // ---- memory helpers ----
@@ -996,6 +1025,7 @@ impl Cpu {
                 let lo = self.rd(vector) as u16;
                 let hi = self.rd(vector + 1) as u16;
                 self.pc = (hi << 8) | lo;
+                self.suppress_poll = true;
             }
             // Branches
             0x10 => self.branch(self.p & N == 0),

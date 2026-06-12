@@ -44,6 +44,9 @@ pub struct Bus {
     /// The pending DMC request was raised inside the disable grace window:
     /// it steals a single halt cycle, then aborts without fetching.
     pub dmc_ghost: bool,
+    /// The pending DMC request is the retry of an attempt blocked by the
+    /// $4015 enable pipeline: the DMA skips its alignment cycle (3 cycles).
+    pub dmc_skip_align: bool,
     /// Cycles until the DMC DMA may halt the CPU (models RDY assertion delay
     /// after a $4015 load).
     pub dmc_delay: u8,
@@ -70,6 +73,7 @@ impl Bus {
             internal_bus: 0,
             dmc_request: None,
             dmc_ghost: false,
+            dmc_skip_align: false,
             dmc_delay: 0,
             oam_dma_page: None,
             watch_addr: None,
@@ -152,7 +156,22 @@ impl Bus {
                 self.open_bus
             }
         } else {
-            self.read(addr)
+            let v = self.read(addr);
+            // With the registers active, a DMA read whose low 5 address bits
+            // select $4015 returns the internal status register even when the
+            // source drives the bus ($4015 never drives the external bus);
+            // only its undriven bit 5 shows the external byte. $4016/$4017
+            // lose the conflict against a driven source and stay invisible.
+            if cpu_addr_in_apu && addr & 0x1F == 0x15 {
+                (self.apu.read_status() & !0x20) | (v & 0x20)
+            } else {
+                // $4016 mirrors still clock the controller shift register,
+                // even though the driven source wins the bus conflict.
+                if cpu_addr_in_apu && addr & 0x1F == 0x16 {
+                    self.controller1.read();
+                }
+                v
+            }
         }
     }
 
@@ -163,16 +182,20 @@ impl Bus {
         if self.dmc_request.is_some() && self.dmc_delay > 0 {
             self.dmc_delay -= 1;
         }
-        if let Some((addr, load, ghost)) = self.apu.tick() {
+        if let Some((addr, load, ghost, skip_align)) = self.apu.tick() {
             self.dmc_request = Some(addr);
             self.dmc_ghost = ghost;
+            self.dmc_skip_align = skip_align;
             if load {
                 // Load DMA: RDY asserts a fixed delay after the (grid-aligned)
                 // request, so the DMA is always 3 cycles.
                 self.dmc_delay = dmc_load_delay();
             }
             if std::env::var("NES_DMA_LOG").is_ok() {
-                eprintln!("cyc {} RAISE load={} ghost={}", self.cycles, load, ghost);
+                eprintln!(
+                    "cyc {} RAISE load={} ghost={} skip_align={}",
+                    self.cycles, load, ghost, skip_align
+                );
             }
         }
         for _ in 0..2 {

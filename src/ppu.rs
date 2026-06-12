@@ -34,6 +34,34 @@ pub struct Ppu {
     sprites: [SpriteRow; 8],
     sprite_count: usize,
 
+    // ---- dot-accurate sprite pipeline ----
+    secondary_oam: [u8; 32],
+    /// Secondary OAM address as the hardware tracks it per dot (0-31).
+    sec_addr: u8,
+    /// Value visible on $2004 reads while rendering.
+    oam_bus: u8,
+    /// Primary OAM byte pointer during evaluation (byte-granular: a
+    /// misaligned OAMADDR at dot 65 misaligns every sprite).
+    eval_ptr: u8,
+    eval_latch: u8,
+    /// Bytes left to copy for the current in-range sprite (0 = comparing Y).
+    eval_copying: u8,
+    /// Candidates examined this line (eval ends after 64).
+    eval_candidates: u8,
+    eval_done: bool,
+    sec_full: bool,
+    /// 3 dummy reads left after the overflow flag was set.
+    overflow_dummy: u8,
+    /// The first candidate evaluated this line was in range: the sprite in
+    /// secondary OAM slot 0 acts as sprite zero on the next line.
+    sprite0_next: bool,
+    sprite0_cur: bool,
+    /// OAM corruption row seeded by disabling rendering mid-line; applied on
+    /// the next rendered dot of a sprite-evaluation line.
+    pending_corruption: Option<u8>,
+    /// $2001 writes take effect ~2 dots later.
+    pending_mask: Option<(u8, u8)>,
+
     pub vram: [u8; 0x800],
     palette: [u8; 32],
     read_buffer: u8,
@@ -80,6 +108,20 @@ impl Ppu {
             oam: [0; 256],
             sprites: [SpriteRow::default(); 8],
             sprite_count: 0,
+            secondary_oam: [0xFF; 32],
+            sec_addr: 0,
+            oam_bus: 0xFF,
+            eval_ptr: 0,
+            eval_latch: 0,
+            eval_copying: 0,
+            eval_candidates: 0,
+            eval_done: false,
+            sec_full: false,
+            overflow_dummy: 0,
+            sprite0_next: false,
+            sprite0_cur: false,
+            pending_corruption: None,
+            pending_mask: None,
             vram: [0; 0x800],
             palette: [0; 32],
             read_buffer: 0,
@@ -138,7 +180,14 @@ impl Ppu {
     pub fn read_register(&mut self, reg: u16, cart: &mut dyn Mapper) -> u8 {
         match reg & 7 {
             2 => {
-                let res = (self.status & 0xE0) | (self.io_bus_read() & 0x1F);
+                let mut res = (self.status & 0xE0) | (self.io_bus_read() & 0x1F);
+                // The vblank flag is latched when M2 rises but the sprite
+                // flags are sampled when M2 falls, ~1.9 PPU dots later: a
+                // read landing on pre-render dot 1 (clear tick not yet
+                // processed) already sees the sprite flags cleared.
+                if self.scanline == -1 && self.dot == 1 {
+                    res &= !0x60;
+                }
                 // Race: reading one PPU clock before VBlank is set returns
                 // clear and prevents the flag (and thus the NMI) entirely.
                 if self.scanline == 241 && self.dot == 1 {
@@ -150,10 +199,18 @@ impl Ppu {
                 res
             }
             4 => {
-                let mut res = self.oam[self.oam_addr as usize];
-                if self.oam_addr & 3 == 2 {
-                    res &= 0xE3; // attribute bits 2-4 don't exist in OAM
-                }
+                // While rendering, reads expose the OAM bus the sprite
+                // pipeline is driving ($FF during the clear phase, the byte
+                // under evaluation, the secondary-OAM byte being fetched).
+                let res = if self.rendering_enabled() && self.scanline < 240 {
+                    self.oam_bus
+                } else {
+                    let mut v = self.oam[self.oam_addr as usize];
+                    if self.oam_addr & 3 == 2 {
+                        v &= 0xE3; // attribute bits 2-4 don't exist in OAM
+                    }
+                    v
+                };
                 self.io_bus_refresh(0xFF, res);
                 res
             }
@@ -187,11 +244,17 @@ impl Ppu {
                 self.ctrl = val;
                 self.t = (self.t & !0x0C00) | (((val & 3) as u16) << 10);
             }
-            1 => self.mask = val,
+            1 => self.pending_mask = Some((val, 2)), // takes effect ~2 dots later
             3 => self.oam_addr = val,
             4 => {
-                self.oam[self.oam_addr as usize] = val;
-                self.oam_addr = self.oam_addr.wrapping_add(1);
+                if self.rendering_enabled() && self.scanline < 240 {
+                    // Writes during rendering don't reach OAM; they bump the
+                    // high 6 bits of OAMADDR instead.
+                    self.oam_addr = self.oam_addr.wrapping_add(4) & 0xFC;
+                } else {
+                    self.oam[self.oam_addr as usize] = val;
+                    self.oam_addr = self.oam_addr.wrapping_add(1);
+                }
             }
             5 => {
                 if !self.w {
@@ -372,58 +435,199 @@ impl Ppu {
         if self.ctrl & 0x20 != 0 { 16 } else { 8 }
     }
 
-    /// Evaluate + fetch sprites for the next scanline (hybrid: batched at dot 257).
-    fn evaluate_sprites(&mut self, cart: &mut dyn Mapper) {
-        let next = self.scanline + 1;
-        self.sprite_count = 0;
-        let height = self.sprite_height();
-        let mut overflow = false;
-        for i in 0..64 {
-            let y = self.oam[i * 4] as i16;
-            // OAM Y is top-1: sprite occupies scanlines y+1 .. y+height
-            let row = next - y - 1;
-            if row < 0 || row >= height {
-                continue;
+    /// In-range test: the sprite with OAM Y byte `y` covers row `line - y`.
+    fn in_range(&self, line: i16, y: u8) -> bool {
+        let row = line - y as i16;
+        row >= 0 && row < self.sprite_height()
+    }
+
+    /// One dot of the sprite pipeline (rendering enabled, line -1..239).
+    fn sprite_pipeline_dot(&mut self, cart: &mut dyn Mapper) {
+        let d = self.dot;
+        let prerender = self.scanline == -1;
+        // Dots 1-64 (visible lines): secondary OAM clear, $FF on the bus.
+        // The pre-render line neither clears nor evaluates: secondary OAM
+        // keeps scanline 239's sprites (the "sprites on scanline 0" quirk).
+        if (1..=64).contains(&d) && !prerender {
+            self.sec_addr = ((d - 1) / 2) as u8;
+            self.oam_bus = 0xFF;
+            if d % 2 == 0 {
+                self.secondary_oam[self.sec_addr as usize] = 0xFF;
             }
-            if self.sprite_count == 8 {
-                overflow = true;
-                break;
+            if d == 64 {
+                // Arm evaluation: it starts at the live OAMADDR, byte-granular.
+                self.eval_ptr = self.oam_addr;
+                self.eval_copying = 0;
+                self.eval_candidates = 0;
+                self.eval_done = false;
+                self.sec_full = false;
+                self.overflow_dummy = 0;
+                self.sec_addr = 0;
+                self.sprite0_next = false;
             }
-            let tile = self.oam[i * 4 + 1];
-            let attr = self.oam[i * 4 + 2];
-            let x = self.oam[i * 4 + 3];
-            let mut row = row;
-            if attr & 0x80 != 0 {
-                row = height - 1 - row; // vertical flip
-            }
-            let pat_addr = if height == 16 {
-                let table = ((tile & 1) as u16) << 12;
-                let mut t = (tile & 0xFE) as u16;
-                if row >= 8 {
-                    t += 1;
+            return;
+        }
+        // Dots 65-256 (visible lines): evaluation, 2-dot cadence.
+        if (65..=256).contains(&d) && !prerender {
+            if d % 2 == 1 {
+                let mut v = self.oam[self.eval_ptr as usize];
+                if self.eval_ptr & 3 == 2 {
+                    v &= 0xE3;
                 }
-                table | (t << 4) | (row as u16 & 7)
-            } else {
-                ((self.ctrl as u16 & 0x08) << 9) | ((tile as u16) << 4) | row as u16
-            };
-            let mut pat_lo = cart.ppu_read(pat_addr);
-            let mut pat_hi = cart.ppu_read(pat_addr + 8);
-            if attr & 0x40 != 0 {
-                pat_lo = pat_lo.reverse_bits(); // horizontal flip
-                pat_hi = pat_hi.reverse_bits();
+                self.eval_latch = v;
+                self.oam_bus = v;
+                return;
             }
-            self.sprites[self.sprite_count] = SpriteRow {
-                x,
-                pat_lo,
-                pat_hi,
-                attr,
-                is_zero: i == 0,
+            if self.eval_done {
+                return;
+            }
+            if self.overflow_dummy > 0 {
+                self.overflow_dummy -= 1;
+                self.eval_ptr = self.eval_ptr.wrapping_add(1);
+                if self.overflow_dummy == 0 {
+                    self.eval_done = true;
+                }
+                return;
+            }
+            if self.eval_copying > 0 {
+                self.secondary_oam[self.sec_addr as usize] = self.eval_latch;
+                self.sec_addr += 1;
+                self.eval_ptr = self.eval_ptr.wrapping_add(1);
+                self.eval_copying -= 1;
+                if self.eval_copying == 0 {
+                    self.eval_candidates += 1;
+                    if self.eval_candidates >= 64 {
+                        self.eval_done = true;
+                    }
+                    if self.sec_addr >= 32 {
+                        self.sec_full = true;
+                        self.sec_addr = 0;
+                    }
+                }
+                return;
+            }
+            if !self.sec_full {
+                // Comparing a Y byte; it is written to secondary OAM even
+                // when out of range.
+                self.secondary_oam[self.sec_addr as usize] = self.eval_latch;
+                if self.in_range(self.scanline, self.eval_latch) {
+                    if self.eval_candidates == 0 {
+                        self.sprite0_next = true;
+                    }
+                    self.eval_copying = 3;
+                    self.sec_addr += 1;
+                    self.eval_ptr = self.eval_ptr.wrapping_add(1);
+                } else {
+                    self.eval_ptr = self.eval_ptr.wrapping_add(4);
+                    self.eval_candidates += 1;
+                    if self.eval_candidates >= 64 {
+                        self.eval_done = true;
+                    }
+                }
+            } else {
+                // Secondary OAM full: buggy overflow scan.
+                if self.in_range(self.scanline, self.eval_latch) {
+                    self.status |= 0x20;
+                    self.overflow_dummy = 3;
+                    self.eval_ptr = self.eval_ptr.wrapping_add(1);
+                } else {
+                    // The famous diagonal: n and m both increment.
+                    let n = (self.eval_ptr >> 2).wrapping_add(1) & 0x3F;
+                    let m = (self.eval_ptr.wrapping_add(1)) & 3;
+                    self.eval_ptr = (n << 2) | m;
+                    self.eval_candidates += 1;
+                    if self.eval_candidates >= 64 {
+                        self.eval_done = true;
+                    }
+                }
+            }
+            return;
+        }
+        // Dots 257-320 (visible + pre-render): sprite fetches from secondary
+        // OAM. The pre-render line does its in-range math with scanline
+        // 261 & 255 = 5, picking up stale secondary OAM.
+        if (257..=320).contains(&d) {
+            if d == 257 {
+                self.sprite0_cur = self.sprite0_next;
+                self.sprite_count = 8;
+            }
+            let g = ((d - 257) / 8) as usize;
+            let k = (d - 257) % 8;
+            let base = g * 4;
+            self.sec_addr = match k {
+                0 => {
+                    self.oam_bus = self.secondary_oam[base];
+                    (base + 1) as u8
+                }
+                1 => {
+                    self.oam_bus = self.secondary_oam[base + 1];
+                    (base + 2) as u8
+                }
+                2 => {
+                    self.oam_bus = self.secondary_oam[base + 2] & 0xE3;
+                    (base + 3) as u8
+                }
+                _ => {
+                    self.oam_bus = self.secondary_oam[base + 3];
+                    if k == 7 {
+                        (base + 4).min(31) as u8
+                    } else {
+                        (base + 3) as u8
+                    }
+                }
             };
-            self.sprite_count += 1;
+            if k == 7 {
+                self.fetch_sprite_slot(g, cart);
+            }
+            return;
         }
-        if overflow {
-            self.status |= 0x20;
+        // Dots 321-340 and dot 0: reads return the first secondary OAM byte.
+        if d >= 321 {
+            self.oam_bus = self.secondary_oam[0];
         }
+    }
+
+    /// Load sprite slot `g` from secondary OAM (last dot of its fetch group).
+    fn fetch_sprite_slot(&mut self, g: usize, cart: &mut dyn Mapper) {
+        let y = self.secondary_oam[g * 4];
+        let tile = self.secondary_oam[g * 4 + 1];
+        let attr = self.secondary_oam[g * 4 + 2];
+        let x = self.secondary_oam[g * 4 + 3];
+        // The pre-render line is treated as scanline 5 (261 & 255) here.
+        let line: i16 = if self.scanline == -1 { 5 } else { self.scanline };
+        let height = self.sprite_height();
+        let mut row = line - y as i16;
+        let in_range = row >= 0 && row < height;
+        if !in_range {
+            self.sprites[g] = SpriteRow::default();
+            return;
+        }
+        if attr & 0x80 != 0 {
+            row = height - 1 - row; // vertical flip
+        }
+        let pat_addr = if height == 16 {
+            let table = ((tile & 1) as u16) << 12;
+            let mut t = (tile & 0xFE) as u16;
+            if row >= 8 {
+                t += 1;
+            }
+            table | (t << 4) | (row as u16 & 7)
+        } else {
+            ((self.ctrl as u16 & 0x08) << 9) | ((tile as u16) << 4) | row as u16
+        };
+        let mut pat_lo = cart.ppu_read(pat_addr);
+        let mut pat_hi = cart.ppu_read(pat_addr + 8);
+        if attr & 0x40 != 0 {
+            pat_lo = pat_lo.reverse_bits(); // horizontal flip
+            pat_hi = pat_hi.reverse_bits();
+        }
+        self.sprites[g] = SpriteRow {
+            x,
+            pat_lo,
+            pat_hi,
+            attr,
+            is_zero: g == 0 && self.sprite0_cur,
+        };
     }
 
     /// Returns (pattern 0-3, palette index 4-7, behind_bg, is_zero) for first opaque sprite.
@@ -448,9 +652,53 @@ impl Ppu {
     // ---- per-dot tick ----
 
     pub fn tick(&mut self, cart: &mut dyn Mapper) {
-        let rendering = self.rendering_enabled();
         let visible = (0..240).contains(&self.scanline);
         let prerender = self.scanline == -1;
+
+        // $2001 writes land ~2 dots after the CPU cycle. Disabling rendering
+        // mid-line on a sprite-evaluation line seeds OAM corruption with the
+        // current secondary OAM address.
+        if let Some((val, mut left)) = self.pending_mask.take() {
+            if left > 1 {
+                left -= 1;
+                self.pending_mask = Some((val, left));
+            } else {
+                let was_on = self.rendering_enabled();
+                self.mask = val;
+                if was_on
+                    && !self.rendering_enabled()
+                    && (visible || prerender)
+                    && (1..=320).contains(&self.dot)
+                {
+                    let row = if self.dot <= 64 {
+                        self.sec_addr
+                    } else if self.dot <= 256 {
+                        (self.sec_addr + 3) & !3 & 31
+                    } else {
+                        self.sec_addr
+                    };
+                    self.pending_corruption = Some(row);
+                }
+            }
+        }
+
+        let rendering = self.rendering_enabled();
+
+        // Pending corruption lands on the first rendered dot of a
+        // sprite-evaluation line: OAM row 0 overwrites OAM row `seed`.
+        if rendering && (visible || prerender) {
+            if let Some(row) = self.pending_corruption.take() {
+                let row = row as usize & 31;
+                for i in 0..8 {
+                    self.oam[row * 8 + i] = self.oam[i];
+                }
+                self.secondary_oam[row] = self.secondary_oam[0];
+            }
+        }
+
+        if (visible || prerender) && rendering {
+            self.sprite_pipeline_dot(cart);
+        }
 
         if (visible || prerender) && rendering {
             if (2..=257).contains(&self.dot) || (322..=337).contains(&self.dot) {
@@ -468,9 +716,6 @@ impl Ppu {
             }
             if prerender && (280..=304).contains(&self.dot) {
                 self.copy_vertical();
-            }
-            if self.dot == 257 && self.scanline < 239 {
-                self.evaluate_sprites(cart);
             }
             // OAMADDR is reset during sprite tile fetches on rendered lines.
             if (257..=320).contains(&self.dot) {
