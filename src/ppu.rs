@@ -351,6 +351,8 @@ impl Ppu {
         match mirroring {
             Mirroring::Vertical => a & 0x07FF,
             Mirroring::Horizontal => ((a >> 1) & 0x400) | (a & 0x3FF),
+            Mirroring::SingleScreenLo => a & 0x3FF,
+            Mirroring::SingleScreenHi => 0x400 | (a & 0x3FF),
         }
     }
 
@@ -991,6 +993,16 @@ mod tests {
         assert_eq!(s & 0x80, 0x80);
         assert_eq!(ppu.status & 0x80, 0);
         assert!(!ppu.w);
+    }
+
+    #[test]
+    fn single_screen_mirroring() {
+        let ppu = Ppu::new();
+        // All four nametables map to the same 1KB page.
+        for nt in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+            assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenLo), 0x123);
+            assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenHi), 0x523);
+        }
     }
 
     #[test]
