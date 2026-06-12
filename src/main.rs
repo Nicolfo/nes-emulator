@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod font;
+mod icon;
 mod menu;
 
 use std::sync::Arc;
@@ -196,8 +197,17 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
+        // 64x64: big enough for taskbar + title bar; ignored on macOS, where
+        // window icons don't exist (the dock icon would need an .app bundle).
+        let window_icon = winit::window::Icon::from_rgba(
+            icon::rgba(4),
+            icon::size(4) as u32,
+            icon::size(4) as u32,
+        )
+        .ok();
         let attrs = Window::default_attributes()
             .with_title("NES Emulator")
+            .with_window_icon(window_icon)
             .with_inner_size(LogicalSize::new(
                 (WIDTH as u32 * self.cfg.scale) as f64,
                 (HEIGHT as u32 * self.cfg.scale) as f64,

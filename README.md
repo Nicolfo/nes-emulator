@@ -9,6 +9,18 @@ Passes all **140 / 140** tests of the hardware-verified
 
 ## Running
 
+### From a prebuilt release
+
+Every push to `main` builds release archives for Windows, Linux and macOS
+(see the *Artifacts* section of a [CI run](../../actions)). Each archive
+contains the binary plus a platform-specific `RUNNING.md` with setup steps:
+
+- [Windows](docs/running-windows.md) — `nes-emulator-windows-x64.zip`
+- [Linux](docs/running-linux.md) — `nes-emulator-linux-x64.tar.gz`
+- [macOS](docs/running-macos.md) — `nes-emulator-macos-universal.zip` (universal: Intel + Apple Silicon)
+
+### From source
+
 ```
 cargo run --release                  # opens the home menu
 cargo run --release -- path\to\rom.nes   # skips the menu, boots the ROM directly
