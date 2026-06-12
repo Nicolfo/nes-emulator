@@ -6,8 +6,7 @@ use super::{Mapper, Mirroring, NtTarget};
 /// scanline IRQ, the 8x16-sprite CHR set switch, the $5205 multiplier and
 /// expansion audio (two APU-style pulses plus raw PCM).
 ///
-/// Not emulated: vertical split mode ($5200-$5202) and ExGrafix extended
-/// attributes (ExRAM mode 1 renders as a plain nametable).
+/// Not emulated: vertical split mode ($5200-$5202).
 pub struct Mmc5 {
     prg: Vec<u8>,
     prg_ram: Vec<u8>,
@@ -29,6 +28,9 @@ pub struct Mmc5 {
     chr_upper: u16,
     // In 8x8 sprite mode all fetches use the last-written register set.
     last_set_bg: bool,
+    // ExGrafix (ExRAM mode 1): ExRAM byte latched at the tile's NT fetch;
+    // bits 0-5 pick the tile's 4KB CHR bank, bits 6-7 its palette.
+    ex_latch: u8,
     sprites_8x16: bool,
     rendering: bool,
     // Scanline detection: three consecutive identical NT fetches.
@@ -71,6 +73,7 @@ impl Mmc5 {
             chr_bg: [0; 4],
             chr_upper: 0,
             last_set_bg: false,
+            ex_latch: 0,
             sprites_8x16: false,
             rendering: false,
             last_nt_addr: 0,
@@ -223,6 +226,9 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
+        if (0x5100..=0x5130).contains(&addr) && std::env::var("NES_MMC5_LOG").is_ok() {
+            eprintln!("mmc5 w {addr:04X} = {val:02X}");
+        }
         match addr {
             0x5000..=0x5015 => self.audio.write(addr, val),
             0x5100 => self.prg_mode = val & 3,
@@ -277,15 +283,34 @@ impl Mapper for Mmc5 {
             // (the sprite window's paired garbage NT reads share one
             // address and would otherwise false-trigger).
             self.nt_streak = 0;
-            let bg_set = if self.in_frame && self.rendering && self.sprites_8x16 {
+            let in_render = self.in_frame && self.rendering;
+            let sprite_window = if in_render {
                 self.fetch_count += 1;
                 // Fetches 65-80 of a scanline are the sprite window.
-                !(65..=80).contains(&self.fetch_count)
+                (65..=80).contains(&self.fetch_count)
+            } else {
+                false
+            };
+            if in_render && !sprite_window && self.exram_mode == 1 {
+                // ExGrafix: the BG tile's 4KB bank comes from the ExRAM
+                // byte latched at its NT fetch; $5130 supplies bits 6-7.
+                let bank =
+                    (self.ex_latch as usize & 0x3F) | ((self.chr_upper as usize >> 8) << 6);
+                let banks = (self.chr.len() / 0x1000).max(1);
+                return self.chr[bank % banks * 0x1000 + (addr as usize & 0xFFF)];
+            }
+            let bg_set = if in_render && self.sprites_8x16 {
+                !sprite_window
             } else {
                 self.last_set_bg
             };
             self.chr[self.chr_offset(addr, bg_set)]
         } else {
+            // ExGrafix attribute fetch: palette bits of the latched ExRAM
+            // byte, replicated to every quadrant of the attribute byte.
+            if self.exram_mode == 1 && self.in_frame && self.rendering && addr & 0x3FF >= 0x3C0 {
+                return (self.ex_latch >> 6) * 0x55;
+            }
             // Nametable access routed here by nt_target: ExRAM or fill mode.
             let q = (self.nt_map >> (((addr >> 10) & 3) * 2)) & 3;
             if q == 2 {
@@ -330,6 +355,13 @@ impl Mapper for Mmc5 {
         } else {
             self.last_nt_addr = addr;
             self.nt_streak = 1;
+        }
+        if self.exram_mode == 1 && self.in_frame && self.rendering {
+            if addr & 0x3FF >= 0x3C0 {
+                // ExGrafix substitutes the attribute fetch (see ppu_read).
+                return NtTarget::Cart;
+            }
+            self.ex_latch = self.exram[(addr & 0x3FF) as usize];
         }
         let q = (self.nt_map >> (((addr >> 10) & 3) * 2)) & 3;
         match q {
@@ -381,6 +413,9 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_bus_write(&mut self, addr: u16, val: u8) {
+        if addr & 7 < 2 && std::env::var("NES_MMC5_LOG").is_ok() {
+            eprintln!("mmc5 snoop {:04X} = {val:02X}", 0x2000 + (addr & 7));
+        }
         match addr & 7 {
             0 => self.sprites_8x16 = val & 0x20 != 0,
             1 => {
@@ -723,6 +758,30 @@ mod tests {
             m.cpu_clock();
         }
         assert_eq!(m.cpu_reg_read(0x5204).unwrap() & 0x40, 0);
+    }
+
+    #[test]
+    fn exgrafix_per_tile_bank_and_attribute() {
+        let mut m = mmc5(); // 32 x 1KB CHR = 8 x 4KB banks
+        m.cpu_write(0x5104, 1); // ExGrafix
+        m.cpu_bus_write(0x2001, 0x1E); // rendering on
+        // ExRAM byte for tile 5: 4KB bank 3, palette 2.
+        m.cpu_write(0x5C05, 0x83);
+        // Establish in-frame (scanline detection), then fetch tile 5's NT.
+        for _ in 0..3 {
+            m.nt_target(0x2300);
+        }
+        m.nt_target(0x2005);
+        // BG pattern fetches use 4KB bank 3 = 1KB banks 12-15.
+        assert_eq!(m.ppu_read(0x0000), 12);
+        assert_eq!(m.ppu_read(0x0FFF), 15);
+        // The attribute fetch is substituted from the latch.
+        assert_eq!(m.nt_target(0x23C5), NtTarget::Cart);
+        assert_eq!(m.ppu_read(0x23C5), 0xAA); // palette 2 replicated
+        // Outside rendering, mode 1 falls back to normal banking.
+        m.cpu_bus_write(0x2001, 0x00);
+        m.cpu_write(0x5120, 4);
+        assert_eq!(m.ppu_read(0x0000), 4);
     }
 
     #[test]

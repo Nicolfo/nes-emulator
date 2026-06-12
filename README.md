@@ -80,9 +80,9 @@ All bindings except Escape can be changed in Settings.
 - `src/mapper.rs` + `src/mapper/` — `Mapper` trait and implementations: NROM,
   MMC1, UxROM, CNROM, MMC3 (with the A12-clocked scanline IRQ counter), MMC5
   (game-compatible core: all banking modes, banked PRG RAM, ExRAM/fill
-  nametables, fetch-pattern scanline IRQ, 8x16 sprite CHR sets, multiplier
-  and pulse/PCM audio; vertical split and ExGrafix attributes are not
-  emulated), AxROM, MMC2 (tile-fetch CHR latches), Color Dreams, N163
+  nametables, ExGrafix extended attributes, fetch-pattern scanline IRQ,
+  8x16 sprite CHR sets, multiplier and pulse/PCM audio; vertical split is
+  not emulated), AxROM, MMC2 (tile-fetch CHR latches), Color Dreams, N163
   (wavetable audio, nametables mappable to CHR ROM), VRC6 (pulse/saw audio,
   scanline and cycle IRQ), GxROM and FME-7 (CPU-cycle IRQ counter plus
   Sunsoft 5B audio). Expansion audio is summed into the APU mix before
