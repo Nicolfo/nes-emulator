@@ -1,4 +1,4 @@
-use crate::mapper::{Mapper, Mirroring, Nrom};
+use crate::mapper::{Mapper, Mirroring, Mmc3, Nrom};
 
 pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     if data.len() < 16 || &data[0..4] != b"NES\x1A" {
@@ -16,12 +16,6 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     };
     let has_trainer = flags6 & 0x04 != 0;
 
-    if mapper_id != 0 {
-        return Err(format!(
-            "unsupported mapper {mapper_id} (only NROM/mapper 0)"
-        ));
-    }
-
     let prg_size = prg_banks * 16 * 1024;
     let chr_size = chr_banks * 8 * 1024;
     let prg_start = 16 + if has_trainer { 512 } else { 0 };
@@ -34,7 +28,13 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     let prg = data[prg_start..prg_start + prg_size].to_vec();
     let chr = data[chr_start..chr_start + chr_size].to_vec();
 
-    Ok(Box::new(Nrom::new(prg, chr, mirroring)))
+    match mapper_id {
+        0 => Ok(Box::new(Nrom::new(prg, chr, mirroring))),
+        4 => Ok(Box::new(Mmc3::new(prg, chr, mirroring))),
+        _ => Err(format!(
+            "unsupported mapper {mapper_id} (supported: 0 NROM, 4 MMC3)"
+        )),
+    }
 }
 
 #[cfg(test)]
