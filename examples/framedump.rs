@@ -41,7 +41,11 @@ fn main() {
 
     let rom = std::fs::read(&rom_path).expect("read rom");
     let mut nes = Nes::new(&rom).expect("load rom");
+    let log = std::env::var("NES_MMC5_LOG").is_ok();
     for f in 0..frames {
+        if log {
+            eprintln!("frame {f}");
+        }
         if starts.contains(&f) {
             nes.cpu.bus.controller1.set_button(START, true);
         }
@@ -49,8 +53,11 @@ fn main() {
             nes.cpu.bus.controller1.set_button(START, false);
         }
         nes.run_frame();
-        if (f + 1) % 60 == 0 || f + 1 == frames {
+        if (f + 1) % 60 == 0 || f + 1 == frames || (log && f + 1 >= frames.saturating_sub(60)) {
             write_bmp(&format!("{prefix}_{:04}.bmp", f + 1), nes.framebuffer());
+        }
+        if log && f + 1 == frames {
+            std::fs::write(format!("{prefix}_vram.bin"), nes.cpu.bus.ppu.vram).unwrap();
         }
     }
 }

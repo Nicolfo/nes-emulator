@@ -395,7 +395,14 @@ impl Ppu {
             cart.ppu_write(addr, val);
         } else if addr < 0x3F00 {
             match cart.nt_target(addr) {
-                NtTarget::Ciram(off) => self.vram[off as usize] = val,
+                NtTarget::Ciram(off) => {
+                    if let Ok(w) = std::env::var("NES_VRAM_WATCH")
+                        && u16::from_str_radix(&w, 16) == Ok(off)
+                    {
+                        eprintln!("vram[{off:03X}] = {val:02X} (ppu addr {addr:04X})");
+                    }
+                    self.vram[off as usize] = val;
+                }
                 NtTarget::Cart => cart.ppu_write(addr, val),
             }
         } else {
