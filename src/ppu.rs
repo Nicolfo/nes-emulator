@@ -251,7 +251,15 @@ impl Ppu {
                 self.ctrl = val;
                 self.t = (self.t & !0x0C00) | (((val & 3) as u16) << 10);
             }
-            1 => self.pending_mask = Some((val, 2)), // takes effect ~2 dots later
+            1 => {
+                // $2001 takes effect a few dots after the write (hardware:
+                // 2-5 depending on alignment). Overridable for experiments.
+                let d = std::env::var("NES_MASK_DELAY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(4u8);
+                self.pending_mask = Some((val, d));
+            }
             3 => self.oam_addr = val,
             4 => {
                 if self.rendering_enabled() && self.scanline < 240 {
@@ -491,9 +499,14 @@ impl Ppu {
                 return;
             }
             if self.eval_done {
+                // Writes disabled: the scan keeps walking primary OAM on odd
+                // dots while even dots read back secondary OAM.
+                self.oam_bus = self.secondary_oam[(self.sec_addr & 31) as usize];
+                self.eval_ptr = self.eval_ptr.wrapping_add(4);
                 return;
             }
             if self.overflow_dummy > 0 {
+                self.oam_bus = self.secondary_oam[(self.sec_addr & 31) as usize];
                 self.overflow_dummy -= 1;
                 self.eval_ptr = self.eval_ptr.wrapping_add(1);
                 if self.overflow_dummy == 0 {
@@ -537,7 +550,9 @@ impl Ppu {
                     }
                 }
             } else {
-                // Secondary OAM full: buggy overflow scan.
+                // Secondary OAM full: buggy overflow scan; even dots read
+                // back secondary OAM (writes are disabled).
+                self.oam_bus = self.secondary_oam[(self.sec_addr & 31) as usize];
                 if self.in_range(self.scanline, self.eval_latch) {
                     self.status |= 0x20;
                     self.overflow_dummy = 3;
@@ -576,7 +591,8 @@ impl Ppu {
                     (base + 2) as u8
                 }
                 2 => {
-                    self.oam_bus = self.secondary_oam[base + 2] & 0xE3;
+                    // Attribute bits were already masked when copied in.
+                    self.oam_bus = self.secondary_oam[base + 2];
                     (base + 3) as u8
                 }
                 _ => {
@@ -812,6 +828,13 @@ impl Ppu {
         }
 
         let (sp_pat, sp_pal, sp_behind, sp_zero) = self.sprite_pixel(px);
+
+        if std::env::var("NES_PX_DEBUG").is_ok() && (bg_pat != 0 || sp_pat != 0) {
+            eprintln!(
+                "px line={} px={} bg={} sp={} zero={}",
+                self.scanline, px, bg_pat, sp_pat, sp_zero
+            );
+        }
 
         // sprite 0 hit
         if sp_zero && sp_pat != 0 && bg_pat != 0 && px != 255 {
