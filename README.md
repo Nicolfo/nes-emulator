@@ -3,6 +3,10 @@
 A NES (Nintendo Entertainment System) emulator written in Rust, targeting mapper 0
 (NROM) games such as Super Mario Bros. Video, audio and input.
 
+Passes all **140 / 140** tests of the hardware-verified
+[AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) accuracy suite and
+`nestest` with cycle-exact logging — see [docs/accuracy.md](docs/accuracy.md).
+
 ## Running
 
 ```
@@ -30,14 +34,19 @@ All bindings except Escape can be changed in Settings.
 
 ## Architecture
 
-- `src/cpu.rs` — 6502 core: all official opcodes plus the unofficial NOP family,
-  instruction-level cycle counting with page-cross/branch penalties, NMI and IRQ
-  handling (the APU frame counter and DMC raise IRQs), hardware quirks (JMP
-  indirect page-wrap bug, zero-page pointer wrap, B-flag rules).
+- `src/cpu.rs` — cycle-stepped 6502 core: every CPU cycle performs exactly one bus
+  access, so instruction timing (page-cross/branch penalties, dummy reads and
+  writes) falls out of the per-cycle access sequences. All official and unofficial
+  opcodes. Per-cycle interrupt polling reproduces CLI/SEI/PLP I-flag latency,
+  taken-branch interrupt delay, and NMI hijacking of BRK/IRQ vectors. DMC DMA
+  halts with ghost (aborted 1-cycle) DMAs and APU-register bus conflicts.
 - `src/ppu.rs` — dot-stepped PPU: loopy v/t/x/w scroll registers, per-dot background
-  pipeline with shift registers, scanline-batched sprite evaluation, exact-pixel
-  sprite 0 hit (needed for SMB's status-bar scroll split), buffered $2007 reads,
-  palette mirroring.
+  pipeline with shift registers (including their serial inputs), dot-accurate
+  sprite evaluation through secondary OAM (misaligned OAMADDR, the buggy overflow
+  scan, $2004 reads during rendering, OAM corruption), sprite X-counters with
+  halted/counting modes, exact-pixel sprite 0 hit, the $2007 data-bus state
+  machine with octal-latch feedback, buffered $2007 reads, palette mirroring,
+  the odd-frame dot skip and the $2002 NMI-suppression race.
 - `src/apu.rs` — NTSC APU, ticked once per CPU cycle: pulse 1/2 (duty sequencer,
   envelope, sweep with pulse 1's ones'-complement negate, continuous mute logic),
   triangle (linear counter, DAC holds its value when halted), noise (15-bit LFSR,
@@ -63,10 +72,8 @@ All bindings except Escape can be changed in Settings.
   framebuffer (embedded 8x8 bitmap font, pixel-art icons).
 - `src/config.rs` — persisted settings (key bindings, window scale).
 
-Timing: NTSC, 1 CPU cycle = 3 PPU dots = 1 APU step, interleaved at instruction
-granularity (89,342 dots/frame). The odd-frame dot skip and the $2002
-NMI-suppression race are intentionally not implemented; they don't affect
-mapper-0 era games.
+Timing: NTSC, 1 CPU cycle = 3 PPU dots = 1 APU step, interleaved at bus-access
+granularity (89,342 dots/frame, 89,341 on odd rendered frames).
 
 ## Tests
 
@@ -77,11 +84,13 @@ cargo test
 - `tests/nestest.rs` — CPU validated against the nestest golden log (registers and
   cycle counts for all official opcodes + unofficial NOPs, log lines 1–5259).
   Requires `tests/data/nestest.nes` and `tests/data/nestest.log` (skipped if absent).
-- `tests/smb.rs` — headless SMB smoke tests (title screen renders, gameplay
-  reachable, gameplay music produces non-clipping audio — the title screen itself
-  is silent). The ignored `dump_frame_bmp` test writes `frame.bmp` for visual
-  inspection: `cargo test --test smb -- --ignored` with env vars `SMB_FRAMES`,
-  `SMB_PRESS_START`, `SMB_RUN_RIGHT`.
+- `tests/accuracycoin_rom.rs` — boots the full AccuracyCoin ROM and asserts all
+  140 tests pass. Requires `AccuracyCoin.nes` in the project root (skipped if
+  absent); CI downloads it automatically. See [docs/accuracy.md](docs/accuracy.md)
+  for the interactive debugging harness (`examples/accuracy_rom.rs`).
+- `tests/accuracy_coin.rs` — fast ROM-less unit tests replicating a subset of the
+  AccuracyCoin specifications: CPU instruction behavior, addressing-mode
+  wraparounds, open bus, dummy reads/writes, and unofficial instructions.
 - Unit tests cover loopy scroll register sequences, palette mirroring, $2007 read
   buffering, controller shifting, RAM mirroring, OAM DMA, and the APU (frame IRQ
   timing and inhibit, length counter load/countdown, sweep muting, DMC fetch and

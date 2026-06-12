@@ -88,7 +88,9 @@ impl App {
     }
 
     fn home_key(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
-        let View::Home { sel } = &mut self.view else { return };
+        let View::Home { sel } = &mut self.view else {
+            return;
+        };
         let items = home_items(self.nes.is_some());
         match code {
             KeyCode::ArrowUp => *sel = (*sel + items.len() - 1) % items.len(),
@@ -98,7 +100,12 @@ impl App {
                 match items[*sel].action {
                     HomeAction::Resume => self.start_running(),
                     HomeAction::LoadRom => self.load_rom_dialog(),
-                    HomeAction::Settings => self.view = View::Settings { sel: 0, waiting: false },
+                    HomeAction::Settings => {
+                        self.view = View::Settings {
+                            sel: 0,
+                            waiting: false,
+                        }
+                    }
                     HomeAction::Quit => event_loop.exit(),
                 }
             }
@@ -109,7 +116,9 @@ impl App {
     }
 
     fn settings_key(&mut self, code: KeyCode) {
-        let View::Settings { sel, waiting } = &mut self.view else { return };
+        let View::Settings { sel, waiting } = &mut self.view else {
+            return;
+        };
 
         if *waiting {
             // capture next key as the new binding (Escape cancels)
@@ -146,7 +155,10 @@ impl App {
                 }
                 ROW_RESET => {
                     let scale = self.cfg.scale;
-                    self.cfg = Config { scale, ..Config::default() };
+                    self.cfg = Config {
+                        scale,
+                        ..Config::default()
+                    };
                     self.cfg.save();
                 }
                 ROW_BACK => self.view = View::Home { sel: 0 },
@@ -211,7 +223,9 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let PhysicalKey::Code(code) = event.physical_key else { return };
+                let PhysicalKey::Code(code) = event.physical_key else {
+                    return;
+                };
                 let pressed = event.state.is_pressed();
                 match self.view {
                     View::Running => self.running_key(code, pressed, event.repeat),
@@ -221,7 +235,9 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                let Some(pixels) = &mut self.pixels else { return };
+                let Some(pixels) = &mut self.pixels else {
+                    return;
+                };
                 let frame = pixels.frame_mut();
                 match &self.view {
                     View::Running => {

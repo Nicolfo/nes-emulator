@@ -25,12 +25,14 @@ const TRIANGLE_SEQ: [u8; 32] = [
 ];
 
 // NTSC noise timer periods, in CPU cycles.
-const NOISE_PERIOD: [u16; 16] =
-    [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
+const NOISE_PERIOD: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
 
 // NTSC DMC timer periods, in CPU cycles.
-const DMC_RATE: [u16; 16] =
-    [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+const DMC_RATE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
 
 #[derive(Default)]
 struct Envelope {
@@ -61,7 +63,11 @@ impl Envelope {
     }
 
     fn volume(&self) -> u8 {
-        if self.constant { self.period } else { self.decay }
+        if self.constant {
+            self.period
+        } else {
+            self.decay
+        }
     }
 }
 
@@ -117,8 +123,7 @@ impl Pulse {
     }
 
     fn clock_sweep(&mut self) {
-        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift != 0 && !self.muted()
-        {
+        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift != 0 && !self.muted() {
             self.timer_period = self.sweep_target().max(0) as u16;
         }
         if self.sweep_divider == 0 || self.sweep_reload {
@@ -260,7 +265,11 @@ impl Noise {
     }
 
     fn output(&self) -> u8 {
-        if self.length == 0 || self.shift & 1 == 1 { 0 } else { self.env.volume() }
+        if self.length == 0 || self.shift & 1 == 1 {
+            0
+        } else {
+            self.env.volume()
+        }
     }
 
     fn set_enabled(&mut self, on: bool) {
@@ -286,6 +295,22 @@ struct Dmc {
     silence: bool,
     buffer: Option<u8>,
     fetch_pending: bool,
+    // The next DMA is a "load" (triggered by a $4015 write), which asserts
+    // RDY later than a reload DMA.
+    load_dma: bool,
+    // Cycles until a $4015 disable takes effect (zeroing bytes_remaining).
+    pending_disable: u8,
+    // Cycles until a $4015 enable (written while the buffer was still full)
+    // takes effect: a reload attempt inside this window is blocked and
+    // retries every cycle, off the usual parity grid.
+    enable_delay: u8,
+    // A reload attempt was blocked by enable_delay; the retry DMA skips its
+    // alignment cycle (3 cycles total).
+    blocked_attempt: bool,
+    // "Sample ended" (bytes_remaining hit 0 on a non-looping fetch) takes a
+    // few cycles to propagate: a buffer drain inside this window still raises
+    // a reload DMA, which aborts after one halt cycle (implicit DMA abort).
+    implicit_window: u8,
     irq: bool,
 }
 
@@ -306,6 +331,11 @@ impl Dmc {
             silence: true,
             buffer: None,
             fetch_pending: false,
+            load_dma: false,
+            pending_disable: 0,
+            enable_delay: 0,
+            blocked_attempt: false,
+            implicit_window: 0,
             irq: false,
         }
     }
@@ -353,14 +383,24 @@ impl Dmc {
     fn supply(&mut self, v: u8) {
         self.buffer = Some(v);
         self.fetch_pending = false;
-        self.current_addr =
-            if self.current_addr == 0xFFFF { 0x8000 } else { self.current_addr + 1 };
-        self.bytes_remaining -= 1;
-        if self.bytes_remaining == 0 {
-            if self.loop_flag {
-                self.restart();
-            } else if self.irq_enabled {
-                self.irq = true;
+        self.current_addr = if self.current_addr == 0xFFFF {
+            0x8000
+        } else {
+            self.current_addr + 1
+        };
+        // bytes_remaining may already be 0 if a $4015 disable landed while
+        // this fetch was in flight.
+        if self.bytes_remaining > 0 {
+            self.bytes_remaining -= 1;
+            if self.bytes_remaining == 0 {
+                if self.loop_flag {
+                    self.restart();
+                } else {
+                    if self.irq_enabled {
+                        self.irq = true;
+                    }
+                    self.implicit_window = 3;
+                }
             }
         }
     }
@@ -375,7 +415,11 @@ struct HighPass {
 impl HighPass {
     fn new(fc: f64, rate: f64) -> Self {
         let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
-        HighPass { a: (rc / (rc + 1.0 / rate)) as f32, prev_in: 0.0, prev_out: 0.0 }
+        HighPass {
+            a: (rc / (rc + 1.0 / rate)) as f32,
+            prev_in: 0.0,
+            prev_out: 0.0,
+        }
     }
 
     fn process(&mut self, x: f32) -> f32 {
@@ -395,7 +439,10 @@ impl LowPass {
     fn new(fc: f64, rate: f64) -> Self {
         let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
         let dt = 1.0 / rate;
-        LowPass { b: (dt / (rc + dt)) as f32, prev: 0.0 }
+        LowPass {
+            b: (dt / (rc + dt)) as f32,
+            prev: 0.0,
+        }
     }
 
     fn process(&mut self, x: f32) -> f32 {
@@ -417,6 +464,8 @@ pub struct Apu {
     pending_mode5: bool,
     irq_inhibit: bool,
     frame_irq: bool,
+    // $4015 reads clear the frame IRQ flag, but only on the next "get" cycle.
+    frame_irq_clear_pending: bool,
     frame_reset_delay: u8,
 
     pulse_table: [f32; 31],
@@ -455,6 +504,7 @@ impl Apu {
             pending_mode5: false,
             irq_inhibit: false,
             frame_irq: false,
+            frame_irq_clear_pending: false,
             frame_reset_delay: 0,
             pulse_table,
             tnd_table,
@@ -486,9 +536,11 @@ impl Apu {
         std::mem::take(&mut self.samples)
     }
 
-    /// Frame IRQ and DMC IRQ are level-triggered.
+    /// Frame IRQ and DMC IRQ are level-triggered. The frame flag only pulls
+    /// the IRQ line when the inhibit bit is clear (the flag itself can be
+    /// transiently set even when inhibited).
     pub fn irq(&self) -> bool {
-        self.frame_irq || self.dmc.irq
+        (self.frame_irq && !self.irq_inhibit) || self.dmc.irq
     }
 
     pub fn read_status(&mut self) -> u8 {
@@ -514,22 +566,31 @@ impl Apu {
         if self.dmc.irq {
             v |= 0x80;
         }
-        // reading $4015 clears the frame IRQ flag (but not the DMC IRQ)
-        self.frame_irq = false;
+        // reading $4015 clears the frame IRQ flag (but not the DMC IRQ);
+        // the clear takes effect on the next put-to-get transition
+        self.frame_irq_clear_pending = true;
         v
     }
 
     pub fn write(&mut self, addr: u16, v: u8) {
         match addr {
             0x4000 | 0x4004 => {
-                let p = if addr == 0x4000 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4000 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.duty = v >> 6;
                 p.env.loop_flag = v & 0x20 != 0;
                 p.env.constant = v & 0x10 != 0;
                 p.env.period = v & 0x0F;
             }
             0x4001 | 0x4005 => {
-                let p = if addr == 0x4001 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4001 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.sweep_enabled = v & 0x80 != 0;
                 p.sweep_period = (v >> 4) & 7;
                 p.sweep_negate = v & 0x08 != 0;
@@ -537,11 +598,19 @@ impl Apu {
                 p.sweep_reload = true;
             }
             0x4002 | 0x4006 => {
-                let p = if addr == 0x4002 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4002 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.timer_period = (p.timer_period & 0x0700) | v as u16;
             }
             0x4003 | 0x4007 => {
-                let p = if addr == 0x4003 { &mut self.pulse1 } else { &mut self.pulse2 };
+                let p = if addr == 0x4003 {
+                    &mut self.pulse1
+                } else {
+                    &mut self.pulse2
+                };
                 p.timer_period = (p.timer_period & 0x00FF) | (((v & 7) as u16) << 8);
                 if p.enabled {
                     p.length = LENGTH_TABLE[(v >> 3) as usize];
@@ -589,19 +658,55 @@ impl Apu {
             }
             0x4011 => self.dmc.level = v & 0x7F,
             0x4012 => self.dmc.sample_addr = 0xC000 | ((v as u16) << 6),
-            0x4013 => self.dmc.sample_len = ((v as u16) << 4) | 1,
+            0x4013 => {
+                self.dmc.sample_len = ((v as u16) << 4) | 1;
+                if std::env::var("NES_DMA_LOG").is_ok() {
+                    eprintln!("apucyc {} WRITE4013 v={:02X}", self.cycle, v);
+                }
+            }
             0x4015 => {
+                if std::env::var("NES_DMA_LOG").is_ok() {
+                    eprintln!(
+                        "apucyc {} WRITE4015 v={:02X} buffer={:?} bytes={} pending_dis={} bits={} timer={}",
+                        self.cycle,
+                        v,
+                        self.dmc.buffer,
+                        self.dmc.bytes_remaining,
+                        self.dmc.pending_disable,
+                        self.dmc.bits_remaining,
+                        self.dmc.timer
+                    );
+                }
                 self.pulse1.set_enabled(v & 0x01 != 0);
                 self.pulse2.set_enabled(v & 0x02 != 0);
                 self.triangle.set_enabled(v & 0x04 != 0);
                 self.noise.set_enabled(v & 0x08 != 0);
                 self.dmc.irq = false;
                 if v & 0x10 != 0 {
+                    if self.dmc.pending_disable > 0 {
+                        // A disable still in its grace period applies first.
+                        self.dmc.pending_disable = 0;
+                        self.dmc.bytes_remaining = 0;
+                    }
                     if self.dmc.bytes_remaining == 0 {
                         self.dmc.restart();
+                        // The write only schedules a delayed "load" DMA when
+                        // the sample buffer is empty; with a full buffer the
+                        // next fetch waits for the shifter to consume it and
+                        // uses normal reload timing — unless the buffer
+                        // empties within the enable's 3-cycle pipeline, in
+                        // which case the reload is blocked until the enable
+                        // takes effect.
+                        self.dmc.load_dma = self.dmc.buffer.is_none();
+                        if self.dmc.buffer.is_some() {
+                            self.dmc.enable_delay = 3;
+                        }
                     }
                 } else {
-                    self.dmc.bytes_remaining = 0;
+                    // Disabling takes a few cycles to propagate: a timer
+                    // expiry in the grace window still asserts RDY for one
+                    // "ghost" halt cycle before the DMA is aborted.
+                    self.dmc.pending_disable = 3;
                 }
             }
             0x4017 => {
@@ -617,10 +722,19 @@ impl Apu {
         }
     }
 
-    /// Advance one CPU cycle. Returns `Some(addr)` when the DMC DMA unit
-    /// needs a sample byte fetched from memory (deliver it via `dmc_supply`).
-    pub fn tick(&mut self) -> Option<u16> {
+    /// Advance one CPU cycle. Returns `Some((addr, is_load, is_ghost,
+    /// skip_align))` when the DMC DMA unit needs a sample byte fetched
+    /// (deliver it via `dmc_supply`). A "ghost" request comes from a timer
+    /// expiry inside the disable grace window: it halts the CPU for one
+    /// cycle, then aborts. `skip_align` marks a retry of an attempt blocked
+    /// by the $4015 enable pipeline: its DMA is 3 cycles, no alignment.
+    pub fn tick(&mut self) -> Option<(u16, bool, bool, bool)> {
         self.cycle += 1;
+
+        if self.frame_irq_clear_pending && self.cycle & 1 == 1 {
+            self.frame_irq = false;
+            self.frame_irq_clear_pending = false;
+        }
 
         if self.frame_reset_delay > 0 {
             self.frame_reset_delay -= 1;
@@ -643,12 +757,64 @@ impl Apu {
         }
         self.triangle.clock_timer();
         self.noise.clock_timer();
+        let buf_before = self.dmc.buffer;
         self.dmc.clock_timer();
+        if buf_before.is_some() && self.dmc.buffer.is_none() && std::env::var("NES_DMA_LOG").is_ok()
+        {
+            eprintln!(
+                "apucyc {} BUFTAKE bytes={} pending_dis={}",
+                self.cycle, self.dmc.bytes_remaining, self.dmc.pending_disable
+            );
+        }
 
+        if self.dmc.pending_disable > 0 {
+            self.dmc.pending_disable -= 1;
+            if self.dmc.pending_disable == 0 {
+                self.dmc.bytes_remaining = 0;
+            }
+        }
+        if self.dmc.enable_delay > 0 {
+            self.dmc.enable_delay -= 1;
+        }
+        if self.dmc.implicit_window > 0 {
+            self.dmc.implicit_window -= 1;
+        }
         let mut fetch = None;
-        if self.dmc.buffer.is_none() && self.dmc.bytes_remaining > 0 && !self.dmc.fetch_pending {
+        // The DMC's fetch request asserts on the APU clock (every other CPU
+        // cycle), so it always lands on the same get/put parity; an expiry on
+        // the off cycle is raised one cycle later. An attempt blocked by the
+        // enable pipeline retries every cycle (off the parity grid) and its
+        // DMA skips the alignment cycle.
+        let want =
+            self.dmc.buffer.is_none() && self.dmc.bytes_remaining > 0 && !self.dmc.fetch_pending;
+        if want && self.dmc.enable_delay > 0 {
+            self.dmc.blocked_attempt = true;
+        }
+        if want && self.dmc.enable_delay == 0 {
+            let blocked_retry = std::mem::take(&mut self.dmc.blocked_attempt);
+            if self.cycle & 1 == 1 || blocked_retry {
+                self.dmc.fetch_pending = true;
+                fetch = Some((
+                    self.dmc.current_addr,
+                    std::mem::take(&mut self.dmc.load_dma),
+                    self.dmc.pending_disable > 0,
+                    blocked_retry,
+                ));
+            }
+        }
+        // Implicit DMA abort: the buffer drained right after the sample's
+        // final byte was fetched — "sample over" hasn't propagated yet, so a
+        // reload DMA is still raised; it aborts after one halt cycle.
+        if fetch.is_none()
+            && self.cycle & 1 == 1
+            && self.dmc.buffer.is_none()
+            && self.dmc.bytes_remaining == 0
+            && self.dmc.implicit_window > 0
+            && !self.dmc.fetch_pending
+        {
             self.dmc.fetch_pending = true;
-            fetch = Some(self.dmc.current_addr);
+            self.dmc.implicit_window = 0;
+            fetch = Some((self.dmc.current_addr, false, true, false));
         }
 
         // boxcar decimation to the output rate, then the analog filter chain
@@ -670,6 +836,14 @@ impl Apu {
         self.dmc.supply(v);
     }
 
+    /// A ghost DMA was aborted after its lone halt cycle: the disable takes
+    /// full effect, so no further fetches are raised.
+    pub fn dmc_abort_fetch(&mut self) {
+        self.dmc.fetch_pending = false;
+        self.dmc.pending_disable = 0;
+        self.dmc.bytes_remaining = 0;
+    }
+
     fn mix(&self) -> f32 {
         let p = (self.pulse1.output() + self.pulse2.output()) as usize;
         let tnd = 3 * self.triangle.output() as usize
@@ -678,9 +852,15 @@ impl Apu {
         self.pulse_table[p] + self.tnd_table[tnd]
     }
 
-    fn set_frame_irq(&mut self) {
-        if !self.irq_inhibit {
+    /// The flag is driven on cycles 29828-29830 after the frame counter
+    /// reset. Even with IRQ inhibit set, the first two cycles still set the
+    /// readable flag; only the final one respects the inhibit bit (and with
+    /// inhibit set it stops driving the flag, dropping it back to 0).
+    fn set_frame_irq(&mut self, last: bool) {
+        if !last {
             self.frame_irq = true;
+        } else {
+            self.frame_irq = !self.irq_inhibit;
         }
     }
 
@@ -694,14 +874,14 @@ impl Apu {
                     self.clock_half();
                 }
                 22371 => self.clock_quarter(),
-                29828 => self.set_frame_irq(),
+                29828 => self.set_frame_irq(false),
                 29829 => {
                     self.clock_quarter();
                     self.clock_half();
-                    self.set_frame_irq();
+                    self.set_frame_irq(false);
                 }
                 29830 => {
-                    self.set_frame_irq();
+                    self.set_frame_irq(true);
                     self.frame_cycle = 0;
                 }
                 _ => {}
@@ -765,8 +945,9 @@ mod tests {
         run(&mut apu, 1); // flag window starts at CPU cycle 29828
         assert!(apu.irq(), "IRQ at sequence end");
         run(&mut apu, 3); // get past the 29828-29830 window where the flag re-sets
-        // reading $4015 reports and clears the flag
+        // reading $4015 reports the flag; the clear lands on the next get cycle
         assert_eq!(apu.read_status() & 0x40, 0x40);
+        run(&mut apu, 2);
         assert!(!apu.irq());
     }
 
@@ -832,7 +1013,7 @@ mod tests {
         apu.write(0x4015, 0x10);
         let mut fetched = 0;
         for _ in 0..10_000 {
-            if let Some(addr) = apu.tick() {
+            if let Some((addr, _is_load, _is_ghost, _skip_align)) = apu.tick() {
                 assert_eq!(addr, 0xC000);
                 apu.dmc_supply(0xFF);
                 fetched += 1;
@@ -854,6 +1035,9 @@ mod tests {
         run(&mut apu, 50_000);
         let s = apu.take_samples();
         // skip the initial high-pass transient from the idle triangle DC level
-        assert!(s[500..].iter().all(|v| v.abs() < 0.005), "muted pulse leaked audio");
+        assert!(
+            s[500..].iter().all(|v| v.abs() < 0.005),
+            "muted pulse leaked audio"
+        );
     }
 }

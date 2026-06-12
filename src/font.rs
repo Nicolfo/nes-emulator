@@ -109,7 +109,14 @@ pub fn draw_text(frame: &mut [u8], x: i32, y: i32, text: &str, color: [u8; 3], s
             for (row, bits) in glyph.iter().enumerate() {
                 for col in 0..8 {
                     if bits & (1 << col) != 0 {
-                        fill_rect(frame, cx + col * scale, y + row as i32 * scale, scale, scale, color);
+                        fill_rect(
+                            frame,
+                            cx + col * scale,
+                            y + row as i32 * scale,
+                            scale,
+                            scale,
+                            color,
+                        );
                     }
                 }
             }
