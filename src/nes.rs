@@ -1,17 +1,22 @@
 use crate::bus::Bus;
-use crate::cartridge::load_rom;
+use crate::cartridge::{load_rom, Region};
 use crate::cpu::Cpu;
 
 pub struct Nes {
     pub cpu: Cpu,
+    region: Region,
 }
 
 impl Nes {
     pub fn new(rom: &[u8]) -> Result<Self, String> {
-        let cart = load_rom(rom)?;
-        let mut cpu = Cpu::new(Bus::new(cart));
+        let (cart, region) = load_rom(rom)?;
+        let mut cpu = Cpu::new(Bus::with_region(cart, region));
         cpu.reset();
-        Ok(Nes { cpu })
+        Ok(Nes { cpu, region })
+    }
+
+    pub fn region(&self) -> Region {
+        self.region
     }
 
     /// Run until the PPU enters vblank (one full frame).

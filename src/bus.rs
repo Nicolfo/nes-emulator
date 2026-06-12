@@ -1,4 +1,5 @@
 use crate::apu::Apu;
+use crate::cartridge::Region;
 use crate::controller::Controller;
 use crate::mapper::Mapper;
 use crate::ppu::Ppu;
@@ -34,6 +35,10 @@ pub struct Bus {
     pub cart: Box<dyn Mapper>,
     pub controller1: Controller,
     pub cycles: u64,
+    region: Region,
+    /// PAL runs 3.2 PPU dots per CPU cycle: phase counter for the extra dot
+    /// every fifth cycle.
+    pal_phase: u8,
     pub open_bus: u8,
     /// The CPU's internal data bus: latched on every CPU read/write cycle,
     /// but NOT by a DMC DMA sample fetch (the CPU is halted). Bit 5 of a
@@ -62,13 +67,23 @@ pub struct Bus {
 
 impl Bus {
     pub fn new(cart: Box<dyn Mapper>) -> Self {
+        Self::with_region(cart, Region::Ntsc)
+    }
+
+    pub fn with_region(cart: Box<dyn Mapper>, region: Region) -> Self {
+        let mut ppu = Ppu::new();
+        ppu.set_region(region);
+        let mut apu = Apu::new();
+        apu.set_region(region);
         Bus {
             ram: [0; 0x800],
-            ppu: Ppu::new(),
-            apu: Apu::new(),
+            ppu,
+            apu,
             cart,
             controller1: Controller::default(),
             cycles: 0,
+            region,
+            pal_phase: 0,
             open_bus: 0,
             internal_bus: 0,
             dmc_request: None,
@@ -216,6 +231,14 @@ impl Bus {
     /// Rest of the CPU cycle (PPU 1 dot); interrupt lines are polled after.
     pub fn tick_cycle_post(&mut self) {
         self.ppu.tick(&mut *self.cart);
+        // PAL: 3.2 dots per CPU cycle — one extra dot every fifth cycle.
+        if self.region == Region::Pal {
+            self.pal_phase += 1;
+            if self.pal_phase == 5 {
+                self.pal_phase = 0;
+                self.ppu.tick(&mut *self.cart);
+            }
+        }
         // Controller strobe latches button state on "put" cycles (odd here).
         if self.cycles & 1 == 1 {
             self.controller1.clock_put_cycle();
