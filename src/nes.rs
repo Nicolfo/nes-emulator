@@ -1,5 +1,5 @@
 use crate::bus::Bus;
-use crate::cartridge::{load_rom, Region};
+use crate::cartridge::{Region, load_rom};
 use crate::cpu::Cpu;
 
 pub struct Nes {
