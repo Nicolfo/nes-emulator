@@ -133,7 +133,13 @@ impl Bus {
                 r
             }
             0x4000..=0x401F => self.open_bus,
-            0x4020..=0x5FFF => self.open_bus,
+            0x4020..=0x5FFF => match self.cart.cpu_reg_read(addr) {
+                Some(v) => {
+                    self.open_bus = v;
+                    v
+                }
+                None => self.open_bus,
+            },
             0x6000..=0x7FFF => match self.cart.prg_ram_read(addr) {
                 Some(v) => {
                     self.open_bus = v;

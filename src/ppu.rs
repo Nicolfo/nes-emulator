@@ -1,5 +1,5 @@
 use crate::cartridge::Region;
-use crate::mapper::{Mapper, Mirroring};
+use crate::mapper::{Mapper, NtTarget};
 use crate::palette::NES_PALETTE;
 
 pub const WIDTH: usize = 256;
@@ -361,22 +361,15 @@ impl Ppu {
 
     // ---- internal memory ----
 
-    fn mirror_nt(&self, addr: u16, mirroring: Mirroring) -> usize {
-        let a = (addr & 0x0FFF) as usize;
-        match mirroring {
-            Mirroring::Vertical => a & 0x07FF,
-            Mirroring::Horizontal => ((a >> 1) & 0x400) | (a & 0x3FF),
-            Mirroring::SingleScreenLo => a & 0x3FF,
-            Mirroring::SingleScreenHi => 0x400 | (a & 0x3FF),
-        }
-    }
-
     fn mem_read(&mut self, addr: u16, cart: &mut dyn Mapper) -> u8 {
         let addr = addr & 0x3FFF;
         if addr < 0x2000 {
             cart.ppu_read(addr)
         } else if addr < 0x3F00 {
-            self.vram[self.mirror_nt(addr, cart.mirroring())]
+            match cart.nt_target(addr) {
+                NtTarget::Ciram(off) => self.vram[off as usize],
+                NtTarget::Cart => cart.ppu_read(addr),
+            }
         } else {
             self.palette_read(addr)
         }
@@ -401,7 +394,10 @@ impl Ppu {
         if addr < 0x2000 {
             cart.ppu_write(addr, val);
         } else if addr < 0x3F00 {
-            self.vram[self.mirror_nt(addr, cart.mirroring())] = val;
+            match cart.nt_target(addr) {
+                NtTarget::Ciram(off) => self.vram[off as usize] = val,
+                NtTarget::Cart => cart.ppu_write(addr, val),
+            }
         } else {
             self.palette[Self::palette_index(addr)] = val & 0x3F;
         }
@@ -977,7 +973,7 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mapper::Nrom;
+    use crate::mapper::{Mirroring, Nrom};
 
     fn cart() -> Nrom {
         Nrom::new(vec![0; 0x8000], vec![0; 0x2000], Mirroring::Vertical)
@@ -1016,11 +1012,11 @@ mod tests {
 
     #[test]
     fn single_screen_mirroring() {
-        let ppu = Ppu::new();
+        use crate::mapper::mirror_nt;
         // All four nametables map to the same 1KB page.
         for nt in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
-            assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenLo), 0x123);
-            assert_eq!(ppu.mirror_nt(nt + 0x123, Mirroring::SingleScreenHi), 0x523);
+            assert_eq!(mirror_nt(Mirroring::SingleScreenLo, nt + 0x123), 0x123);
+            assert_eq!(mirror_nt(Mirroring::SingleScreenHi, nt + 0x123), 0x523);
         }
     }
 
