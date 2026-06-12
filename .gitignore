@@ -1,2 +1,6 @@
 /target
 /*.nes
+/.idea
+/nes-emulator-config.json
+/HANDOFF.md
+/PLAN.md

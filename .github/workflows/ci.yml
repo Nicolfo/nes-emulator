@@ -107,6 +107,12 @@ jobs:
       - name: Run Tests
         run: cargo test --verbose
 
+      - name: Download AccuracyCoin test ROM
+        run: curl -L -o AccuracyCoin.nes https://github.com/100thCoin/AccuracyCoin/raw/main/AccuracyCoin.nes
+
+      - name: Run AccuracyCoin suite
+        run: cargo test --release --test accuracycoin_rom -- --nocapture
+
       - name: Build Release (Linux / Windows)
         if: matrix.target != 'universal-apple-darwin'
         run: cargo build --release --target ${{ matrix.target }}
