@@ -20,7 +20,13 @@ use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
 
 use config::{BUTTON_MASKS, Config};
-use menu::{HomeAction, ROW_BACK, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
+use menu::{HomeAction, ROW_BACK, ROW_OVERSCAN, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
+
+/// Scanlines hidden by NTSC overscan. Top crop is deeper: raster-split
+/// games (e.g. Castlevania III) finish their scanline-IRQ bank switch a
+/// line or two into the frame, so garbage can extend past the classic 8.
+const OVERSCAN_TOP: usize = 16;
+const OVERSCAN_BOTTOM: usize = 8;
 
 // NTSC: 89342 PPU dots per frame at 5,369,318 dots/sec = 60.0988 FPS
 const FRAME_PERIOD: Duration = Duration::from_nanos(16_639_267);
@@ -87,13 +93,34 @@ impl App {
     fn start_running(&mut self) {
         self.view = View::Running;
         self.next_frame = Instant::now();
+        self.apply_view_size();
     }
 
-    fn apply_scale(&self) {
+    /// (rows cropped from the top, visible height) for the current view.
+    fn crop(&self) -> (usize, usize) {
+        if matches!(self.view, View::Running)
+            && self.cfg.crop_overscan
+            && self
+                .nes
+                .as_ref()
+                .is_some_and(|n| n.region() == Region::Ntsc)
+        {
+            (OVERSCAN_TOP, HEIGHT - OVERSCAN_TOP - OVERSCAN_BOTTOM)
+        } else {
+            (0, HEIGHT)
+        }
+    }
+
+    /// Match pixel buffer and window size to the current view's crop.
+    fn apply_view_size(&mut self) {
+        let (_, h) = self.crop();
+        if let Some(p) = &mut self.pixels {
+            let _ = p.resize_buffer(WIDTH as u32, h as u32);
+        }
         if let Some(w) = &self.window {
             let _ = w.request_inner_size(LogicalSize::new(
                 (WIDTH as u32 * self.cfg.scale) as f64,
-                (HEIGHT as u32 * self.cfg.scale) as f64,
+                (h as u32 * self.cfg.scale) as f64,
             ));
         }
     }
@@ -155,14 +182,22 @@ impl App {
                 let delta = if code == KeyCode::ArrowLeft { -1i32 } else { 1 };
                 self.cfg.scale = (self.cfg.scale as i32 + delta).clamp(1, 5) as u32;
                 self.cfg.save();
-                self.apply_scale();
+                self.apply_view_size();
+            }
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if *sel == ROW_OVERSCAN => {
+                self.cfg.crop_overscan = !self.cfg.crop_overscan;
+                self.cfg.save();
             }
             KeyCode::Enter | KeyCode::Space => match *sel {
                 0..=7 => *waiting = true,
                 ROW_SCALE => {
                     self.cfg.scale = self.cfg.scale % 5 + 1;
                     self.cfg.save();
-                    self.apply_scale();
+                    self.apply_view_size();
+                }
+                ROW_OVERSCAN => {
+                    self.cfg.crop_overscan = !self.cfg.crop_overscan;
+                    self.cfg.save();
                 }
                 ROW_RESET => {
                     let scale = self.cfg.scale;
@@ -187,6 +222,7 @@ impl App {
         }
         if code == KeyCode::Escape && pressed {
             self.view = View::Home { sel: 0 };
+            self.apply_view_size();
             if let Some(a) = &self.audio {
                 a.clear();
             }
@@ -255,6 +291,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                let (skip, h) = self.crop();
                 let Some(pixels) = &mut self.pixels else {
                     return;
                 };
@@ -262,7 +299,8 @@ impl ApplicationHandler for App {
                 match &self.view {
                     View::Running => {
                         if let Some(nes) = &self.nes {
-                            frame.copy_from_slice(nes.framebuffer());
+                            let fb = nes.framebuffer();
+                            frame.copy_from_slice(&fb[skip * WIDTH * 4..(skip + h) * WIDTH * 4]);
                         }
                     }
                     View::Home { sel } => {

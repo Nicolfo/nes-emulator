@@ -18,6 +18,14 @@ pub const BUTTON_MASKS: [u8; 8] = [
 pub struct Config {
     pub keys: [KeyCode; 8], // same order as BUTTON_LABELS
     pub scale: u32,
+    // NTSC TVs hide the top/bottom 8 scanlines (overscan); games rely on it
+    // to hide raster-split garbage (e.g. Castlevania III's title).
+    #[serde(default = "default_true")]
+    pub crop_overscan: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -34,6 +42,7 @@ impl Default for Config {
                 KeyCode::ArrowRight,
             ],
             scale: 3,
+            crop_overscan: true,
         }
     }
 }

@@ -53,11 +53,16 @@ fn main() {
             nes.cpu.bus.controller1.set_button(START, false);
         }
         nes.run_frame();
-        if (f + 1) % 60 == 0 || f + 1 == frames || (log && f + 1 >= frames.saturating_sub(60)) {
+        let every: u32 = std::env::var("NES_DUMP_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+        if (f + 1) % every == 0 || f + 1 == frames || (log && f + 1 >= frames.saturating_sub(60)) {
             write_bmp(&format!("{prefix}_{:04}.bmp", f + 1), nes.framebuffer());
         }
         if log && f + 1 == frames {
             std::fs::write(format!("{prefix}_vram.bin"), nes.cpu.bus.ppu.vram).unwrap();
+            std::fs::write(format!("{prefix}_oam.bin"), nes.cpu.bus.ppu.oam).unwrap();
         }
     }
 }

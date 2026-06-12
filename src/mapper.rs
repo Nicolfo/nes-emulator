@@ -64,6 +64,15 @@ pub trait Mapper {
     fn prg_ram_read(&mut self, _addr: u16) -> Option<u8> {
         None
     }
+    /// Raw PRG RAM contents for battery (.sav) persistence; None when the
+    /// board has no PRG RAM. Bypasses any RAM-enable/banking logic.
+    fn prg_ram(&self) -> Option<&[u8]> {
+        None
+    }
+    /// Mutable PRG RAM view for restoring a .sav file at power-on.
+    fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
+        None
+    }
     /// Level of the cartridge's IRQ output.
     fn irq(&self) -> bool {
         false
