@@ -59,7 +59,7 @@ fn main() {
 
     // Dump the final frame as a PPM for visual inspection.
     let fb = nes.framebuffer();
-    let mut ppm = format!("P6\n256 240\n255\n").into_bytes();
+    let mut ppm = b"P6\n256 240\n255\n".to_vec();
     for px in fb.chunks(4) {
         ppm.extend_from_slice(&px[0..3]);
     }
