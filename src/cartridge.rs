@@ -1,4 +1,4 @@
-use crate::mapper::{Mapper, Mirroring, Mmc3, Nrom};
+use crate::mapper::{Axrom, Cnrom, Gxrom, Mapper, Mirroring, Mmc1, Mmc3, Nrom, Uxrom};
 
 pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
     if data.len() < 16 || &data[0..4] != b"NES\x1A" {
@@ -30,10 +30,13 @@ pub fn load_rom(data: &[u8]) -> Result<Box<dyn Mapper>, String> {
 
     match mapper_id {
         0 => Ok(Box::new(Nrom::new(prg, chr, mirroring))),
+        1 => Ok(Box::new(Mmc1::new(prg, chr))), // mirroring register-controlled
+        2 => Ok(Box::new(Uxrom::new(prg, chr, mirroring))),
+        3 => Ok(Box::new(Cnrom::new(prg, chr, mirroring))),
         4 => Ok(Box::new(Mmc3::new(prg, chr, mirroring))),
-        _ => Err(format!(
-            "unsupported mapper {mapper_id} (supported: 0 NROM, 4 MMC3)"
-        )),
+        7 => Ok(Box::new(Axrom::new(prg, chr))), // single-screen, register-controlled
+        66 => Ok(Box::new(Gxrom::new(prg, chr, mirroring))),
+        _ => Err(format!("mapper {mapper_id} is not supported")),
     }
 }
 
