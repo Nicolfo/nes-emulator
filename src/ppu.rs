@@ -510,6 +510,8 @@ impl Ppu {
                 self.overflow_dummy -= 1;
                 self.eval_ptr = self.eval_ptr.wrapping_add(1);
                 if self.overflow_dummy == 0 {
+                    // m resets to 0 when the dummy reads finish.
+                    self.eval_ptr &= !3;
                     self.eval_done = true;
                 }
                 return;
