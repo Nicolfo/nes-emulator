@@ -2,10 +2,12 @@ use super::{Mapper, Mirroring};
 
 /// Color Dreams (mapper 11): 32KB PRG and 8KB CHR selected by one register.
 /// The board has no bus-conflict prevention, so the written value is ANDed
-/// with the ROM byte at the written address.
+/// with the ROM byte at the written address. Headers declaring no CHR ROM
+/// get 8KB of unbanked CHR RAM.
 pub struct ColorDreams {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    chr_is_ram: bool,
     mirroring: Mirroring,
     prg_bank: u8,
     chr_bank: u8,
@@ -13,13 +15,21 @@ pub struct ColorDreams {
 
 impl ColorDreams {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         ColorDreams {
             prg,
             chr,
+            chr_is_ram,
             mirroring,
             prg_bank: 0,
             chr_bank: 0,
         }
+    }
+
+    fn chr_offset(&self, addr: u16) -> usize {
+        let banks = self.chr.len() / 0x2000;
+        (self.chr_bank as usize % banks) * 0x2000 + (addr as usize & 0x1FFF)
     }
 
     fn prg_offset(&self, addr: u16) -> usize {
@@ -46,12 +56,14 @@ impl Mapper for ColorDreams {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        let banks = self.chr.len() / 0x2000;
-        self.chr[(self.chr_bank as usize % banks) * 0x2000 + (addr as usize & 0x1FFF)]
+        self.chr[self.chr_offset(addr)]
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is ROM on Color Dreams boards.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        if self.chr_is_ram {
+            let off = self.chr_offset(addr);
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -77,6 +89,13 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 5);
         // PRG bank 2 of an all-0xFF ROM still reads 0xFF; check via offset.
         assert_eq!(m.prg_offset(0x8000), 2 * 0x8000);
+    }
+
+    #[test]
+    fn chr_ram_when_no_chr_rom() {
+        let mut m = ColorDreams::new(vec![0xFF; 0x8000], vec![], Mirroring::Vertical);
+        m.ppu_write(0x0123, 0x42);
+        assert_eq!(m.ppu_read(0x0123), 0x42);
     }
 
     #[test]

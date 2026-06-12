@@ -34,7 +34,9 @@ fn write_bmp(path: &str, fb: &[u8]) {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let rom_path = args.next().expect("usage: framedump <rom> <frames> <prefix> [start_frame...]");
+    let rom_path = args
+        .next()
+        .expect("usage: framedump <rom> <frames> <prefix> [start_frame...]");
     let frames: u32 = args.next().expect("frame count").parse().unwrap();
     let prefix = args.next().expect("output prefix");
     let starts: Vec<u32> = args.map(|a| a.parse().unwrap()).collect();

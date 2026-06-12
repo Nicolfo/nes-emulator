@@ -4,6 +4,7 @@ mod font;
 mod icon;
 mod menu;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -55,12 +56,36 @@ struct App {
     error: Option<String>,
     next_frame: Instant,
     audio: Option<audio::Audio>,
+    /// .sav file next to the loaded ROM; battery RAM is written back here.
+    sav_path: Option<PathBuf>,
+}
+
+/// Restore <rom>.sav into battery RAM (no-op without a battery) and return
+/// the path so it can be written back later.
+fn restore_battery_ram(nes: &mut Nes, rom_path: &Path) -> PathBuf {
+    let sav = rom_path.with_extension("sav");
+    if let Ok(data) = std::fs::read(&sav) {
+        nes.load_battery_ram(&data);
+    }
+    sav
 }
 
 impl App {
     fn redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    /// Write battery RAM to the .sav file; no-op without battery/ROM.
+    fn save_battery_ram(&self) {
+        let (Some(nes), Some(path)) = (&self.nes, &self.sav_path) else {
+            return;
+        };
+        if let Some(ram) = nes.battery_ram()
+            && let Err(e) = std::fs::write(path, ram)
+        {
+            eprintln!("failed to write {}: {e}", path.display());
         }
     }
 
@@ -73,9 +98,11 @@ impl App {
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
                 Ok(mut nes) => {
+                    self.save_battery_ram(); // flush the outgoing game first
                     if let Some(a) = &self.audio {
                         nes.set_sample_rate(a.sample_rate as f64);
                     }
+                    self.sav_path = Some(restore_battery_ram(&mut nes, &path));
                     self.nes = Some(nes);
                     self.error = None;
                     if let Some(w) = &self.window {
@@ -221,6 +248,7 @@ impl App {
             return;
         }
         if code == KeyCode::Escape && pressed {
+            self.save_battery_ram();
             self.view = View::Home { sel: 0 };
             self.apply_view_size();
             if let Some(a) = &self.audio {
@@ -265,6 +293,9 @@ impl ApplicationHandler for App {
             Pixels::new(WIDTH as u32, HEIGHT as u32, surface).expect("create pixel buffer");
         self.window = Some(window);
         self.pixels = Some(pixels);
+        // CLI boot starts directly in Running: sync buffer/window to the
+        // overscan crop, which is otherwise only applied on view changes.
+        self.apply_view_size();
         self.next_frame = Instant::now();
         self.redraw();
     }
@@ -370,6 +401,7 @@ fn main() {
     let mut nes = None;
     let mut view = View::Home { sel: 0 };
     let mut error = None;
+    let mut sav_path = None;
     if let Some(path) = std::env::args().nth(1) {
         match std::fs::read(&path) {
             Ok(rom) => match Nes::new(&rom) {
@@ -377,6 +409,7 @@ fn main() {
                     if let Some(a) = &audio {
                         n.set_sample_rate(a.sample_rate as f64);
                     }
+                    sav_path = Some(restore_battery_ram(&mut n, Path::new(&path)));
                     nes = Some(n);
                     view = View::Running;
                 }
@@ -396,6 +429,9 @@ fn main() {
         error,
         next_frame: Instant::now(),
         audio,
+        sav_path,
     };
     event_loop.run_app(&mut app).expect("event loop");
+    // single exit point for quit/close/escape-from-home
+    app.save_battery_ram();
 }

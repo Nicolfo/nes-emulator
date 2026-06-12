@@ -114,8 +114,8 @@ hidden by TV overscan.
 ## Test ROMs (non-game)
 
 - **[Holy Mapperel](https://github.com/pinobatch/holy-mapperel)** (tepples) —
-  automatic pass/fail screens for mappers 0–4, 7, 9, 11, 66, 69: PRG/CHR/WRAM
-  and mirroring checks. Best candidate for an automated framebuffer-hash test
-  in the style of `tests/boot_smoke.rs`.
+  automated in `tests/holy_mapperel.rs` (ROMs in `testroms/`, mappers 0–4, 7,
+  9, 11, 66, 69). ROMs for unsupported mappers (10, 28, 34, 78.3, 118, 180)
+  sit in `testroms/` waiting for mapper support.
 - Audio comparison: record against Mesen/NSFPlay for VRC6, N163, 5B and MMC5
   channel balance — the per-chip mix constants are tunable starting points.

@@ -11,7 +11,9 @@ pub enum Region {
     Pal,
 }
 
-pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
+/// `battery` is the iNES flags6 bit 1: the board has battery-backed PRG RAM
+/// that should persist to a .sav file.
+pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> {
     if data.len() < 16 || &data[0..4] != b"NES\x1A" {
         return Err("not an iNES file (bad magic)".into());
     }
@@ -39,6 +41,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
         Mirroring::Horizontal
     };
     let has_trainer = flags6 & 0x04 != 0;
+    let battery = flags6 & 0x02 != 0;
 
     let prg_size = prg_banks * 16 * 1024;
     let chr_size = chr_banks * 8 * 1024;
@@ -68,7 +71,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region), String> {
         69 => Box::new(Fme7::new(prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
-    Ok((mapper, region))
+    Ok((mapper, region, battery))
 }
 
 #[cfg(test)]
@@ -84,7 +87,7 @@ mod tests {
         assert_eq!(data[5], 1); // 8KB CHR
         // We'll check the mirroring and mapper
         assert_eq!((data[6] >> 4) | (data[7] & 0xF0), 0); // mapper 0
-        let (mut mapper, region) = load_rom(&data).unwrap();
+        let (mut mapper, region, _) = load_rom(&data).unwrap();
         assert_eq!(region, Region::Ntsc);
         // Let's assert reset vector points to PRG space (>= 0x8000)
         let lo = mapper.cpu_read(0xFFFC) as u16;

@@ -100,6 +100,14 @@ impl Mapper for Vrc6 {
         Some(self.prg_ram[(addr & 0x1FFF) as usize])
     }
 
+    fn prg_ram(&self) -> Option<&[u8]> {
+        Some(&self.prg_ram)
+    }
+
+    fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
+        Some(&mut self.prg_ram)
+    }
+
     fn irq(&self) -> bool {
         self.irq.line
     }

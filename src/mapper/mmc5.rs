@@ -235,7 +235,11 @@ impl Mapper for Mmc5 {
         if (0x5100..=0x5206).contains(&addr) && std::env::var("NES_MMC5_LOG").is_ok() {
             eprintln!(
                 "mmc5 w {addr:04X} = {val:02X} (sl {})",
-                if self.in_frame { self.scanline as i16 } else { -1 }
+                if self.in_frame {
+                    self.scanline as i16
+                } else {
+                    -1
+                }
             );
         }
         match addr {
@@ -303,8 +307,7 @@ impl Mapper for Mmc5 {
             if in_render && !sprite_window && self.exram_mode == 1 {
                 // ExGrafix: the BG tile's 4KB bank comes from the ExRAM
                 // byte latched at its NT fetch; $5130 supplies bits 6-7.
-                let bank =
-                    (self.ex_latch as usize & 0x3F) | ((self.chr_upper as usize >> 8) << 6);
+                let bank = (self.ex_latch as usize & 0x3F) | ((self.chr_upper as usize >> 8) << 6);
                 let banks = (self.chr.len() / 0x1000).max(1);
                 return self.chr[bank % banks * 0x1000 + (addr as usize & 0xFFF)];
             }
@@ -385,6 +388,14 @@ impl Mapper for Mmc5 {
         Some(self.prg_ram[off])
     }
 
+    fn prg_ram(&self) -> Option<&[u8]> {
+        Some(&self.prg_ram)
+    }
+
+    fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
+        Some(&mut self.prg_ram)
+    }
+
     fn cpu_reg_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x5015 => Some(self.audio.status()),
@@ -394,7 +405,11 @@ impl Mapper for Mmc5 {
                 if std::env::var("NES_MMC5_LOG").is_ok() {
                     eprintln!(
                         "mmc5 r 5204 = {v:02X} (sl {})",
-                        if self.in_frame { self.scanline as i16 } else { -1 }
+                        if self.in_frame {
+                            self.scanline as i16
+                        } else {
+                            -1
+                        }
                     );
                 }
                 Some(v)
@@ -432,7 +447,11 @@ impl Mapper for Mmc5 {
             eprintln!(
                 "mmc5 snoop {:04X} = {val:02X} (sl {})",
                 0x2000 + (addr & 7),
-                if self.in_frame { self.scanline as i16 } else { -1 }
+                if self.in_frame {
+                    self.scanline as i16
+                } else {
+                    -1
+                }
             );
         }
         match addr & 7 {

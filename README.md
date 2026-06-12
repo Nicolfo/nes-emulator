@@ -120,9 +120,14 @@ cargo test
   140 tests pass. Requires `AccuracyCoin.nes` in the project root (skipped if
   absent); CI downloads it automatically. See [docs/accuracy.md](docs/accuracy.md)
   for the interactive debugging harness (`examples/accuracy_rom.rs`).
-- `tests/boot_smoke.rs` — boots commercial ROMs found in the project root for a
+- `tests/boot_smoke.rs` — boots commercial ROMs found in `testroms/` for a
   few seconds of emulated time and asserts the framebuffer shows a real picture
   (skipped per-ROM when absent, so CI stays green).
+- `tests/holy_mapperel.rs` — runs the [Holy Mapperel](https://github.com/pinobatch/holy-mapperel)
+  board-test ROMs from `testroms/` (mappers 0–4, 7, 9, 11, 66, 69) and asserts
+  each shows "DETAILED TEST RESULT: 0000" — PRG/CHR banking, PRG RAM
+  enable/write-protect, and mirroring all verified (skipped per-ROM when
+  absent). Run with `--release`.
 - `tests/accuracy_coin.rs` — fast ROM-less unit tests replicating a subset of the
   AccuracyCoin specifications: CPU instruction behavior, addressing-mode
   wraparounds, open bus, dummy reads/writes, and unofficial instructions.
