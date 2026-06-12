@@ -69,12 +69,26 @@ pub struct Ppu {
     /// $2001 writes take effect ~2 dots later.
     pending_mask: Option<(u8, u8)>,
 
+    // ---- PPU data state machine ($2007 during rendering) ----
+    /// Last byte the rendering pipeline fetched from memory.
+    last_fetch_val: u8,
+    /// Dots until the $2007 state machine's Read fires and refills the read
+    /// buffer from the rendering bus (0 = idle).
+    capture_delay: u8,
+    /// The state machine's Read collides with a pipeline fetch this dot:
+    /// the octal latch feeds back, replacing the fetch address low byte
+    /// with the previous fetch's data.
+    bus_conflict: bool,
+    /// Sprite pattern fetch scratch (per 8-dot group).
+    spr_pat_addr: u16,
+    spr_pat_lo: u8,
+
     pub vram: [u8; 0x800],
     palette: [u8; 32],
     read_buffer: u8,
 
     pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank
-    pub dot: u16,  // 0..340
+    pub dot: u16,      // 0..340
     odd_frame: bool,
     suppress_vbl: bool,
     pub frame_complete: bool,
@@ -129,6 +143,11 @@ impl Ppu {
             sprite0_cur: false,
             pending_corruption: None,
             pending_mask: None,
+            last_fetch_val: 0,
+            capture_delay: 0,
+            bus_conflict: false,
+            spr_pat_addr: 0,
+            spr_pat_lo: 0,
             vram: [0; 0x800],
             palette: [0; 32],
             read_buffer: 0,
@@ -222,6 +241,20 @@ impl Ppu {
                 res
             }
             7 => {
+                // During rendering the buffer refill goes through the PPU
+                // data state machine: it lands ~4 dots later from whatever
+                // the rendering pipeline drives on the bus.
+                if self.rendering_enabled() && self.scanline < 240 {
+                    // The v increment (rendering glitch) also waits for the
+                    // state machine; fetches before it use the old address.
+                    let res = self.read_buffer;
+                    self.capture_delay = std::env::var("NES_2007_DELAY")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(5u8);
+                    self.io_bus_refresh(0xFF, res);
+                    return res;
+                }
                 let addr = self.v & 0x3FFF;
                 let res;
                 if addr >= 0x3F00 {
@@ -332,6 +365,20 @@ impl Ppu {
         }
     }
 
+    /// A rendering-pipeline memory fetch: records the byte on the PPU data
+    /// bus and applies the octal-latch feedback when the $2007 state
+    /// machine's Read collides with this fetch's ALE.
+    fn fetch_mem(&mut self, addr: u16, cart: &mut dyn Mapper) -> u8 {
+        let addr = if self.bus_conflict {
+            (addr & 0xFF00) | self.last_fetch_val as u16
+        } else {
+            addr
+        };
+        let v = self.mem_read(addr, cart);
+        self.last_fetch_val = v;
+        v
+    }
+
     fn mem_write(&mut self, addr: u16, val: u8, cart: &mut dyn Mapper) {
         let addr = addr & 0x3FFF;
         if addr < 0x2000 {
@@ -420,12 +467,12 @@ impl Ppu {
         match (self.dot - 1) % 8 {
             0 => {
                 self.load_shifters();
-                self.nt_latch = self.mem_read(0x2000 | (self.v & 0x0FFF), cart);
+                self.nt_latch = self.fetch_mem(0x2000 | (self.v & 0x0FFF), cart);
             }
             2 => {
                 let addr =
                     0x23C0 | (self.v & 0x0C00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
-                let mut at = self.mem_read(addr, cart);
+                let mut at = self.fetch_mem(addr, cart);
                 if (self.v >> 5) & 2 != 0 {
                     at >>= 4;
                 }
@@ -437,12 +484,12 @@ impl Ppu {
             4 => {
                 let fine_y = (self.v >> 12) & 7;
                 let base = ((self.ctrl as u16 & 0x10) << 8) | ((self.nt_latch as u16) << 4);
-                self.pat_lo_latch = self.mem_read(base + fine_y, cart);
+                self.pat_lo_latch = self.fetch_mem(base + fine_y, cart);
             }
             6 => {
                 let fine_y = (self.v >> 12) & 7;
                 let base = ((self.ctrl as u16 & 0x10) << 8) | ((self.nt_latch as u16) << 4);
-                self.pat_hi_latch = self.mem_read(base + fine_y + 8, cart);
+                self.pat_hi_latch = self.fetch_mem(base + fine_y + 8, cart);
             }
             7 => self.increment_coarse_x(),
             _ => {}
@@ -471,7 +518,7 @@ impl Ppu {
         if (1..=64).contains(&d) && !prerender {
             self.sec_addr = ((d - 1) / 2) as u8;
             self.oam_bus = 0xFF;
-            if d % 2 == 0 {
+            if d.is_multiple_of(2) {
                 self.secondary_oam[self.sec_addr as usize] = 0xFF;
             }
             if d == 64 {
@@ -606,10 +653,26 @@ impl Ppu {
                     }
                 }
             };
-            if k == 7 {
-                self.fetch_sprite_slot(g, cart);
+            // Bus cadence: two garbage NT reads, then the two pattern planes.
+            match k {
+                0 | 2 => {
+                    self.fetch_mem(0x2000 | (self.v & 0x0FFF), cart);
+                }
+                4 => {
+                    self.spr_pat_addr = self.sprite_pat_addr(g);
+                    self.spr_pat_lo = self.fetch_mem(self.spr_pat_addr, cart);
+                }
+                6 => {
+                    let hi = self.fetch_mem(self.spr_pat_addr + 8, cart);
+                    self.load_sprite_slot(g, self.spr_pat_lo, hi);
+                }
+                _ => {}
             }
             return;
+        }
+        // Dots 337-340: dummy nametable fetches.
+        if d == 337 || d == 339 {
+            self.fetch_mem(0x2000 | (self.v & 0x0FFF), cart);
         }
         // Dots 321-340 and dot 0: reads return the first secondary OAM byte.
         if d >= 321 {
@@ -617,25 +680,23 @@ impl Ppu {
         }
     }
 
-    /// Load sprite slot `g` from secondary OAM (last dot of its fetch group).
-    fn fetch_sprite_slot(&mut self, g: usize, cart: &mut dyn Mapper) {
+    /// Pattern address for sprite slot `g` of secondary OAM.
+    fn sprite_pat_addr(&self, g: usize) -> u16 {
         let y = self.secondary_oam[g * 4];
         let tile = self.secondary_oam[g * 4 + 1];
         let attr = self.secondary_oam[g * 4 + 2];
-        let x = self.secondary_oam[g * 4 + 3];
         // The pre-render line is treated as scanline 5 (261 & 255) here.
-        let line: i16 = if self.scanline == -1 { 5 } else { self.scanline };
+        let line: i16 = if self.scanline == -1 {
+            5
+        } else {
+            self.scanline
+        };
         let height = self.sprite_height();
-        let mut row = line - y as i16;
-        let in_range = row >= 0 && row < height;
-        if !in_range {
-            self.sprites[g] = SpriteRow::default();
-            return;
-        }
+        let mut row = (line - y as i16).rem_euclid(height);
         if attr & 0x80 != 0 {
             row = height - 1 - row; // vertical flip
         }
-        let pat_addr = if height == 16 {
+        if height == 16 {
             let table = ((tile & 1) as u16) << 12;
             let mut t = (tile & 0xFE) as u16;
             if row >= 8 {
@@ -644,9 +705,24 @@ impl Ppu {
             table | (t << 4) | (row as u16 & 7)
         } else {
             ((self.ctrl as u16 & 0x08) << 9) | ((tile as u16) << 4) | row as u16
+        }
+    }
+
+    /// Load sprite slot `g` with the fetched pattern bytes.
+    fn load_sprite_slot(&mut self, g: usize, mut pat_lo: u8, mut pat_hi: u8) {
+        let y = self.secondary_oam[g * 4];
+        let attr = self.secondary_oam[g * 4 + 2];
+        let x = self.secondary_oam[g * 4 + 3];
+        let line: i16 = if self.scanline == -1 {
+            5
+        } else {
+            self.scanline
         };
-        let mut pat_lo = cart.ppu_read(pat_addr);
-        let mut pat_hi = cart.ppu_read(pat_addr + 8);
+        let row = line - y as i16;
+        if row < 0 || row >= self.sprite_height() {
+            self.sprites[g] = SpriteRow::default();
+            return;
+        }
         if attr & 0x40 != 0 {
             pat_lo = pat_lo.reverse_bits(); // horizontal flip
             pat_hi = pat_hi.reverse_bits();
@@ -744,16 +820,27 @@ impl Ppu {
 
         let rendering = self.rendering_enabled();
 
+        // $2007 state machine: its Read fires this dot. If the rendering
+        // pipeline also fetches this dot, the octal latch feeds back into
+        // the fetch address (bus_conflict); either way the read buffer is
+        // refilled at the end of the dot from the last bus value.
+        let capture_now = self.capture_delay > 0 && {
+            self.capture_delay -= 1;
+            self.capture_delay == 0
+        };
+        self.bus_conflict = capture_now;
+
         // Pending corruption lands on the first rendered dot of a
         // sprite-evaluation line: OAM row 0 overwrites OAM row `seed`.
-        if rendering && (visible || prerender) {
-            if let Some(row) = self.pending_corruption.take() {
-                let row = row as usize & 31;
-                for i in 0..8 {
-                    self.oam[row * 8 + i] = self.oam[i];
-                }
-                self.secondary_oam[row] = self.secondary_oam[0];
+        if rendering
+            && (visible || prerender)
+            && let Some(row) = self.pending_corruption.take()
+        {
+            let row = row as usize & 31;
+            for i in 0..8 {
+                self.oam[row * 8 + i] = self.oam[i];
             }
+            self.secondary_oam[row] = self.secondary_oam[0];
         }
 
         if (visible || prerender) && rendering {
@@ -802,6 +889,12 @@ impl Ppu {
             }
         }
 
+        if capture_now {
+            self.read_buffer = self.last_fetch_val;
+            self.bus_conflict = false;
+            self.increment_v_after_2007();
+        }
+
         self.dots += 1;
         self.dot += 1;
         // NTSC: odd frames skip the last dot of the pre-render line when
@@ -831,13 +924,6 @@ impl Ppu {
 
         let (sp_pat, sp_pal, sp_behind, sp_zero) = self.sprite_pixel(px);
 
-        if std::env::var("NES_PX_DEBUG").is_ok() && (bg_pat != 0 || sp_pat != 0) {
-            eprintln!(
-                "px line={} px={} bg={} sp={} zero={}",
-                self.scanline, px, bg_pat, sp_pat, sp_zero
-            );
-        }
-
         // sprite 0 hit
         if sp_zero && sp_pat != 0 && bg_pat != 0 && px != 255 {
             self.status |= 0x40;
@@ -857,8 +943,7 @@ impl Ppu {
         };
 
         let grey = if self.mask & 1 != 0 { 0x30 } else { 0x3F };
-        let color =
-            self.palette[Self::palette_index(0x3F00 | palette_idx as u16)] as usize & grey;
+        let color = self.palette[Self::palette_index(0x3F00 | palette_idx as u16)] as usize & grey;
         let rgb = NES_PALETTE[color];
         let off = (py as usize * WIDTH + px as usize) * 4;
         self.framebuffer[off] = rgb[0];

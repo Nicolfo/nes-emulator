@@ -128,8 +128,11 @@ impl Bus {
     }
 
     pub fn write(&mut self, addr: u16, val: u8) {
-        if let Some(w) = self.watch_addr && addr >= w && addr < w + 16 {
-                self.watch_log.push((self.cycles, val));
+        if let Some(w) = self.watch_addr
+            && addr >= w
+            && addr < w + 16
+        {
+            self.watch_log.push((self.cycles, val));
         }
         self.open_bus = val;
         match addr {

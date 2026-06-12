@@ -197,16 +197,16 @@ fn run_single(mut nes: Nes, page: usize, test: usize, result_addr: u16) {
         if v != 0 && v != 3 {
             println!("result = {:#04x} (code {})", v, v >> 2);
             // DUMP_RANGE=hexaddr:len dumps RAM after the test finishes.
-            if let Ok(spec) = std::env::var("DUMP_RANGE") {
-                if let Some((a, l)) = spec.split_once(':') {
-                    let a = u16::from_str_radix(a, 16).unwrap();
-                    let l: u16 = l.parse().unwrap();
-                    print!("${:04X}:", a);
-                    for i in 0..l {
-                        print!(" {:02x}", ram(&nes, a + i));
-                    }
-                    println!();
+            if let Ok(spec) = std::env::var("DUMP_RANGE")
+                && let Some((a, l)) = spec.split_once(':')
+            {
+                let a = u16::from_str_radix(a, 16).unwrap();
+                let l: u16 = l.parse().unwrap();
+                print!("${:04X}:", a);
+                for i in 0..l {
+                    print!(" {:02x}", ram(&nes, a + i));
                 }
+                println!();
             }
             return;
         }
@@ -246,7 +246,10 @@ fn main() {
         while ram(&nes, 0x459) == 0 {
             nes.cpu.step();
         }
-        println!("sprite0 test started (overflow result={:#04x})", ram(&nes, 0x459));
+        println!(
+            "sprite0 test started (overflow result={:#04x})",
+            ram(&nes, 0x459)
+        );
         let mut frames = 0;
         loop {
             let v = ram(&nes, 0x457);

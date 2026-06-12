@@ -668,8 +668,13 @@ impl Apu {
                 if std::env::var("NES_DMA_LOG").is_ok() {
                     eprintln!(
                         "apucyc {} WRITE4015 v={:02X} buffer={:?} bytes={} pending_dis={} bits={} timer={}",
-                        self.cycle, v, self.dmc.buffer, self.dmc.bytes_remaining,
-                        self.dmc.pending_disable, self.dmc.bits_remaining, self.dmc.timer
+                        self.cycle,
+                        v,
+                        self.dmc.buffer,
+                        self.dmc.bytes_remaining,
+                        self.dmc.pending_disable,
+                        self.dmc.bits_remaining,
+                        self.dmc.timer
                     );
                 }
                 self.pulse1.set_enabled(v & 0x01 != 0);
@@ -780,9 +785,8 @@ impl Apu {
         // the off cycle is raised one cycle later. An attempt blocked by the
         // enable pipeline retries every cycle (off the parity grid) and its
         // DMA skips the alignment cycle.
-        let want = self.dmc.buffer.is_none()
-            && self.dmc.bytes_remaining > 0
-            && !self.dmc.fetch_pending;
+        let want =
+            self.dmc.buffer.is_none() && self.dmc.bytes_remaining > 0 && !self.dmc.fetch_pending;
         if want && self.dmc.enable_delay > 0 {
             self.dmc.blocked_attempt = true;
         }
