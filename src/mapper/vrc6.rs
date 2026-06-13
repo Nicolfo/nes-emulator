@@ -3,6 +3,9 @@ use super::{Mapper, Mirroring};
 /// VRC6 (mapper 24, Akumajou Densetsu): 16KB+8KB PRG banking, 1KB CHR
 /// banking, the VRC scanline/cycle IRQ, and expansion audio (two pulse
 /// channels with variable duty plus a sawtooth channel).
+///
+/// Mapper 26 is the same chip on the VRC6b pinout, where the A0 and A1 lines
+/// feeding the register decoder are swapped; everything else is identical.
 pub struct Vrc6 {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -13,10 +16,22 @@ pub struct Vrc6 {
     chr_banks: [u8; 8],
     irq: VrcIrq,
     audio: Vrc6Audio,
+    // VRC6b swaps the A0/A1 register-select lines relative to VRC6a.
+    swap_lines: bool,
 }
 
 impl Vrc6 {
+    /// VRC6a wiring (mapper 24): register lines map straight to A0/A1.
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        Self::with_lines(prg, chr, mirroring, false)
+    }
+
+    /// VRC6b wiring (mapper 26): A0 and A1 are swapped.
+    pub fn new_vrc6b(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        Self::with_lines(prg, chr, mirroring, true)
+    }
+
+    fn with_lines(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring, swap_lines: bool) -> Self {
         Vrc6 {
             prg,
             chr,
@@ -27,6 +42,16 @@ impl Vrc6 {
             chr_banks: [0; 8],
             irq: VrcIrq::new(),
             audio: Vrc6Audio::new(),
+            swap_lines,
+        }
+    }
+
+    /// The two register-select bits, with A0/A1 swapped on VRC6b.
+    fn reg(&self, addr: u16) -> u16 {
+        if self.swap_lines {
+            ((addr >> 1) & 1) | ((addr & 1) << 1)
+        } else {
+            addr & 3
         }
     }
 }
@@ -53,15 +78,16 @@ impl Mapper for Vrc6 {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
-        // VRC6a wires the register lines to A0/A1 directly.
-        match (addr & 0xF000, addr & 3) {
+        // The register-select bits depend on the A0/A1 pinout (VRC6a vs b).
+        let r = self.reg(addr);
+        match (addr & 0xF000, r) {
             (0x6000, _) if addr < 0x8000 => self.prg_ram[(addr & 0x1FFF) as usize] = val,
             (0x7000, _) => self.prg_ram[(addr & 0x1FFF) as usize] = val,
             (0x8000, _) => self.prg_16k = val & 0x0F,
-            (0x9000, 0..=2) => self.audio.pulse_write(0, addr & 3, val),
+            (0x9000, 0..=2) => self.audio.pulse_write(0, r, val),
             (0x9000, _) => self.audio.freq_ctrl = val,
-            (0xA000, 0..=2) => self.audio.pulse_write(1, addr & 3, val),
-            (0xB000, 0..=2) => self.audio.saw_write(addr & 3, val),
+            (0xA000, 0..=2) => self.audio.pulse_write(1, r, val),
+            (0xB000, 0..=2) => self.audio.saw_write(r, val),
             (0xB000, _) => {
                 self.mirroring = match (val >> 2) & 3 {
                     0 => Mirroring::Vertical,
@@ -356,6 +382,27 @@ mod tests {
         m.cpu_write(0xE001, 3);
         assert_eq!(m.ppu_read(0x0800), 11);
         assert_eq!(m.ppu_read(0x1400), 3);
+    }
+
+    #[test]
+    fn vrc6b_swaps_a0_a1() {
+        // 8 x 16KB PRG; on VRC6b the $C000 8KB-bank register decodes at A1
+        // swapped with A0, so a write to $C001 hits it (A1=0, A0=1 -> reg 2
+        // becomes reg 1's slot). Verify PRG select still lands via the b pinout.
+        let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
+        let chr: Vec<u8> = (0..16 * 0x400).map(|i| (i / 0x400) as u8).collect();
+        let mut m = Vrc6::new_vrc6b(prg, chr, Mirroring::Vertical);
+        // $8000 (reg 0) selects the 16KB bank regardless of pinout.
+        m.cpu_write(0x8000, 2);
+        assert_eq!(m.cpu_read(0x8000), 2);
+        // Mirroring control is at ($B000, reg 3). On VRC6b reg 3 needs A0=1,
+        // A1=1 with the lines swapped, i.e. address bits 1,0 = 1,1 -> $B003.
+        m.cpu_write(0xB003, 1 << 2);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        // The CHR low-bank register ($D000 reg group): on VRC6b $D001 and
+        // $D002 swap. Writing $D002 targets reg index 1.
+        m.cpu_write(0xD002, 9);
+        assert_eq!(m.ppu_read(0x0400), 9);
     }
 
     #[test]

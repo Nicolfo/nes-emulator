@@ -1,6 +1,6 @@
 use crate::mapper::{
-    Axrom, Cnrom, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc5, N163, Nrom,
-    Uxrom, Vrc6,
+    Axrom, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom, Mapper, Mirroring, Mmc1, Mmc2,
+    Mmc3, Mmc4, Mmc5, N163, Namco108, Nrom, Uxrom, Vrc6,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -64,11 +64,16 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         5 => Box::new(Mmc5::new(prg, chr, mirroring)),
         7 => Box::new(Axrom::new(prg, chr)), // single-screen, register-controlled
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
+        10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
+        26 => Box::new(Vrc6::new_vrc6b(prg, chr, mirroring)),
+        34 => Box::new(Bnrom::new(prg, chr, mirroring)),
         66 => Box::new(Gxrom::new(prg, chr, mirroring)),
         69 => Box::new(Fme7::new(prg, chr, mirroring)),
+        71 => Box::new(Codemasters::new(prg, chr, mirroring)),
+        206 => Box::new(Namco108::new(prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
     Ok((mapper, region, battery))
