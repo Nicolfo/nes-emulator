@@ -1,12 +1,11 @@
 # NES Emulator
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
-input, NTSC and PAL machines (auto-detected from the ROM header), and mappers
-0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 5 (MMC5), 7 (AxROM),
-9 (MMC2), 11 (Color Dreams), 19 (Namco 163), 24 (VRC6), 66 (GxROM) and
-69 (FME-7) — with expansion audio for the MMC5, VRC6, N163 and Sunsoft 5B —
-covering games such as Super Mario Bros. 1–3, Battletoads, Mega Man,
-Punch-Out!!, Gimmick!, Akumajou Densetsu and Castlevania III.
+input, NTSC and PAL machines (auto-detected from the ROM header), and 18 mappers
+— with expansion audio for the MMC5, VRC6, N163 and Sunsoft 5B — covering games
+such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
+Akumajou Densetsu and Castlevania III. See [docs/mappers.md](docs/mappers.md)
+for the full mapper list with descriptions and notable games.
 
 Passes all **140 / 140** tests of the hardware-verified
 [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) accuracy suite and
@@ -82,11 +81,13 @@ All bindings except Escape can be changed in Settings.
   (game-compatible core: all banking modes, banked PRG RAM, ExRAM/fill
   nametables, ExGrafix extended attributes, fetch-pattern scanline IRQ,
   8x16 sprite CHR sets, multiplier and pulse/PCM audio; vertical split is
-  not emulated), AxROM, MMC2 (tile-fetch CHR latches), Color Dreams, N163
-  (wavetable audio, nametables mappable to CHR ROM), VRC6 (pulse/saw audio,
-  scanline and cycle IRQ), GxROM and FME-7 (CPU-cycle IRQ counter plus
-  Sunsoft 5B audio). Expansion audio is summed into the APU mix before
-  decimation/filtering.
+  not emulated), AxROM, MMC2 and MMC4 (tile-fetch CHR latches; MMC4 adds 16KB
+  PRG banking and PRG RAM), Color Dreams, N163 (wavetable audio, nametables
+  mappable to CHR ROM), VRC6 (pulse/saw audio, scanline and cycle IRQ; both the
+  VRC6a and VRC6b pinouts), BNROM/NINA-001, GxROM, FME-7 (CPU-cycle IRQ counter
+  plus Sunsoft 5B audio), Camerica/Codemasters and Namco 108/DxROM (the
+  pre-IRQ MMC3 ancestor). The full table lives in [docs/mappers.md](docs/mappers.md).
+  Expansion audio is summed into the APU mix before decimation/filtering.
 - `src/cartridge.rs` — iNES/NES 2.0 header parsing, mapper construction and
   NTSC/PAL region detection (NES 2.0 timing byte, legacy TV-system bit).
 - `src/nes.rs` — frontend-agnostic console facade (run a frame, framebuffer,

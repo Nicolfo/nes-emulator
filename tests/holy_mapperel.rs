@@ -85,6 +85,7 @@ hm_test! {
     m69_p128k_c64k_w8k: "M69_P128K_C64K_W8K.nes",
 }
 
-// Unsupported mappers in testroms/, kept for when support lands:
-// M10 (MMC4), M28 (Action 53), M34 (BNROM/NINA-001), M78.3 (Holy Diver),
-// M118 (TxSROM), M180 (Crazy Climber).
+// M10 (MMC4) and M34 (BNROM/NINA-001) are now supported; add their board-test
+// ROMs here once their exact testroms/ filenames are confirmed.
+// Still unsupported in testroms/, kept for when support lands:
+// M28 (Action 53), M78.3 (Holy Diver), M118 (TxSROM), M180 (Crazy Climber).
