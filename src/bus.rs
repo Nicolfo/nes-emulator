@@ -5,28 +5,11 @@ use crate::mapper::Mapper;
 use crate::ppu::Ppu;
 
 /// RDY assertion delay (CPU cycles) for a DMC "load" DMA after a $4015 write.
-/// Overridable via NES_DMC_LOAD_DELAY for timing experiments.
-pub fn dmc_load_delay() -> u8 {
-    static DELAY: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *DELAY.get_or_init(|| {
-        std::env::var("NES_DMC_LOAD_DELAY")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1)
-    })
-}
+/// Matches this emulator's CPU/PPU alignment against AccuracyCoin's answer keys.
+pub const DMC_LOAD_DELAY: u8 = 1;
 
 /// Parity of bus cycles on which the DMC fetch ("get" cycle) may occur.
-/// Overridable via NES_DMC_GET_PARITY.
-pub fn dmc_get_parity() -> u64 {
-    static PARITY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *PARITY.get_or_init(|| {
-        std::env::var("NES_DMC_GET_PARITY")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1)
-    })
-}
+pub const DMC_GET_PARITY: u64 = 1;
 
 pub struct Bus {
     pub ram: [u8; 0x800],
@@ -224,14 +207,16 @@ impl Bus {
             if load {
                 // Load DMA: RDY asserts a fixed delay after the (grid-aligned)
                 // request, so the DMA is always 3 cycles.
-                self.dmc_delay = dmc_load_delay();
+                self.dmc_delay = DMC_LOAD_DELAY;
             }
-            if std::env::var("NES_DMA_LOG").is_ok() {
-                eprintln!(
-                    "cyc {} RAISE load={} ghost={} skip_align={}",
-                    self.cycles, load, ghost, skip_align
-                );
-            }
+            crate::trace_log!(
+                "NES_DMA_LOG",
+                "cyc {} RAISE load={} ghost={} skip_align={}",
+                self.cycles,
+                load,
+                ghost,
+                skip_align
+            );
         }
         for _ in 0..2 {
             self.ppu.tick(&mut *self.cart);

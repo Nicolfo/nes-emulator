@@ -5,6 +5,14 @@ use crate::palette::NES_PALETTE;
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 
+/// PPU dots before a $2001 (mask) write takes effect (hardware: 2-5 depending
+/// on alignment). Tuned to this emulator's CPU/PPU phase for AccuracyCoin.
+const MASK_DELAY: u8 = 4;
+
+/// PPU dots before a $2007 read's buffer refill fires (the data-bus state
+/// machine), when the read lands during active rendering.
+const PPUDATA_READ_DELAY: u8 = 5;
+
 #[derive(Clone, Copy, Default)]
 struct SpriteRow {
     /// X-position down-counter: decrements every visible dot regardless of
@@ -263,10 +271,7 @@ impl Ppu {
                     // The v increment (rendering glitch) also waits for the
                     // state machine; fetches before it use the old address.
                     let res = self.read_buffer;
-                    self.capture_delay = std::env::var("NES_2007_DELAY")
-                        .ok()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(5u8);
+                    self.capture_delay = PPUDATA_READ_DELAY;
                     self.io_bus_refresh(0xFF, res);
                     return res;
                 }
@@ -300,13 +305,8 @@ impl Ppu {
                 self.t = (self.t & !0x0C00) | (((val & 3) as u16) << 10);
             }
             1 => {
-                // $2001 takes effect a few dots after the write (hardware:
-                // 2-5 depending on alignment). Overridable for experiments.
-                let d = std::env::var("NES_MASK_DELAY")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(4u8);
-                self.pending_mask = Some((val, d));
+                // $2001 takes effect a few dots after the write.
+                self.pending_mask = Some((val, MASK_DELAY));
             }
             3 => self.oam_addr = val,
             4 => {
@@ -396,6 +396,7 @@ impl Ppu {
         } else if addr < 0x3F00 {
             match cart.nt_target(addr) {
                 NtTarget::Ciram(off) => {
+                    #[cfg(feature = "trace")]
                     if let Ok(w) = std::env::var("NES_VRAM_WATCH")
                         && u16::from_str_radix(&w, 16) == Ok(off)
                     {

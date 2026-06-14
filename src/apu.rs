@@ -695,23 +695,20 @@ impl Apu {
             0x4012 => self.dmc.sample_addr = 0xC000 | ((v as u16) << 6),
             0x4013 => {
                 self.dmc.sample_len = ((v as u16) << 4) | 1;
-                if std::env::var("NES_DMA_LOG").is_ok() {
-                    eprintln!("apucyc {} WRITE4013 v={:02X}", self.cycle, v);
-                }
+                crate::trace_log!("NES_DMA_LOG", "apucyc {} WRITE4013 v={:02X}", self.cycle, v);
             }
             0x4015 => {
-                if std::env::var("NES_DMA_LOG").is_ok() {
-                    eprintln!(
-                        "apucyc {} WRITE4015 v={:02X} buffer={:?} bytes={} pending_dis={} bits={} timer={}",
-                        self.cycle,
-                        v,
-                        self.dmc.buffer,
-                        self.dmc.bytes_remaining,
-                        self.dmc.pending_disable,
-                        self.dmc.bits_remaining,
-                        self.dmc.timer
-                    );
-                }
+                crate::trace_log!(
+                    "NES_DMA_LOG",
+                    "apucyc {} WRITE4015 v={:02X} buffer={:?} bytes={} pending_dis={} bits={} timer={}",
+                    self.cycle,
+                    v,
+                    self.dmc.buffer,
+                    self.dmc.bytes_remaining,
+                    self.dmc.pending_disable,
+                    self.dmc.bits_remaining,
+                    self.dmc.timer
+                );
                 self.pulse1.set_enabled(v & 0x01 != 0);
                 self.pulse2.set_enabled(v & 0x02 != 0);
                 self.triangle.set_enabled(v & 0x04 != 0);
@@ -794,9 +791,12 @@ impl Apu {
         }
         self.triangle.clock_timer();
         self.noise.clock_timer();
-        let buf_before = self.dmc.buffer;
+        let _buf_before = self.dmc.buffer;
         self.dmc.clock_timer();
-        if buf_before.is_some() && self.dmc.buffer.is_none() && std::env::var("NES_DMA_LOG").is_ok()
+        #[cfg(feature = "trace")]
+        if _buf_before.is_some()
+            && self.dmc.buffer.is_none()
+            && std::env::var("NES_DMA_LOG").is_ok()
         {
             eprintln!(
                 "apucyc {} BUFTAKE bytes={} pending_dis={}",

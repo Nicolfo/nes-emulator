@@ -195,9 +195,12 @@ impl Mmc5 {
 
     /// Three identical consecutive NT fetches mark a new rendered scanline.
     fn scanline_detected(&mut self) {
-        if std::env::var("NES_MMC5_SL").is_ok() {
-            eprintln!("sl {} fc {}", self.scanline, self.fetch_count);
-        }
+        crate::trace_log!(
+            "NES_MMC5_SL",
+            "sl {} fc {}",
+            self.scanline,
+            self.fetch_count
+        );
         self.fetch_count = 0;
         if !self.in_frame {
             self.in_frame = true;
@@ -206,9 +209,7 @@ impl Mmc5 {
             self.scanline = self.scanline.wrapping_add(1);
             if self.irq_compare != 0 && self.scanline == self.irq_compare {
                 self.irq_pending = true;
-                if std::env::var("NES_MMC5_LOG").is_ok() {
-                    eprintln!("mmc5 irq pend at sl {}", self.scanline);
-                }
+                crate::trace_log!("NES_MMC5_LOG", "mmc5 irq pend at sl {}", self.scanline);
             }
         }
     }
@@ -232,6 +233,7 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
+        #[cfg(feature = "trace")]
         if (0x5100..=0x5206).contains(&addr) && std::env::var("NES_MMC5_LOG").is_ok() {
             eprintln!(
                 "mmc5 w {addr:04X} = {val:02X} (sl {})",
@@ -402,16 +404,15 @@ impl Mapper for Mmc5 {
             0x5204 => {
                 let v = (self.irq_pending as u8) << 7 | (self.in_frame as u8) << 6;
                 self.irq_pending = false;
-                if std::env::var("NES_MMC5_LOG").is_ok() {
-                    eprintln!(
-                        "mmc5 r 5204 = {v:02X} (sl {})",
-                        if self.in_frame {
-                            self.scanline as i16
-                        } else {
-                            -1
-                        }
-                    );
-                }
+                crate::trace_log!(
+                    "NES_MMC5_LOG",
+                    "mmc5 r 5204 = {v:02X} (sl {})",
+                    if self.in_frame {
+                        self.scanline as i16
+                    } else {
+                        -1
+                    }
+                );
                 Some(v)
             }
             0x5205 => Some((self.multiplicand as u16 * self.multiplier as u16) as u8),
@@ -443,6 +444,7 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_bus_write(&mut self, addr: u16, val: u8) {
+        #[cfg(feature = "trace")]
         if matches!(addr & 7, 0 | 1 | 5 | 6) && std::env::var("NES_MMC5_LOG").is_ok() {
             eprintln!(
                 "mmc5 snoop {:04X} = {val:02X} (sl {})",

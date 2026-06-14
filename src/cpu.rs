@@ -97,27 +97,33 @@ impl Cpu {
     pub fn step(&mut self) -> u64 {
         let start = self.cycles;
         if self.take_interrupt {
-            if std::env::var("NES_EXEC_TRACE").is_ok() {
-                eprintln!("cyc {} IRQ/NMI seq at pc={:04X}", self.cycles, self.pc);
-            }
+            crate::trace_log!(
+                "NES_EXEC_TRACE",
+                "cyc {} IRQ/NMI seq at pc={:04X}",
+                self.cycles,
+                self.pc
+            );
             self.interrupt_sequence();
         } else {
-            let pc = self.pc;
+            let _pc = self.pc;
             let op = self.fetch8();
-            let in_window = std::env::var("NES_EXEC_WINDOW").ok().is_some_and(|w| {
-                w.split_once(':').is_some_and(|(a, b)| {
-                    a.parse::<u64>().is_ok_and(|a| self.cycles >= a)
-                        && b.parse::<u64>().is_ok_and(|b| self.cycles <= b)
-                })
-            });
-            if in_window
-                || std::env::var("NES_EXEC_TRACE").is_ok()
-                    && (pc < 0x0800 || (0x4000..=0x401F).contains(&pc))
+            #[cfg(feature = "trace")]
             {
-                eprintln!(
-                    "cyc {} EXEC {:04X} op={:02X} a={:02X} x={:02X} sp={:02X} p={:02X}",
-                    self.cycles, pc, op, self.a, self.x, self.sp, self.p
-                );
+                let in_window = std::env::var("NES_EXEC_WINDOW").ok().is_some_and(|w| {
+                    w.split_once(':').is_some_and(|(a, b)| {
+                        a.parse::<u64>().is_ok_and(|a| self.cycles >= a)
+                            && b.parse::<u64>().is_ok_and(|b| self.cycles <= b)
+                    })
+                });
+                if in_window
+                    || std::env::var("NES_EXEC_TRACE").is_ok()
+                        && (_pc < 0x0800 || (0x4000..=0x401F).contains(&_pc))
+                {
+                    eprintln!(
+                        "cyc {} EXEC {:04X} op={:02X} a={:02X} x={:02X} sp={:02X} p={:02X}",
+                        self.cycles, _pc, op, self.a, self.x, self.sp, self.p
+                    );
+                }
             }
             self.exec(op);
             self.run_oam_dma_if_pending();
@@ -135,9 +141,12 @@ impl Cpu {
         let line = self.bus.nmi_line();
         if line && !self.nmi_line_prev {
             self.nmi_pending = true;
-            if std::env::var("NES_NMI_LOG").is_ok() {
-                eprintln!("cyc {} NMI edge at pc={:04X}", self.cycles, self.pc);
-            }
+            crate::trace_log!(
+                "NES_NMI_LOG",
+                "cyc {} NMI edge at pc={:04X}",
+                self.cycles,
+                self.pc
+            );
         }
         self.nmi_line_prev = line;
         self.poll_prev = self.poll_cur;
@@ -183,9 +192,12 @@ impl Cpu {
                 self.bus.dmc_request = None;
                 self.bus.dmc_ghost = false;
                 self.bus.apu.dmc_abort_fetch();
-                if std::env::var("NES_DMA_LOG").is_ok() {
-                    eprintln!("cyc {} GHOST halt at {:04X}", self.cycles, addr);
-                }
+                crate::trace_log!(
+                    "NES_DMA_LOG",
+                    "cyc {} GHOST halt at {:04X}",
+                    self.cycles,
+                    addr
+                );
                 self.read_cycle(addr);
             } else {
                 self.dmc_dma(addr);
@@ -206,9 +218,12 @@ impl Cpu {
             self.bus.dmc_request = None;
             self.bus.dmc_ghost = false;
             self.bus.apu.dmc_abort_fetch();
-            if std::env::var("NES_DMA_LOG").is_ok() {
-                eprintln!("cyc {} GHOST dropped on write at {:04X}", self.cycles, addr);
-            }
+            crate::trace_log!(
+                "NES_DMA_LOG",
+                "cyc {} GHOST dropped on write at {:04X}",
+                self.cycles,
+                addr
+            );
         }
         self.write_cycle(addr, val);
     }
@@ -222,16 +237,19 @@ impl Cpu {
         let Some(sample_addr) = self.bus.dmc_request.take() else {
             return;
         };
-        if std::env::var("NES_DMA_LOG").is_ok() {
-            eprintln!("cyc {} HALT at addr {:04X}", self.cycles, addr);
-        }
+        crate::trace_log!(
+            "NES_DMA_LOG",
+            "cyc {} HALT at addr {:04X}",
+            self.cycles,
+            addr
+        );
         // A reload DMA steals 3-4 cycles: halt, dummy, an alignment cycle if
         // the next cycle is not a "get" cycle, then the fetch on a get cycle.
         // The halted CPU repeats its read (with side effects) every cycle.
         // A blocked-attempt retry already consumed its alignment waiting for
         // the enable pipeline: halt, put, get (3 cycles, off-parity fetch).
         let skip_align = std::mem::take(&mut self.bus.dmc_skip_align);
-        let parity = crate::bus::dmc_get_parity();
+        let parity = crate::bus::DMC_GET_PARITY;
         self.read_cycle(addr); // halt
         self.read_cycle(addr); // dummy
         if !skip_align {
@@ -256,9 +274,7 @@ impl Cpu {
         } else {
             self.fetch_cycle(sample_addr)
         };
-        if std::env::var("NES_DMA_LOG").is_ok() {
-            eprintln!("cyc {} FETCH", self.cycles);
-        }
+        crate::trace_log!("NES_DMA_LOG", "cyc {} FETCH", self.cycles);
         self.bus.apu.dmc_supply(v);
     }
 
@@ -328,7 +344,7 @@ impl Cpu {
                 self.read_cycle(halt_addr);
                 dmc_served += 1;
             }
-            let parity = crate::bus::dmc_get_parity();
+            let parity = crate::bus::DMC_GET_PARITY;
             while (self.cycles + 1) & 1 != parity {
                 self.read_cycle(halt_addr); // alignment
             }

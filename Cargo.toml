@@ -4,6 +4,12 @@ version = "0.1.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+[features]
+# Compile in the cycle/DMA/PPU trace logging (gated at runtime by the
+# NES_*_LOG / NES_*_TRACE / NES_*_WATCH env vars). Off by default so release
+# builds carry zero instrumentation cost in the hot paths.
+trace = []
+
 [dependencies]
 winit = { version = "0.30", features = ["rwh_06", "serde"] }
 pixels = "0.17"
