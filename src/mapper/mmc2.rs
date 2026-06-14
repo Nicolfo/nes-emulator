@@ -68,7 +68,8 @@ impl Mapper for Mmc2 {
             0xC000..=0xCFFF => self.chr_regs[1] = val & 0x1F,
             0xD000..=0xDFFF => self.chr_regs[2] = val & 0x1F,
             0xE000..=0xEFFF => self.chr_regs[3] = val & 0x1F,
-            0xF000..=0xFFFF => {
+            // A four-screen board ignores the mirroring register.
+            0xF000..=0xFFFF if self.mirroring != Mirroring::FourScreen => {
                 self.mirroring = if val & 1 != 0 {
                     Mirroring::Horizontal
                 } else {
