@@ -77,6 +77,49 @@ impl App {
         }
     }
 
+    /// Path of the single savestate slot: `<rom>.state`, next to the ROM.
+    fn state_path(&self) -> Option<PathBuf> {
+        self.sav_path.as_ref().map(|p| p.with_extension("state"))
+    }
+
+    /// Snapshot the running machine to the savestate slot (F5).
+    fn save_state(&mut self) {
+        let (Some(nes), Some(path)) = (&self.nes, self.state_path()) else {
+            return;
+        };
+        match nes.save_state().and_then(|data| {
+            std::fs::write(&path, data).map_err(|e| format!("write {}: {e}", path.display()))
+        }) {
+            Ok(()) => eprintln!("saved state to {}", path.display()),
+            Err(e) => eprintln!("save state failed: {e}"),
+        }
+    }
+
+    /// Restore the savestate slot into the running machine (F7).
+    fn load_state(&mut self) {
+        let Some(path) = self.state_path() else {
+            return;
+        };
+        let Some(nes) = &mut self.nes else { return };
+        if !path.exists() {
+            eprintln!("no savestate at {}", path.display());
+            return;
+        }
+        match std::fs::read(&path)
+            .map_err(|e| format!("read {}: {e}", path.display()))
+            .and_then(|data| nes.load_state(&data))
+        {
+            Ok(()) => {
+                eprintln!("loaded state from {}", path.display());
+                if let Some(a) = &self.audio {
+                    a.clear();
+                }
+                self.redraw();
+            }
+            Err(e) => eprintln!("load state failed: {e}"),
+        }
+    }
+
     /// Write battery RAM to the .sav file; no-op without battery/ROM.
     fn save_battery_ram(&self) {
         let (Some(nes), Some(path)) = (&self.nes, &self.sav_path) else {
@@ -255,6 +298,15 @@ impl App {
                 a.clear();
             }
             self.redraw();
+            return;
+        }
+        // Savestate slot: F5 saves, F7 restores (single slot per ROM).
+        if pressed && code == KeyCode::F5 {
+            self.save_state();
+            return;
+        }
+        if pressed && code == KeyCode::F7 {
+            self.load_state();
             return;
         }
         let Some(nes) = &mut self.nes else { return };

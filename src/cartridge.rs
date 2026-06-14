@@ -5,7 +5,7 @@ use crate::mapper::{
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
 /// layout, APU timing and frame pacing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Region {
     Ntsc,
     Pal,

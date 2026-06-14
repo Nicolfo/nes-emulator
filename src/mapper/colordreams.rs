@@ -1,9 +1,11 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// Color Dreams (mapper 11): 32KB PRG and 8KB CHR selected by one register.
 /// The board has no bus-conflict prevention, so the written value is ANDed
 /// with the ROM byte at the written address. Headers declaring no CHR ROM
 /// get 8KB of unbanked CHR RAM.
+#[derive(Serialize, Deserialize)]
 pub struct ColorDreams {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -39,6 +41,7 @@ impl ColorDreams {
 }
 
 impl Mapper for ColorDreams {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

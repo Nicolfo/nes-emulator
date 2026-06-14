@@ -45,8 +45,12 @@ scale; everything is persisted to `nes-emulator-config.json`.
 | Start | Enter |
 | Select | Right Shift |
 | Back to menu | Escape |
+| Save state | F5 |
+| Load state | F7 |
 
-All bindings except Escape can be changed in Settings.
+All bindings except Escape (and the F5/F7 savestate slot) can be changed in
+Settings. **F5** snapshots the whole machine to `<rom>.state` next to the ROM and
+**F7** restores it — resuming exactly where you left off, mid-frame.
 
 ## Architecture
 
@@ -91,7 +95,11 @@ All bindings except Escape can be changed in Settings.
 - `src/cartridge.rs` — iNES/NES 2.0 header parsing, mapper construction and
   NTSC/PAL region detection (NES 2.0 timing byte, legacy TV-system bit).
 - `src/nes.rs` — frontend-agnostic console facade (run a frame, framebuffer,
-  audio hooks), shared by the GUI and the test harnesses.
+  audio hooks, whole-machine savestates), shared by the GUI and the test harnesses.
+- `src/savestate.rs` — `serde`-based savestate format: a full machine snapshot
+  (CPU/PPU/APU/bus/controller/mapper) excluding host-only state (the framebuffer
+  and the APU resampling/filter chain). See
+  [docs/internals/08-savestates.md](docs/internals/08-savestates.md).
 - `src/controller.rs` — standard joypad strobe/shift register.
 - `src/main.rs` — winit 0.30 + pixels frontend, home/settings/running state machine,
   paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL) while a game runs. Dynamic audio rate

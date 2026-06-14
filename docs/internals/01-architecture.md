@@ -70,6 +70,7 @@ The source tree maps almost one-to-one onto the hardware:
 | Controller | `src/controller.rs` | `Controller` |
 | Palette → RGB table | `src/palette.rs` | `NES_PALETTE` |
 | Whole-console facade | `src/nes.rs` | `Nes` |
+| Savestate snapshot format | `src/savestate.rs` | `SaveState` |
 
 ### How they own each other
 

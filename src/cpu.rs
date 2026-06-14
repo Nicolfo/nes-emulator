@@ -9,6 +9,8 @@
 //! and the taken-branch interrupt delay. NMI is an edge detect on the PPU's
 //! NMI line, so $2002 reads racing the VBlank flag suppress it naturally.
 
+use serde::{Deserialize, Serialize};
+
 use crate::bus::Bus;
 
 pub const C: u8 = 0x01;
@@ -31,6 +33,26 @@ enum Mode {
     AbsY,
     IndX,
     IndY,
+}
+
+/// Serializable CPU state for a savestate (see [`Cpu::save_state`]).
+#[derive(Serialize, Deserialize)]
+pub struct CpuSave {
+    a: u8,
+    x: u8,
+    y: u8,
+    sp: u8,
+    pc: u16,
+    p: u8,
+    cycles: u64,
+    nmi_line_prev: bool,
+    nmi_pending: bool,
+    poll_prev: bool,
+    poll_cur: bool,
+    take_interrupt: bool,
+    suppress_poll: bool,
+    in_oam_dma: bool,
+    dmc_stalled: bool,
 }
 
 pub struct Cpu {
@@ -80,6 +102,47 @@ impl Cpu {
             in_oam_dma: false,
             dmc_stalled: false,
         }
+    }
+
+    /// Snapshot the CPU registers and interrupt-pipeline flags for a
+    /// savestate. The bus is snapshotted separately.
+    pub fn save_state(&self) -> CpuSave {
+        CpuSave {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            pc: self.pc,
+            p: self.p,
+            cycles: self.cycles,
+            nmi_line_prev: self.nmi_line_prev,
+            nmi_pending: self.nmi_pending,
+            poll_prev: self.poll_prev,
+            poll_cur: self.poll_cur,
+            take_interrupt: self.take_interrupt,
+            suppress_poll: self.suppress_poll,
+            in_oam_dma: self.in_oam_dma,
+            dmc_stalled: self.dmc_stalled,
+        }
+    }
+
+    /// Restore a snapshot from [`Cpu::save_state`] (leaves the bus untouched).
+    pub fn load_state(&mut self, s: CpuSave) {
+        self.a = s.a;
+        self.x = s.x;
+        self.y = s.y;
+        self.sp = s.sp;
+        self.pc = s.pc;
+        self.p = s.p;
+        self.cycles = s.cycles;
+        self.nmi_line_prev = s.nmi_line_prev;
+        self.nmi_pending = s.nmi_pending;
+        self.poll_prev = s.poll_prev;
+        self.poll_cur = s.poll_cur;
+        self.take_interrupt = s.take_interrupt;
+        self.suppress_poll = s.suppress_poll;
+        self.in_oam_dma = s.in_oam_dma;
+        self.dmc_stalled = s.dmc_stalled;
     }
 
     pub fn reset(&mut self) {

@@ -1,11 +1,14 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// MMC3 (mapper 4): 8KB PRG banking, 1KB CHR banking, switchable mirroring,
 /// and a scanline IRQ counter clocked by rising edges on PPU A12.
+#[derive(Serialize, Deserialize)]
 pub struct Mmc3 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
+    #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     mirroring: Mirroring,
     // $8000: bits 0-2 select which bank register $8001 writes; bit 6 PRG
@@ -110,6 +113,7 @@ impl Mmc3 {
 }
 
 impl Mapper for Mmc3 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

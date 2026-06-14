@@ -1,6 +1,7 @@
 use crate::bus::Bus;
 use crate::cartridge::{Region, load_rom};
 use crate::cpu::Cpu;
+use crate::savestate::{MAGIC, SaveState, VERSION};
 
 pub struct Nes {
     pub cpu: Cpu,
@@ -45,6 +46,51 @@ impl Nes {
             let n = ram.len().min(data.len());
             ram[..n].copy_from_slice(&data[..n]);
         }
+    }
+
+    /// Serialize the full machine state to a savestate blob. The state is
+    /// only meaningful for the currently loaded ROM.
+    pub fn save_state(&self) -> Result<Vec<u8>, String> {
+        let state = SaveState {
+            magic: MAGIC,
+            version: VERSION,
+            region: self.region,
+            cpu: self.cpu.save_state(),
+            bus: self.cpu.bus.save_state(),
+            ppu: self.cpu.bus.ppu.clone(),
+            apu: self.cpu.bus.apu.save_state(),
+            controller: self.cpu.bus.controller1.clone(),
+            mapper: self.cpu.bus.cart.save_state(),
+        };
+        serde_json::to_vec(&state).map_err(|e| format!("failed to serialize savestate: {e}"))
+    }
+
+    /// Restore a savestate blob produced by [`Nes::save_state`]. Rejects blobs
+    /// with the wrong magic/version or a TV region that doesn't match the
+    /// loaded ROM; mapper state from a different ROM is rejected by the mapper.
+    /// Host audio configuration (sample rate, filters) is preserved.
+    pub fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
+        let state: SaveState =
+            serde_json::from_slice(data).map_err(|e| format!("not a valid savestate: {e}"))?;
+        if state.magic != MAGIC {
+            return Err("not a savestate (bad magic)".into());
+        }
+        if state.version != VERSION {
+            return Err(format!(
+                "unsupported savestate version {} (expected {VERSION})",
+                state.version
+            ));
+        }
+        if state.region != self.region {
+            return Err("savestate is for a different TV region".into());
+        }
+        self.cpu.bus.cart.load_state(&state.mapper)?;
+        self.cpu.load_state(state.cpu);
+        self.cpu.bus.load_state(state.bus);
+        self.cpu.bus.ppu = state.ppu;
+        self.cpu.bus.apu.load_state(state.apu);
+        self.cpu.bus.controller1 = state.controller;
+        Ok(())
     }
 
     /// Run until the PPU enters vblank (one full frame).
@@ -98,6 +144,40 @@ mod tests {
         let ram = nes.battery_ram().unwrap();
         assert_eq!(ram.len(), 0x2000);
         assert!(ram.iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn savestate_roundtrip_is_deterministic() {
+        // Saving, diverging, then restoring must reproduce the exact same
+        // machine: run the restored state forward and compare framebuffers.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+
+        let mut nes = Nes::new(&data).unwrap();
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let blob = nes.save_state().unwrap();
+
+        // Reference: continue from the snapshot point.
+        for _ in 0..30 {
+            nes.run_frame();
+        }
+        let reference = nes.framebuffer().to_vec();
+
+        // Restore the snapshot into a fresh machine and run the same steps.
+        let mut restored = Nes::new(&data).unwrap();
+        restored.load_state(&blob).unwrap();
+        for _ in 0..30 {
+            restored.run_frame();
+        }
+        assert_eq!(restored.framebuffer(), reference.as_slice());
+    }
+
+    #[test]
+    fn load_state_rejects_garbage() {
+        let mut nes = Nes::new(&rom(0x10)).unwrap();
+        assert!(nes.load_state(b"not a savestate").is_err());
     }
 
     #[test]

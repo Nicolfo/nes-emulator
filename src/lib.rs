@@ -21,3 +21,4 @@ pub mod mapper;
 pub mod nes;
 pub mod palette;
 pub mod ppu;
+pub mod savestate;

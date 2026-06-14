@@ -8,7 +8,7 @@ pub const BTN_DOWN: u8 = 0x20;
 pub const BTN_LEFT: u8 = 0x40;
 pub const BTN_RIGHT: u8 = 0x80;
 
-#[derive(Default)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Controller {
     strobe: bool,
     shift: u8,

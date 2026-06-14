@@ -1,11 +1,14 @@
 use super::{Mapper, Mirroring, NtTarget};
+use serde::{Deserialize, Serialize};
 
 /// Namco 163 (mapper 19, Rolling Thunder, Megami Tensei II): 1KB CHR
 /// banking that extends into nametable space, a 15-bit CPU-cycle IRQ
 /// counter, and a multiplexed wavetable sound chip with up to 8 channels.
+#[derive(Serialize, Deserialize)]
 pub struct N163 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     prg_banks: [u8; 3],
     // CHR regs for $0000-$1FFF (8) and the four nametables (4). Values
@@ -39,6 +42,7 @@ impl N163 {
 }
 
 impl Mapper for N163 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;
@@ -152,7 +156,9 @@ impl Mapper for N163 {
 /// N163 sound: 128 bytes of internal RAM holding packed 4-bit wavetables
 /// and, in the top bytes, the channel registers. The hardware updates one
 /// enabled channel every 15 CPU cycles, round-robin from channel 7 down.
+#[derive(Serialize, Deserialize)]
 struct N163Audio {
+    #[serde(with = "crate::savestate::byte_array")]
     ram: [u8; 0x80],
     addr: u8,
     auto_inc: bool,

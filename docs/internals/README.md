@@ -21,6 +21,7 @@ Every chapter has the same two-part shape:
 | 4 | [The bus, timing & DMA](05-bus-timing-dma.md) | The memory map, the 3-dots-per-cycle interleave, OAM/DMC DMA, interrupts |
 | 5 | [Cartridges & the Mapper trait](06-cartridge-mappers.md) | iNES parsing, region detection, and what the `Mapper` trait is for |
 | 6 | [The frontend](07-frontend.md) | The `Nes` facade, the windowing/audio/input host, frame pacing |
+| 7 | [Savestates](08-savestates.md) | Serializing a full machine snapshot, what's captured, the mapper boundary |
 
 ## The one-paragraph summary
 

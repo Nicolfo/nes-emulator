@@ -34,7 +34,7 @@ pub use nrom::Nrom;
 pub use uxrom::Uxrom;
 pub use vrc6::Vrc6;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Mirroring {
     Horizontal,
     Vertical,
@@ -105,4 +105,32 @@ pub trait Mapper {
     /// Observe CPU writes to the PPU registers ($2000-$3FFF); the MMC5
     /// snoops $2000/$2001 for sprite size and rendering state.
     fn cpu_bus_write(&mut self, _addr: u16, _val: u8) {}
+
+    /// Serialize the mapper's full state (banking registers, IRQ counters,
+    /// PRG/CHR RAM, expansion audio) for a savestate. Implemented per mapper
+    /// via [`impl_mapper_savestate!`]; the bytes are opaque JSON tied to the
+    /// concrete mapper type and only valid for the same ROM.
+    fn save_state(&self) -> Vec<u8>;
+
+    /// Restore state previously produced by [`Mapper::save_state`]. Returns an
+    /// error if the bytes don't match this mapper (e.g. a state from a
+    /// different ROM).
+    fn load_state(&mut self, data: &[u8]) -> Result<(), String>;
+}
+
+/// Implements [`Mapper::save_state`]/[`Mapper::load_state`] for a mapper type
+/// by round-tripping the whole struct through `serde_json`. The mapper must
+/// derive `Serialize`/`Deserialize`. Invoke inside the `impl Mapper` block.
+#[macro_export]
+macro_rules! impl_mapper_savestate {
+    () => {
+        fn save_state(&self) -> ::std::vec::Vec<u8> {
+            ::serde_json::to_vec(self).expect("serialize mapper state")
+        }
+
+        fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
+            *self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+    };
 }

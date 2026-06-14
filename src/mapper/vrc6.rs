@@ -1,4 +1,5 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// VRC6 (mapper 24, Akumajou Densetsu): 16KB+8KB PRG banking, 1KB CHR
 /// banking, the VRC scanline/cycle IRQ, and expansion audio (two pulse
@@ -6,9 +7,11 @@ use super::{Mapper, Mirroring};
 ///
 /// Mapper 26 is the same chip on the VRC6b pinout, where the A0 and A1 lines
 /// feeding the register decoder are swapped; everything else is identical.
+#[derive(Serialize, Deserialize)]
 pub struct Vrc6 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     mirroring: Mirroring,
     prg_16k: u8,
@@ -57,6 +60,7 @@ impl Vrc6 {
 }
 
 impl Mapper for Vrc6 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xBFFF => {
@@ -150,6 +154,7 @@ impl Mapper for Vrc6 {
 
 /// The shared Konami VRC IRQ: an up-counter from a reloadable latch, in
 /// CPU-cycle mode or scanline mode (a 341/3-dot prescaler).
+#[derive(Serialize, Deserialize)]
 struct VrcIrq {
     latch: u8,
     counter: u8,
@@ -210,6 +215,7 @@ impl VrcIrq {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Vrc6Pulse {
     // $x000: bits 0-3 volume, 4-6 duty, 7 constant-output mode.
     ctrl: u8,
@@ -231,6 +237,7 @@ impl Vrc6Pulse {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Vrc6Audio {
     pulses: [Vrc6Pulse; 2],
     saw_rate: u8,
