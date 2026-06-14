@@ -16,7 +16,9 @@ pub const BUTTON_MASKS: [u8; 8] = [
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
-    pub keys: [KeyCode; 8], // same order as BUTTON_LABELS
+    pub keys: [KeyCode; 8], // player 1, same order as BUTTON_LABELS
+    #[serde(default = "default_keys_p2")]
+    pub keys_p2: [KeyCode; 8], // player 2, same order as BUTTON_LABELS
     pub scale: u32,
     // NTSC TVs hide the top/bottom 8 scanlines (overscan); games rely on it
     // to hide raster-split garbage (e.g. Castlevania III's title).
@@ -26,6 +28,21 @@ pub struct Config {
 
 fn default_true() -> bool {
     true
+}
+
+// Player 2 defaults: left-hand WASD d-pad + right-hand action cluster, chosen
+// to avoid colliding with the player 1 bindings.
+fn default_keys_p2() -> [KeyCode; 8] {
+    [
+        KeyCode::KeyL, // A
+        KeyCode::KeyK, // B
+        KeyCode::KeyN, // SELECT
+        KeyCode::KeyM, // START
+        KeyCode::KeyW, // UP
+        KeyCode::KeyS, // DOWN
+        KeyCode::KeyA, // LEFT
+        KeyCode::KeyD, // RIGHT
+    ]
 }
 
 impl Default for Config {
@@ -41,6 +58,7 @@ impl Default for Config {
                 KeyCode::ArrowLeft,
                 KeyCode::ArrowRight,
             ],
+            keys_p2: default_keys_p2(),
             scale: 3,
             crop_overscan: true,
         }

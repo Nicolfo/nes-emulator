@@ -103,23 +103,27 @@ pub fn render_home(frame: &mut [u8], sel: usize, game_loaded: bool, error: Optio
     draw_text_centered(frame, 226, "BUILT IN RUST", DIM, 1);
 }
 
-/// Settings rows: 0-7 buttons, 8 = scale, 9 = overscan, 10 = reset defaults,
-/// 11 = back.
-pub const SETTINGS_ROWS: usize = 12;
-pub const ROW_SCALE: usize = 8;
-pub const ROW_OVERSCAN: usize = 9;
-pub const ROW_RESET: usize = 10;
-pub const ROW_BACK: usize = 11;
+/// Settings rows: 0-7 buttons, 8 = player select, 9 = scale, 10 = overscan,
+/// 11 = reset defaults, 12 = back.
+pub const SETTINGS_ROWS: usize = 13;
+pub const ROW_PLAYER: usize = 8;
+pub const ROW_SCALE: usize = 9;
+pub const ROW_OVERSCAN: usize = 10;
+pub const ROW_RESET: usize = 11;
+pub const ROW_BACK: usize = 12;
 
 #[allow(clippy::needless_range_loop)]
-pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool) {
+pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool, player: usize) {
     clear(frame, BG);
 
     draw_text_centered(frame, 12, "SETTINGS", FG, 2);
     fill_rect(frame, 40, 32, 176, 1, DIM);
 
-    let start_y = 40i32;
-    let spacing = 13i32;
+    // Button rows show the bindings for the currently selected player.
+    let keys = if player == 0 { &cfg.keys } else { &cfg.keys_p2 };
+
+    let start_y = 38i32;
+    let spacing = 12i32;
     for i in 0..SETTINGS_ROWS {
         let y = start_y + i as i32 * spacing;
         let selected = i == sel;
@@ -133,10 +137,15 @@ pub fn render_settings(frame: &mut [u8], cfg: &Config, sel: usize, waiting: bool
                 let value = if selected && waiting {
                     "PRESS A KEY...".to_string()
                 } else {
-                    Config::key_name(cfg.keys[i])
+                    Config::key_name(keys[i])
                 };
                 let value_color = if selected && waiting { RED } else { color };
                 draw_text(frame, 120, y, &value, value_color, 1);
+            }
+            ROW_PLAYER => {
+                draw_text(frame, 44, y, "EDIT PLAYER", color, 1);
+                let v = format!("< {} >", player + 1);
+                draw_text(frame, 160, y, &v, color, 1);
             }
             ROW_SCALE => {
                 draw_text(frame, 44, y, "WINDOW SCALE", color, 1);
@@ -198,10 +207,10 @@ mod tests {
         render_home(&mut frame, 0, true, Some("UNSUPPORTED MAPPER 4"));
         write_bmp("menu_home.bmp", &frame, WIDTH, HEIGHT);
         let cfg = crate::config::Config::default();
-        render_settings(&mut frame, &cfg, 2, false);
+        render_settings(&mut frame, &cfg, 2, false, 0);
         write_bmp("menu_settings.bmp", &frame, WIDTH, HEIGHT);
         let mut frame2 = vec![0u8; WIDTH * HEIGHT * 4];
-        render_settings(&mut frame2, &cfg, 0, true);
+        render_settings(&mut frame2, &cfg, 0, true, 0);
         write_bmp("menu_rebind.bmp", &frame2, WIDTH, HEIGHT);
     }
 }
