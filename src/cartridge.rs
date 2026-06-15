@@ -12,14 +12,29 @@ pub enum Region {
     Pal,
 }
 
+/// Decodes an iNES/NES 2.0 ROM-area size in bytes. `lsb` is the byte-4 (PRG)
+/// or byte-5 (CHR) count; `msb` is the NES 2.0 4-bit extension from byte 9 (0
+/// for plain iNES). When the 12-bit value's top nibble is 0xF the size uses
+/// NES 2.0's exponent-multiplier form (`2^E * (2*M+1)` bytes), which encodes
+/// sizes that aren't a whole number of `unit`-sized banks; otherwise it is the
+/// `(msb:lsb)` bank count times `unit`. `saturating_mul` keeps a bogus header
+/// from overflowing - the caller's length check then rejects it cleanly.
+fn rom_size(lsb: u8, msb: u8, unit: usize) -> usize {
+    if msb == 0x0F {
+        let exp = (lsb >> 2) as u32;
+        let mult = (2 * (lsb & 0x03) + 1) as usize;
+        (1usize << exp).saturating_mul(mult)
+    } else {
+        (((msb as usize) << 8) | lsb as usize) * unit
+    }
+}
+
 /// `battery` is the iNES flags6 bit 1: the board has battery-backed PRG RAM
 /// that should persist to a .sav file.
 pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> {
     if data.len() < 16 || &data[0..4] != b"NES\x1A" {
         return Err("not an iNES file (bad magic)".into());
     }
-    let prg_banks = data[4] as usize;
-    let chr_banks = data[5] as usize;
     let flags6 = data[6];
     let flags7 = data[7];
     let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
@@ -29,7 +44,13 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     // use it to pick the exact hardware.
     let nes2 = flags7 & 0x0C == 0x08;
     let submapper = if nes2 { data[8] >> 4 } else { 0 };
-    let region = if flags7 & 0x0C == 0x08 {
+    // PRG/CHR ROM sizes. NES 2.0 widens each size with a 4-bit MSB in byte 9
+    // (low nibble = PRG, high nibble = CHR); plain iNES has no MSB, so the
+    // nibble is 0 and the size is just the byte-4/5 bank count. See `rom_size`
+    // for the exponent-multiplier form NES 2.0 uses when the nibble is 0xF.
+    let prg_size = rom_size(data[4], if nes2 { data[9] & 0x0F } else { 0 }, 16 * 1024);
+    let chr_size = rom_size(data[5], if nes2 { data[9] >> 4 } else { 0 }, 8 * 1024);
+    let region = if nes2 {
         // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
         if data[12] & 3 == 1 {
             Region::Pal
@@ -55,8 +76,6 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let has_trainer = flags6 & 0x04 != 0;
     let battery = flags6 & 0x02 != 0;
 
-    let prg_size = prg_banks * 16 * 1024;
-    let chr_size = chr_banks * 8 * 1024;
     let prg_start = 16 + if has_trainer { 512 } else { 0 };
     let chr_start = prg_start + prg_size;
 
@@ -153,5 +172,37 @@ mod tests {
         assert_eq!(mapper.mirroring(), Mirroring::Vertical);
         let (mapper, _, _) = load_rom(&rom(0x00)).unwrap();
         assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn rom_size_decodes_ines_and_nes2_forms() {
+        // Plain iNES: bank count * unit, no MSB.
+        assert_eq!(rom_size(1, 0, 16 * 1024), 16 * 1024);
+        assert_eq!(rom_size(2, 0, 8 * 1024), 16 * 1024);
+        // NES 2.0 MSB nibble extends the count into the 0x100+ bank range.
+        assert_eq!(rom_size(0, 1, 16 * 1024), 0x100 * 16 * 1024);
+        assert_eq!(rom_size(0x34, 1, 16 * 1024), 0x134 * 16 * 1024);
+        // Exponent-multiplier form (top nibble 0xF): size = 2^E * (2*M+1) bytes,
+        // independent of `unit`.
+        assert_eq!(rom_size(0b0000_0000, 0x0F, 16 * 1024), 1); // E=0, M=0
+        assert_eq!(rom_size(0b0000_1000, 0x0F, 16 * 1024), 4); // E=2, M=0
+        assert_eq!(rom_size(0b0000_0001, 0x0F, 16 * 1024), 3); // E=0, M=1
+    }
+
+    #[test]
+    fn nes2_chr_size_msb_is_honored() {
+        // NES 2.0 header (flags7 bits 2-3 = %10) with a CHR-ROM MSB nibble of 1
+        // means 0x101 CHR banks (~2 MB); a small file must be rejected as
+        // truncated, proving byte 9's high nibble feeds the size. Without the
+        // MSB the very same file parses.
+        let mut data = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 1; // 1x 16KB PRG
+        data[5] = 1; // CHR LSB = 1
+        data[7] = 0x08; // NES 2.0, mapper 0
+        data[9] = 0x10; // CHR-size MSB nibble = 1
+        assert!(load_rom(&data).is_err());
+        data[9] = 0x00;
+        assert!(load_rom(&data).is_ok());
     }
 }
