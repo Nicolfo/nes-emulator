@@ -52,6 +52,12 @@ enum View {
         waiting: bool,
         player: usize,
     },
+    /// Savestate slot picker shown over the paused game. `saving` selects
+    /// F5 (save) vs F7 (load) behaviour; `sel` is the highlighted slot.
+    SlotPicker {
+        saving: bool,
+        sel: usize,
+    },
     Running,
 }
 
@@ -85,14 +91,40 @@ impl App {
         }
     }
 
-    /// Path of the single savestate slot: `<rom>.state`, next to the ROM.
-    fn state_path(&self) -> Option<PathBuf> {
-        self.sav_path.as_ref().map(|p| p.with_extension("state"))
+    /// Drop any queued audio so a pause/state-change doesn't replay stale samples.
+    fn clear_audio(&self) {
+        if let Some(a) = &self.audio {
+            a.clear();
+        }
     }
 
-    /// Snapshot the running machine to the savestate slot (F5).
-    fn save_state(&mut self) {
-        let (Some(nes), Some(path)) = (&self.nes, self.state_path()) else {
+    /// Leave a menu or the slot picker and resume play. Resetting next_frame
+    /// stops the catch-up loop from fast-forwarding over the paused time.
+    fn resume_game(&mut self) {
+        self.view = View::Running;
+        self.next_frame = Instant::now();
+        self.redraw();
+    }
+
+    /// Path of savestate `slot` (0-based): `<rom>.stateN`, next to the ROM.
+    fn state_path(&self, slot: usize) -> Option<PathBuf> {
+        self.sav_path
+            .as_ref()
+            .map(|p| p.with_extension(format!("state{}", slot + 1)))
+    }
+
+    /// Which of the NUM_SLOTS savestate slots already hold a snapshot.
+    fn slot_states(&self) -> [bool; menu::NUM_SLOTS] {
+        let mut out = [false; menu::NUM_SLOTS];
+        for (slot, exists) in out.iter_mut().enumerate() {
+            *exists = self.state_path(slot).is_some_and(|p| p.exists());
+        }
+        out
+    }
+
+    /// Snapshot the running machine to savestate `slot` (F5).
+    fn save_state(&mut self, slot: usize) {
+        let (Some(nes), Some(path)) = (&self.nes, self.state_path(slot)) else {
             return;
         };
         match nes.save_state().and_then(|data| {
@@ -103,9 +135,9 @@ impl App {
         }
     }
 
-    /// Restore the savestate slot into the running machine (F7).
-    fn load_state(&mut self) {
-        let Some(path) = self.state_path() else {
+    /// Restore savestate `slot` into the running machine (F7).
+    fn load_state(&mut self, slot: usize) {
+        let Some(path) = self.state_path(slot) else {
             return;
         };
         let Some(nes) = &mut self.nes else { return };
@@ -119,9 +151,7 @@ impl App {
         {
             Ok(()) => {
                 eprintln!("loaded state from {}", path.display());
-                if let Some(a) = &self.audio {
-                    a.clear();
-                }
+                self.clear_audio();
                 self.redraw();
             }
             Err(e) => eprintln!("load state failed: {e}"),
@@ -176,22 +206,40 @@ impl App {
 
     /// (rows cropped from the top, visible height) for the current view.
     fn crop(&self) -> (usize, usize) {
-        if matches!(self.view, View::Running)
-            && self.cfg.crop_overscan
-            && self
-                .nes
-                .as_ref()
-                .is_some_and(|n| n.region() == Region::Ntsc)
-        {
+        if matches!(self.view, View::Running) && self.overscan_cropped() {
             (OVERSCAN_TOP, HEIGHT - OVERSCAN_TOP - OVERSCAN_BOTTOM)
         } else {
             (0, HEIGHT)
         }
     }
 
-    /// Match pixel buffer and window size to the current view's crop.
+    /// Whether the loaded game is shown with NTSC overscan cropped.
+    fn overscan_cropped(&self) -> bool {
+        self.cfg.crop_overscan
+            && self
+                .nes
+                .as_ref()
+                .is_some_and(|n| n.region() == Region::Ntsc)
+    }
+
+    /// Visible height of the running game, independent of the current view.
+    /// The window tracks this even in menus so opening the menu never resizes
+    /// the OS window.
+    fn running_height(&self) -> usize {
+        if self.nes.is_some() && self.overscan_cropped() {
+            HEIGHT - OVERSCAN_TOP - OVERSCAN_BOTTOM
+        } else {
+            HEIGHT
+        }
+    }
+
+    /// Match pixel buffer and window size to the running view. Buffer and
+    /// window keep the same height across all views, so the menu fills the
+    /// window edge-to-edge (no letterbox bars) and opening it never resizes
+    /// the OS window. Menus that assume the full 240 lines are fitted in
+    /// `blit_menu`.
     fn apply_view_size(&mut self) {
-        let (_, h) = self.crop();
+        let h = self.running_height();
         if let Some(p) = &mut self.pixels {
             let _ = p.resize_buffer(WIDTH as u32, h as u32);
         }
@@ -226,7 +274,15 @@ impl App {
                     HomeAction::Quit => event_loop.exit(),
                 }
             }
-            KeyCode::Escape => event_loop.exit(),
+            // ESC backs out of the menu: resume the game if one is loaded,
+            // otherwise (nothing to resume) it quits.
+            KeyCode::Escape => {
+                if self.nes.is_some() {
+                    self.start_running();
+                } else {
+                    event_loop.exit();
+                }
+            }
             _ => {}
         }
         self.redraw();
@@ -318,19 +374,25 @@ impl App {
             self.save_battery_ram();
             self.view = View::Home { sel: 0 };
             self.apply_view_size();
-            if let Some(a) = &self.audio {
-                a.clear();
+            self.clear_audio();
+            // Make sure the pause menu comes to the front and takes input.
+            if let Some(w) = &self.window {
+                w.focus_window();
             }
             self.redraw();
             return;
         }
-        // Savestate slot: F5 saves, F7 restores (single slot per ROM).
-        if pressed && code == KeyCode::F5 {
-            self.save_state();
-            return;
-        }
-        if pressed && code == KeyCode::F7 {
-            self.load_state();
+        // Savestate slots: F5 opens the save picker, F7 the load picker.
+        // The picker pauses the game (about_to_wait only ticks in Running).
+        if pressed && (code == KeyCode::F5 || code == KeyCode::F7) {
+            if self.nes.is_some() {
+                self.view = View::SlotPicker {
+                    saving: code == KeyCode::F5,
+                    sel: 0,
+                };
+                self.clear_audio();
+                self.redraw();
+            }
             return;
         }
         let Some(nes) = &mut self.nes else { return };
@@ -344,6 +406,29 @@ impl App {
                 nes.cpu.bus.controller2.set_button(BUTTON_MASKS[i], pressed);
             }
         }
+    }
+
+    fn slot_key(&mut self, code: KeyCode) {
+        let View::SlotPicker { saving, sel } = &mut self.view else {
+            return;
+        };
+        match code {
+            // Arrows move the highlight; fall through to the redraw below.
+            KeyCode::ArrowUp => *sel = (*sel + menu::NUM_SLOTS - 1) % menu::NUM_SLOTS,
+            KeyCode::ArrowDown => *sel = (*sel + 1) % menu::NUM_SLOTS,
+            KeyCode::Enter | KeyCode::Space => {
+                let (saving, slot) = (*saving, *sel);
+                if saving {
+                    self.save_state(slot);
+                } else {
+                    self.load_state(slot);
+                }
+                return self.resume_game();
+            }
+            KeyCode::Escape => return self.resume_game(),
+            _ => return,
+        }
+        self.redraw();
     }
 }
 
@@ -399,11 +484,17 @@ impl ApplicationHandler for App {
                     View::Running => self.running_key(code, pressed, event.repeat),
                     View::Home { .. } if pressed => self.home_key(code, event_loop),
                     View::Settings { .. } if pressed => self.settings_key(code),
+                    View::SlotPicker { .. } if pressed => self.slot_key(code),
                     _ => {}
                 }
             }
             WindowEvent::RedrawRequested => {
                 let (skip, h) = self.crop();
+                // slot_states() borrows &self, which would clash with the
+                // &mut self.pixels borrow below, so snapshot it up front.
+                // Only the picker reads it.
+                let picker_slots = matches!(self.view, View::SlotPicker { .. })
+                    .then(|| self.slot_states());
                 let Some(pixels) = &mut self.pixels else {
                     return;
                 };
@@ -416,14 +507,23 @@ impl ApplicationHandler for App {
                         }
                     }
                     View::Home { sel } => {
-                        menu::render_home(frame, *sel, self.nes.is_some(), self.error.as_deref());
+                        blit_menu(frame, |f, h| {
+                            menu::render_home(f, h, *sel, self.nes.is_some(), self.error.as_deref())
+                        });
                     }
                     View::Settings {
                         sel,
                         waiting,
                         player,
                     } => {
-                        menu::render_settings(frame, &self.cfg, *sel, *waiting, *player);
+                        blit_menu(frame, |f, h| {
+                            menu::render_settings(f, h, &self.cfg, *sel, *waiting, *player)
+                        });
+                    }
+                    View::SlotPicker { saving, sel } => {
+                        let (saving, sel) = (*saving, *sel);
+                        let slots = picker_slots.expect("set whenever view is SlotPicker");
+                        blit_menu(frame, |f, h| menu::render_slots(f, h, saving, sel, &slots));
                     }
                 }
                 if let Err(e) = pixels.render() {
@@ -469,6 +569,22 @@ impl ApplicationHandler for App {
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
+}
+
+/// Draw a menu into `frame`. The render fn lays the menu out for the visible
+/// window height `h` (passed in), so it fills the running game's size with no
+/// letterbox bars. Font drawing clamps to the full 240-line buffer, so render
+/// into a full-height scratch buffer and copy the top `h` lines the layout
+/// already targets.
+fn blit_menu(frame: &mut [u8], draw: impl FnOnce(&mut [u8], i32)) {
+    let h = frame.len() / (WIDTH * 4);
+    if h >= HEIGHT {
+        draw(frame, h as i32);
+        return;
+    }
+    let mut full = vec![0u8; WIDTH * HEIGHT * 4];
+    draw(&mut full, h as i32);
+    frame.copy_from_slice(&full[..h * WIDTH * 4]);
 }
 
 fn main() {
