@@ -148,8 +148,10 @@ chain - `hp1` (90 Hz), `hp2` (440 Hz), `lp` (14 kHz) - before pushing it to the
 are textbook one-pole RC filters.
 
 The cartridge's optional **expansion audio** (some mappers add their own sound
-channels) is summed in here too: `tick` takes an `ext` argument and adds it
-before decimation, so expansion sound rides the same filters.
+channels, from the VRC6/Sunsoft 5B square waves up to VRC7's six-channel OPLL FM
+synth) is summed in here too: `tick` takes an `ext` argument - the mapper's
+`audio_sample()` - and adds it before decimation, so expansion sound rides the
+same filters.
 
 > **Region differences.** PAL uses a different CPU clock (`PAL_CPU_HZ`),
 > different noise/DMC period tables, and different frame-counter cycle counts.

@@ -31,6 +31,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 73 | VRC3 | 16KB PRG select, CHR RAM, 16-bit cycle IRQ, PRG RAM | Salamander |
 | 75 | VRC1 | 8KB PRG banks, 4KB CHR banks with a high bit in $9000 | Tetsuwan Atom, Ganbare Goemon!, Exciting Boxing |
 | 78 | Holy Diver / Cosmo Carrier | 16KB PRG + 8KB CHR select, submapper-selected mirroring | Holy Diver, Uchuusen: Cosmo Carrier |
+| 85 | VRC7 | 8KB PRG / 1KB CHR banking, battery PRG RAM, VRC scanline/cycle IRQ, OPLL FM expansion audio (6 two-operator channels) | Lagrange Point, Tiny Toon Adventures 2 (J) |
 | 118 | TxSROM (MMC3) | MMC3 with CHR-bank-driven nametable select (TLSROM/TSROM) | NES Play Action Football, Armadillo |
 | 159 | Bandai LZ93D50 (24C01) | Mapper 16 with a 128-byte serial EEPROM | Dragon Ball Z, Datach titles |
 | 180 | UNROM (180) | UxROM variant switching only the first 16KB bank ($8000), fixed last bank | Crazy Climber |
@@ -38,7 +39,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 210 | Namco 175 / 340 | N163 banking without audio/IRQ; 340 adds mapper mirroring, 175 adds battery PRG RAM | Famista '92, Wagyan Land 2/3, Splatterhouse |
 
 Expansion audio is summed into the APU mix (before decimation/filtering) for
-the MMC5, VRC6, Namco 163 and Sunsoft 5B.
+the MMC5, VRC6, VRC7, Namco 163 and Sunsoft 5B.
 
 The Bandai FCG/LZ93D50 (16/159) serial EEPROM (24C01/24C02) is emulated as a
 full I2C slave, and its contents persist to the .sav file.
