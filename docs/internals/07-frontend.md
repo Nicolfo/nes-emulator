@@ -16,6 +16,7 @@ everything else) and exposes a small, frontend-agnostic API:
 |--------|---------|
 | `Nes::new(rom)` | Parse the ROM, build the console, reset the CPU |
 | `run_frame()` | Step the CPU until the PPU finishes a frame |
+| `reset()` | Soft reset: pulse the PPU/APU reset lines + re-run CPU reset, keeping RAM/VRAM |
 | `framebuffer()` | Borrow the 256×240 RGBA pixel buffer |
 | `region()` | NTSC or PAL (drives frame pacing) |
 | `set_sample_rate` / `tune_audio` / `take_audio` | Audio plumbing |
@@ -101,6 +102,16 @@ When a game with battery RAM is loaded, the host restores `<rom>.sav` into PRG
 RAM (`restore_battery_ram`) and writes it back on exit / game switch / return to
 menu (`save_battery_ram`), all through the `Nes::battery_ram` accessors from
 [chapter 5](06-cartridge-mappers.md).
+
+### Soft reset
+
+While running, **F3** triggers a soft reset (the console's RESET button) through
+`Nes::reset`: it pulses the PPU and APU reset lines and re-runs the CPU reset
+sequence, so execution resumes from the cartridge's reset vector while PRG/CHR
+RAM, VRAM, palette and OAM all survive - exactly what the hardware RESET line
+does. `Cpu::reset` additionally drops any NMI/IRQ latched before the reset, so
+the reset handler runs instead of being hijacked into an interrupt sequence. F3
+is fixed (not rebindable), like the F5/F7 savestate keys.
 
 ### Savestates
 
