@@ -210,6 +210,21 @@ impl Ppu {
         self.ctrl & 0x80 != 0 && self.status & 0x80 != 0
     }
 
+    /// PPU RESET line: clears the write-accessible registers (PPUCTRL/PPUMASK),
+    /// the $2005/$2006 write toggle and scroll temp (t), fine-x, the $2007 read
+    /// buffer and the frame parity. VRAM, palette, OAM and the current VRAM
+    /// address (v) survive - the game's reset handler reprograms the rest.
+    pub fn reset(&mut self) {
+        self.ctrl = 0;
+        self.mask = 0;
+        self.pending_mask = None;
+        self.w = false;
+        self.t = 0;
+        self.fine_x = 0;
+        self.read_buffer = 0;
+        self.odd_frame = false;
+    }
+
     fn rendering_enabled(&self) -> bool {
         self.mask & 0x18 != 0
     }

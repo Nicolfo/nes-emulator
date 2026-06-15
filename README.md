@@ -52,11 +52,14 @@ cropping and reset defaults; everything is persisted to
 | Action | Key |
 |---|---|
 | Back to menu | Escape |
+| Reset console | F3 |
 | Save state | F5 |
 | Load state | F7 |
 
-Per-player button bindings (except Escape and the F5/F7 savestate keys) can be
-changed in Settings. **F5** pauses the game and opens a 4-slot save picker;
+Per-player button bindings (except Escape, the **F3** reset key and the F5/F7
+savestate keys) can be changed in Settings. **F3** soft-resets the console (the
+RESET button) - execution jumps back to the cartridge's reset vector with RAM
+intact, just like the hardware. **F5** pauses the game and opens a 4-slot save picker;
 **F7** opens the matching load picker (↑/↓ to choose a slot, Enter to confirm,
 Escape to cancel). Each slot is written to `<rom>.stateN` next to the ROM, and a
 restore resumes exactly where you left off - mid-frame.
