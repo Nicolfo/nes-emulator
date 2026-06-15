@@ -46,6 +46,12 @@ optional trainer, and (in the newer NES 2.0 variant) the target **region**.
   TV-system bit) → `Region::Ntsc` / `Region::Pal`.
 - Reads the default mirroring (horizontal/vertical, or four-screen when the
   flags 6 bit-3 four-screen pad is set) and the battery flag.
+- Computes the PRG and CHR ROM sizes via `rom_size`. NES 2.0 widens the iNES
+  bank counts with a 4-bit MSB (header byte 9) and adds an exponent-multiplier
+  encoding (`2^E * (2*M+1)` bytes) for sizes that aren't a whole number of
+  banks; plain iNES uses the byte-4/5 counts directly. Getting this right
+  matters for large (>4 MB PRG / >2 MB CHR) NES 2.0 images, whose CHR would
+  otherwise start at the wrong file offset.
 - Slices out the PRG and CHR byte ranges.
 - Constructs the right concrete mapper based on the mapper number and returns it
   as a `Box<dyn Mapper>`, along with the region and battery flag.
