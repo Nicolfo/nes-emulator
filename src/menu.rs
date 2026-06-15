@@ -49,7 +49,7 @@ pub struct HomeItem {
     pub action: HomeAction,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HomeAction {
     Resume,
     LoadRom,
@@ -325,5 +325,90 @@ mod tests {
         write_bmp("crop_settings.bmp", &top(&f), WIDTH, CROP_H);
         render_slots(&mut f, CROP_H as i32, true, 1, &[true, false, true, false]);
         write_bmp("crop_slots.bmp", &top(&f), WIDTH, CROP_H);
+    }
+
+    // --- Logic ---------------------------------------------------------------
+
+    #[test]
+    fn resume_only_when_game_loaded() {
+        let loaded = home_items(true);
+        assert_eq!(loaded[0].action, HomeAction::Resume);
+        let empty = home_items(false);
+        assert!(empty.iter().all(|i| i.action != HomeAction::Resume));
+        // The non-resume tail is identical regardless of game state.
+        assert_eq!(loaded.len(), empty.len() + 1);
+    }
+
+    #[test]
+    fn footer_scales_with_height() {
+        let (div, l1, l2, top) = footer_layout(240);
+        assert!(top < div && div < l1 && l1 < l2 && l2 < 240);
+        // Taller window pushes the whole footer band down by the same delta.
+        let (div2, ..) = footer_layout(260);
+        assert_eq!(div2 - div, 20);
+    }
+
+    // --- Render smoke (pixels, no file I/O) -----------------------------------
+
+    fn blank() -> Vec<u8> {
+        vec![0u8; WIDTH * HEIGHT * 4]
+    }
+
+    /// Every render must paint the background, draw *something* on top, and
+    /// never touch a byte outside the framebuffer.
+    fn assert_painted(f: &[u8]) {
+        assert_eq!(&f[0..3], &BG, "background not cleared");
+        assert!(
+            f.chunks(4).any(|p| p[..3] != BG),
+            "nothing drawn over background"
+        );
+    }
+
+    #[test]
+    fn render_home_every_selection() {
+        for game_loaded in [true, false] {
+            let n = home_items(game_loaded).len();
+            for sel in 0..n {
+                let mut f = blank();
+                let err = if sel == 0 {
+                    Some("UNSUPPORTED MAPPER 99")
+                } else {
+                    None
+                };
+                render_home(&mut f, HEIGHT as i32, sel, game_loaded, err);
+                assert_painted(&f);
+            }
+        }
+    }
+
+    #[test]
+    fn render_slots_save_and_load() {
+        for saving in [true, false] {
+            for sel in 0..NUM_SLOTS {
+                let mut f = blank();
+                render_slots(
+                    &mut f,
+                    HEIGHT as i32,
+                    saving,
+                    sel,
+                    &[true, false, false, true],
+                );
+                assert_painted(&f);
+            }
+        }
+    }
+
+    #[test]
+    fn render_settings_all_rows_both_players() {
+        let cfg = crate::config::Config::default();
+        for player in [0, 1] {
+            for sel in 0..SETTINGS_ROWS {
+                for waiting in [true, false] {
+                    let mut f = blank();
+                    render_settings(&mut f, HEIGHT as i32, &cfg, sel, waiting, player);
+                    assert_painted(&f);
+                }
+            }
+        }
     }
 }
