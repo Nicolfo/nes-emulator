@@ -3,10 +3,10 @@
 # NES Emulator
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
-input, NTSC and PAL machines (auto-detected from the ROM header), and 34 mappers
-- with expansion audio for the MMC5, VRC6, N163 and Sunsoft 5B - covering games
+input, NTSC and PAL machines (auto-detected from the ROM header), and 35 mappers
+- with expansion audio for the MMC5, VRC6, VRC7, N163 and Sunsoft 5B - covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
-Akumajou Densetsu and Castlevania III. See [docs/mappers.md](docs/mappers.md)
+Akumajou Densetsu, Lagrange Point and Castlevania III. See [docs/mappers.md](docs/mappers.md)
 for the full mapper list with descriptions and notable games.
 
 Passes all **140 / 140** tests of the hardware-verified
@@ -97,7 +97,8 @@ restore resumes exactly where you left off - mid-frame.
   not emulated), AxROM, MMC2 and MMC4 (tile-fetch CHR latches; MMC4 adds 16KB
   PRG banking and PRG RAM), Color Dreams, N163 (wavetable audio, nametables
   mappable to CHR ROM), VRC6 (pulse/saw audio, scanline and cycle IRQ; both the
-  VRC6a and VRC6b pinouts), BNROM/NINA-001, GxROM, FME-7 (CPU-cycle IRQ counter
+  VRC6a and VRC6b pinouts), VRC7 (six-channel OPLL FM expansion audio plus the
+  VRC scanline/cycle IRQ), BNROM/NINA-001, GxROM, FME-7 (CPU-cycle IRQ counter
   plus Sunsoft 5B audio), Camerica/Codemasters and Namco 108/DxROM (the
   pre-IRQ MMC3 ancestor). The full table lives in [docs/mappers.md](docs/mappers.md).
   Expansion audio is summed into the APU mix before decimation/filtering.

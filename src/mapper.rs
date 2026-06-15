@@ -27,6 +27,7 @@ mod vrc1;
 mod vrc3;
 mod vrc4;
 mod vrc6;
+mod vrc7;
 
 pub use action53::Action53;
 pub use axrom::Axrom;
@@ -57,6 +58,7 @@ pub use vrc1::Vrc1;
 pub use vrc3::Vrc3;
 pub use vrc4::Vrc4;
 pub use vrc6::Vrc6;
+pub use vrc7::Vrc7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Mirroring {
