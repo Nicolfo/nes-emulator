@@ -1,3 +1,4 @@
+mod action53;
 mod axrom;
 mod bnrom;
 mod cnrom;
@@ -5,6 +6,7 @@ mod codemasters;
 mod colordreams;
 mod fme7;
 mod gxrom;
+mod holydiver;
 mod mmc1;
 mod mmc2;
 mod mmc3;
@@ -13,9 +15,13 @@ mod mmc5;
 mod n163;
 mod namco108;
 mod nrom;
+mod txsrom;
+mod unrom180;
 mod uxrom;
+mod vrc4;
 mod vrc6;
 
+pub use action53::Action53;
 pub use axrom::Axrom;
 pub use bnrom::Bnrom;
 pub use cnrom::Cnrom;
@@ -23,6 +29,7 @@ pub use codemasters::Codemasters;
 pub use colordreams::ColorDreams;
 pub use fme7::Fme7;
 pub use gxrom::Gxrom;
+pub use holydiver::HolyDiver;
 pub use mmc1::Mmc1;
 pub use mmc2::Mmc2;
 pub use mmc3::Mmc3;
@@ -31,7 +38,10 @@ pub use mmc5::Mmc5;
 pub use n163::N163;
 pub use namco108::Namco108;
 pub use nrom::Nrom;
+pub use txsrom::Txsrom;
+pub use unrom180::Unrom180;
 pub use uxrom::Uxrom;
+pub use vrc4::Vrc4;
 pub use vrc6::Vrc6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
