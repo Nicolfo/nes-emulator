@@ -24,7 +24,7 @@ pub struct Sunsoft4 {
     chr_rom_nt: bool,
     // $F000 bits 3-0: 16KB PRG bank at $8000-$BFFF.
     prg_bank: u8,
-    // $F000 bit 7: enable 8KB PRG RAM at $6000-$7FFF.
+    // $F000 bit 4: enable 8KB PRG RAM at $6000-$7FFF.
     prg_ram_enabled: bool,
 }
 
@@ -77,7 +77,9 @@ impl Sunsoft4 {
     /// nametables come from the final 128KB of CHR.
     fn chr_nt_offset(&self, addr: u16) -> usize {
         let page = (mirror_nt(self.mirroring, addr) >> 10) & 1;
-        let bank = (self.nt_banks[page as usize] & 0x7F) as usize;
+        // Only D6-D0 are used; D7 is ignored and treated as 1, so a nametable
+        // always comes from the last 128KB of CHR ROM.
+        let bank = 0x80 | (self.nt_banks[page as usize] & 0x7F) as usize;
         let banks = (self.chr.len() / 0x400).max(1);
         (bank % banks) * 0x400 + (addr as usize & 0x3FF)
     }
@@ -120,7 +122,7 @@ impl Mapper for Sunsoft4 {
             }
             0xF000 => {
                 self.prg_bank = val & 0x0F;
-                self.prg_ram_enabled = val & 0x80 != 0;
+                self.prg_ram_enabled = val & 0x10 != 0;
             }
             _ => {}
         }
@@ -198,8 +200,8 @@ mod tests {
         assert_eq!(m.cpu_read(0xBFFF), 2);
         // Fixed bank unaffected.
         assert_eq!(m.cpu_read(0xC000), 3);
-        // Only low 4 bits select the bank; bit 7 is the RAM enable.
-        m.cpu_write(0xF000, 0x81);
+        // Only low 4 bits select the bank; bit 4 is the RAM enable.
+        m.cpu_write(0xF000, 0x11);
         assert_eq!(m.cpu_read(0x8000), 1);
     }
 
@@ -209,8 +211,8 @@ mod tests {
         // Disabled at power-on: writes ignored, reads open bus.
         m.cpu_write(0x6000, 0xAA);
         assert_eq!(m.prg_ram_read(0x6000), None);
-        // Enable via $F000 bit 7.
-        m.cpu_write(0xF000, 0x80);
+        // Enable via $F000 bit 4.
+        m.cpu_write(0xF000, 0x10);
         m.cpu_write(0x6123, 0xBB);
         assert_eq!(m.prg_ram_read(0x6123), Some(0xBB));
         // Disable again -> open bus, contents retained for battery save.

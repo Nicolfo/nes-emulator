@@ -35,9 +35,8 @@ marks boards whose extra sound channels are mixed into the APU output.
 Expansion audio is summed into the APU mix (before decimation/filtering) for
 the MMC5, VRC6, Namco 163 and Sunsoft 5B.
 
-The Bandai FCG/LZ93D50 (16/159) serial EEPROM is currently a simplified
-stand-in: its bytes persist to the .sav file, but the full 24Cxx serial
-protocol is not yet emulated, so in-game saving may not work on every title.
+The Bandai FCG/LZ93D50 (16/159) serial EEPROM (24C01/24C02) is emulated as a
+full I2C slave, and its contents persist to the .sav file.
 
 The iNES four-screen flag (flags 6 bit 3) is honored on any of these boards: it
 gives all four nametables their own RAM and overrides the board's mirroring,

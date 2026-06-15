@@ -4,30 +4,25 @@ use serde::{Deserialize, Serialize};
 /// Irem H3001 (mapper 65), used by games such as Daiku no Gen-san 2 and
 /// Spartan X 2.
 ///
-/// PRG: three independently switchable 8KB banks plus a fixed last bank.
-/// - `$8000` selects the 8KB bank visible at CPU `$8000-$9FFF`.
-/// - `$A000` selects the 8KB bank visible at CPU `$A000-$BFFF`.
-/// - `$C000` selects the 8KB bank visible at CPU `$C000-$DFFF`.
-/// - `$E000-$FFFF` is hardwired to the last 8KB of PRG.
-///
-/// (nesdev's summary describes a two-register layout where `$9000` bit 0
-/// chooses whether `$8000` or `$C000` is the swappable window; the bank value
-/// at `$E000` is `$3F`. This driver implements the simpler and more widely
-/// used three-swappable-bank form per the task spec, with the last bank fixed
-/// rather than register `$3F`.)
+/// PRG: two switchable 8KB registers plus two fixed banks, arranged by the
+/// `$9000` mode bit (nesdev mapper 65):
+/// - `$8000` register (reg 0) and `$A000` register (reg 1) hold the switchable
+///   banks; `$A000-$BFFF` is always reg 1.
+/// - `$9000` bit 7 = 0: `$8000-$9FFF` = reg 0, `$C000-$DFFF` = fixed `$3E`.
+/// - `$9000` bit 7 = 1: `$8000-$9FFF` = fixed `$3E`, `$C000-$DFFF` = reg 0.
+/// - `$E000-$FFFF` is always the fixed `$3F` bank. `$3E`/`$3F` mask to the last
+///   two 8KB banks of the ROM.
 ///
 /// CHR: eight 1KB banks selected by `$B000-$B007`, one register per 1KB slot
 /// across `$0000-$1FFF`.
 ///
-/// Mirroring: `$9001`. Per nesdev the field is bits 7-6 (%00=Vert, %10=Horz,
-/// %01/%11=1-screen). The common single-bit decode (bit 7: 1=Horizontal,
-/// 0=Vertical) covers the games that use this mapper, so we decode bit 7 only.
+/// Mirroring: `$9001` bits 7-6 — %00=Vertical, %10=Horizontal, %01/%11=1-screen.
 ///
 /// IRQ: a 16-bit down-counter clocked once per CPU cycle. When enabled it
-/// decrements every cycle and asserts IRQ when it underflows past 0 (i.e. when
-/// a count of 0 wraps to 0xFFFF). `$9005`/`$9006` set the high/low bytes of the
-/// reload latch, `$9004` copies the latch into the live counter (and acks),
-/// and `$9003` bit 7 enables the counter (and acks).
+/// decrements every cycle and asserts IRQ when it reaches 0, then *stops* at 0
+/// (no auto-reload). `$9005`/`$9006` set the high/low bytes of the reload
+/// latch, `$9004` copies the latch into the live counter (and acks), and
+/// `$9003` bit 7 enables the counter (and acks).
 #[derive(Serialize, Deserialize)]
 pub struct H3001 {
     prg: Vec<u8>,
@@ -35,8 +30,11 @@ pub struct H3001 {
     chr_is_ram: bool,
     mirroring: Mirroring,
     four_screen: bool,
-    // 8KB PRG banks for $8000, $A000, $C000. $E000 is the fixed last bank.
-    prg_banks: [u8; 3],
+    // Switchable 8KB PRG registers: reg 0 ($8000 write) and reg 1 ($A000).
+    prg_reg0: u8,
+    prg_reg1: u8,
+    // $9000 bit 7: false -> reg0 at $8000 / $C000 fixed; true -> the reverse.
+    prg_mode: bool,
     // 1KB CHR banks for the eight slots across $0000-$1FFF.
     chr_banks: [u8; 8],
     irq: H3001Irq,
@@ -53,7 +51,9 @@ impl H3001 {
             chr_is_ram,
             mirroring,
             four_screen,
-            prg_banks: [0; 3],
+            prg_reg0: 0,
+            prg_reg1: 0,
+            prg_mode: false,
             chr_banks: [0; 8],
             irq: H3001Irq::new(),
         }
@@ -62,11 +62,29 @@ impl H3001 {
     /// Map a CPU address ($8000-$FFFF) to a PRG ROM offset (8KB granularity).
     fn prg_offset(&self, addr: u16) -> usize {
         let banks = (self.prg.len() / 0x2000).max(1);
+        let last = banks - 1; // $3F
+        let second = banks.saturating_sub(2); // $3E
+        let reg0 = self.prg_reg0 as usize % banks;
+        let reg1 = self.prg_reg1 as usize % banks;
         let bank = match (addr >> 13) & 3 {
-            0 => self.prg_banks[0] as usize % banks, // $8000-$9FFF
-            1 => self.prg_banks[1] as usize % banks, // $A000-$BFFF
-            2 => self.prg_banks[2] as usize % banks, // $C000-$DFFF
-            _ => banks - 1,                          // $E000-$FFFF: fixed last
+            // $8000-$9FFF: reg 0, or the fixed $3E bank in the swapped mode.
+            0 => {
+                if self.prg_mode {
+                    second
+                } else {
+                    reg0
+                }
+            }
+            1 => reg1, // $A000-$BFFF: always reg 1
+            // $C000-$DFFF: the fixed $3E bank, or reg 0 in the swapped mode.
+            2 => {
+                if self.prg_mode {
+                    reg0
+                } else {
+                    second
+                }
+            }
+            _ => last, // $E000-$FFFF: fixed $3F
         };
         bank * 0x2000 + (addr as usize & 0x1FFF)
     }
@@ -93,17 +111,18 @@ impl Mapper for H3001 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x8000 => self.prg_banks[0] = val,
-            0xA000 => self.prg_banks[1] = val,
-            0xC000 => self.prg_banks[2] = val,
+            0x8000 => self.prg_reg0 = val,
+            0xA000 => self.prg_reg1 = val,
+            // $9000 bit 7 selects which window reg 0 drives.
+            0x9000 => self.prg_mode = val & 0x80 != 0,
             0x9001 => {
-                // Bit 7: 1 = Horizontal, 0 = Vertical. Four-screen boards
-                // ignore the mapper's mirroring control entirely.
+                // Bits 7-6: %00=Vertical, %10=Horizontal, %01/%11=1-screen.
+                // Four-screen boards ignore the mapper's mirroring control.
                 if !self.four_screen {
-                    self.mirroring = if val & 0x80 != 0 {
-                        Mirroring::Horizontal
-                    } else {
-                        Mirroring::Vertical
+                    self.mirroring = match (val >> 6) & 3 {
+                        0 => Mirroring::Vertical,
+                        2 => Mirroring::Horizontal,
+                        _ => Mirroring::SingleScreenLo,
                     };
                 }
             }
@@ -186,15 +205,15 @@ impl H3001Irq {
     }
 
     fn clock(&mut self) {
-        if !self.enabled {
+        if !self.enabled || self.counter == 0 {
+            // Disabled, or already fired and stopped at 0.
             return;
         }
+        self.counter -= 1;
         if self.counter == 0 {
-            // Underflow past 0: wrap to 0xFFFF and assert IRQ.
-            self.counter = 0xFFFF;
+            // Reaching 0 asserts the IRQ; the counter then stays at 0 until a
+            // reload ($9004) or another enable.
             self.line = true;
-        } else {
-            self.counter -= 1;
         }
     }
 }
@@ -211,17 +230,24 @@ mod tests {
     }
 
     #[test]
-    fn prg_three_banks_and_fixed_last() {
+    fn prg_layout_modes() {
+        // 8 banks (0..7): fixed $3E = second-last (6), $3F = last (7).
         let mut m = h3001();
-        m.cpu_write(0x8000, 2);
-        m.cpu_write(0xA000, 5);
-        m.cpu_write(0xC000, 1);
-        assert_eq!(m.cpu_read(0x8000), 2); // $8000 window
+        m.cpu_write(0x8000, 2); // reg 0
+        m.cpu_write(0xA000, 5); // reg 1
+        // Mode 0: $8000=reg0, $A000=reg1, $C000=$3E (6), $E000=$3F (7).
+        assert_eq!(m.cpu_read(0x8000), 2);
         assert_eq!(m.cpu_read(0x9FFF), 2);
-        assert_eq!(m.cpu_read(0xA000), 5); // $A000 window
-        assert_eq!(m.cpu_read(0xC000), 1); // $C000 window
-        assert_eq!(m.cpu_read(0xE000), 7); // fixed last (8 banks -> index 7)
+        assert_eq!(m.cpu_read(0xA000), 5);
+        assert_eq!(m.cpu_read(0xC000), 6);
+        assert_eq!(m.cpu_read(0xE000), 7);
         assert_eq!(m.cpu_read(0xFFFF), 7);
+        // Mode 1 ($9000 bit 7): $8000=$3E (6), $C000=reg0 (2).
+        m.cpu_write(0x9000, 0x80);
+        assert_eq!(m.cpu_read(0x8000), 6);
+        assert_eq!(m.cpu_read(0xA000), 5);
+        assert_eq!(m.cpu_read(0xC000), 2);
+        assert_eq!(m.cpu_read(0xE000), 7);
     }
 
     #[test]
@@ -270,13 +296,12 @@ mod tests {
         m.cpu_write(0x9006, 0x03); // low -> latch = 3
         m.cpu_write(0x9004, 0); // reload counter from latch
         m.cpu_write(0x9003, 0x80); // enable
-        // 3 -> 2 -> 1 -> 0, none assert IRQ yet.
-        for i in 0..3 {
+        // 3 -> 2 -> 1, no IRQ; the clock that reaches 0 asserts it.
+        for i in 0..2 {
             m.cpu_clock();
             assert!(!m.irq(), "IRQ too early at cycle {i}");
         }
-        // Counter is now 0; next clock underflows and asserts.
-        m.cpu_clock();
+        m.cpu_clock(); // 1 -> 0 asserts
         assert!(m.irq());
     }
 
@@ -287,8 +312,8 @@ mod tests {
         m.cpu_write(0x9006, 0x00); // low byte -> latch = 0x0100 = 256
         m.cpu_write(0x9004, 0); // reload
         m.cpu_write(0x9003, 0x80); // enable
-        // 256 decrements reach 0; 257th underflows.
-        for _ in 0..256 {
+        // 255 decrements stay above 0; the 256th reaches 0 and asserts.
+        for _ in 0..255 {
             m.cpu_clock();
             assert!(!m.irq());
         }
@@ -300,23 +325,21 @@ mod tests {
     fn irq_enable_and_ack() {
         let mut m = h3001();
         m.cpu_write(0x9005, 0x00);
-        m.cpu_write(0x9006, 0x01); // latch = 1
-        m.cpu_write(0x9004, 0); // counter = 1
+        m.cpu_write(0x9006, 0x02); // latch = 2
+        m.cpu_write(0x9004, 0); // counter = 2
         m.cpu_write(0x9003, 0x80); // enable
-        m.cpu_clock(); // 1 -> 0
+        m.cpu_clock(); // 2 -> 1
         assert!(!m.irq());
-        m.cpu_clock(); // 0 -> underflow, assert
+        m.cpu_clock(); // 1 -> 0 asserts
         assert!(m.irq());
 
-        // $9004 acknowledges (and reloads).
+        // $9004 acknowledges (and reloads the counter from the latch).
         m.cpu_write(0x9004, 0);
         assert!(!m.irq());
 
-        // $9003 also acknowledges; disabling stops the counter.
-        m.cpu_write(0x9003, 0x80); // re-enable to fire again
-        for _ in 0..2 {
-            m.cpu_clock();
-        }
+        // Counter reloaded to 2; two clocks fire it again.
+        m.cpu_clock();
+        m.cpu_clock();
         assert!(m.irq());
         m.cpu_write(0x9003, 0x00); // disable + ack
         assert!(!m.irq());

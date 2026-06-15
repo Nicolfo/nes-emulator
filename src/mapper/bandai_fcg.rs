@@ -21,14 +21,11 @@ use serde::{Deserialize, Serialize};
 /// enabled via $xA. Mappers 16 and 159 are LZ93D50 parts, so we implement the
 /// latch + copy-on-enable behavior (see `IrqState`).
 ///
-/// EEPROM: the real board carries a 24Cxx serial EEPROM (128 bytes / 24C01 on
+/// EEPROM: the board carries a 24Cxx serial EEPROM (128 bytes / 24C01 on
 /// mapper 159, 256 bytes / 24C02 on mapper 16) driven bit-by-bit over the
-/// $xD register and read back through $6000. The full I2C-style serial
-/// protocol is NOT implemented here — TODO. Instead we expose the EEPROM as a
-/// plain battery-backed RAM region so saves persist across runs, and make the
-/// $xD writes / $6000 reads behave well enough not to hang the boot path.
-/// Games that drive the serial protocol may not save correctly until the real
-/// 24Cxx state machine is implemented.
+/// two-wire interface — $xD bit 6 = SDA, bit 5 = SCL — and read back through
+/// $6000 bit 4. The full I2C slave protocol is emulated in [`SerialEeprom`],
+/// and the contents persist to the .sav file via the prg_ram hooks.
 #[derive(Serialize, Deserialize)]
 pub struct BandaiFcg {
     prg: Vec<u8>,
@@ -43,12 +40,9 @@ pub struct BandaiFcg {
     /// Eight 1KB CHR bank registers.
     chr_banks: [u8; 8],
     irq: IrqState,
-    /// Battery-backed stand-in for the serial EEPROM (see type doc). Sized to
-    /// match the part: 128 bytes on mapper 159, 256 bytes on mapper 16.
-    eeprom: Vec<u8>,
-    /// Last value written to $xD (EEPROM/RAM control). Kept so a read of
-    /// $6000 can echo a plausible "ready" bit rather than open bus.
-    eeprom_ctrl: u8,
+    /// Battery-backed serial EEPROM (24C01 on mapper 159, 24C02 on mapper 16),
+    /// driven over the two-wire ($xD) interface and read back at $6000.
+    eeprom: SerialEeprom,
 }
 
 impl BandaiFcg {
@@ -58,7 +52,14 @@ impl BandaiFcg {
         let chr_is_ram = chr.is_empty();
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         let four_screen = mirroring == Mirroring::FourScreen;
-        let eeprom_size = if mapper == 159 { 128 } else { 256 };
+        // Mapper 159 fits a 128-byte 24C01 (7-bit word address in the first
+        // serial byte); mapper 16 fits a 256-byte 24C02 (separate I2C
+        // device-select and word-address bytes).
+        let eeprom = if mapper == 159 {
+            SerialEeprom::new_24c01()
+        } else {
+            SerialEeprom::new_24c02()
+        };
         BandaiFcg {
             prg,
             chr,
@@ -68,8 +69,7 @@ impl BandaiFcg {
             prg_bank: 0,
             chr_banks: [0; 8],
             irq: IrqState::new(),
-            eeprom: vec![0xFF; eeprom_size],
-            eeprom_ctrl: 0,
+            eeprom,
         }
     }
 
@@ -100,9 +100,8 @@ impl BandaiFcg {
             0xB => self.irq.write_low(val),
             // $xC: IRQ latch/counter high byte.
             0xC => self.irq.write_high(val),
-            // $xD: EEPROM / RAM control. Serial protocol is a TODO; we only
-            // record the value (see type doc).
-            0xD => self.eeprom_ctrl = val,
+            // $xD: serial EEPROM I/O. bit6 = SDA (data), bit5 = SCL (clock).
+            0xD => self.eeprom.write_lines(val & 0x20 != 0, val & 0x40 != 0),
             _ => {}
         }
     }
@@ -165,22 +164,17 @@ impl Mapper for BandaiFcg {
     }
 
     fn prg_ram_read(&mut self, _addr: u16) -> Option<u8> {
-        // The $6000-$7FFF range on these boards is the EEPROM/register window,
-        // not RAM. The real chip returns the serial EEPROM data line in a
-        // specific bit; lacking the protocol we return a benign "ready" value
-        // so polling loops in the save routine terminate instead of hanging.
-        // TODO: implement the 24Cxx serial read here.
-        Some(0x00)
+        // $6000-$7FFF reads return the EEPROM's serial data-out line in bit 4.
+        Some((self.eeprom.read_sda() as u8) << 4)
     }
 
     fn prg_ram(&self) -> Option<&[u8]> {
-        // Expose the EEPROM contents for .sav persistence so saves survive a
-        // restart even though the live serial protocol is a stand-in.
-        Some(&self.eeprom)
+        // Expose the EEPROM cells for .sav persistence.
+        Some(self.eeprom.cells())
     }
 
     fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
-        Some(&mut self.eeprom)
+        Some(self.eeprom.cells_mut())
     }
 
     fn irq(&self) -> bool {
@@ -252,6 +246,266 @@ impl IrqState {
         } else {
             self.counter -= 1;
         }
+    }
+}
+
+/// A two-wire (I2C) serial EEPROM as fitted to the Bandai LZ93D50: a 24C01
+/// (128 bytes, mapper 159) or 24C02 (256 bytes, mapper 16). The CPU drives the
+/// clock (SCL) and data (SDA) lines through $800D; the chip drives SDA low to
+/// acknowledge and to shift out read data, sampled at $6000.
+///
+/// The two parts differ only in addressing: the 24C02 begins a transfer with a
+/// `1010xxxR` device-select byte followed by a separate word-address byte,
+/// while the 24C01 has no device byte — its first byte is the 7-bit word
+/// address plus the R/W bit. Everything else (START/STOP detection, MSB-first
+/// byte shifts, master/slave ACK handshakes, address auto-increment) is shared.
+#[derive(Serialize, Deserialize)]
+struct SerialEeprom {
+    data: Vec<u8>,
+    /// 24C02 (true) uses a device-select byte then a word-address byte; the
+    /// 24C01 (false) takes the word address directly in the first byte.
+    device_byte: bool,
+    addr_mask: u8,
+    scl: bool,
+    sda: bool,
+    /// SDA line the chip drives (true = released/high, false = pulled low).
+    out: bool,
+    phase: EePhase,
+    /// Bits shifted so far in the current byte (0..=8).
+    bits: u8,
+    /// Byte being shifted in (receive) or out (transmit).
+    shift: u8,
+    /// Current word address (auto-increments after each byte).
+    addr: u8,
+    /// What the byte currently being received represents.
+    rx: EeRx,
+    /// True once the current transfer has been identified as a read (from the
+    /// R/W bit in the device byte or, on the 24C01, the first address byte).
+    read_pending: bool,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Copy)]
+enum EePhase {
+    /// Bus idle, waiting for a START.
+    Idle,
+    /// Shifting a byte in from the master.
+    Receive,
+    /// Driving SDA low for one clock to acknowledge a received byte.
+    Ack,
+    /// Shifting a byte out to the master.
+    Transmit,
+    /// Sampling the master's ACK/NAK after a transmitted byte.
+    AckCheck,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Copy)]
+enum EeRx {
+    /// 24C02 device-select byte (`1010xxxR`).
+    Device,
+    /// Word-address byte.
+    Word,
+    /// Data byte to store.
+    Data,
+}
+
+impl SerialEeprom {
+    fn new_24c01() -> Self {
+        Self::new(128, false)
+    }
+
+    fn new_24c02() -> Self {
+        Self::new(256, true)
+    }
+
+    fn new(size: usize, device_byte: bool) -> Self {
+        SerialEeprom {
+            data: vec![0xFF; size],
+            device_byte,
+            addr_mask: (size - 1) as u8,
+            scl: false,
+            sda: false,
+            out: true,
+            phase: EePhase::Idle,
+            bits: 0,
+            shift: 0,
+            addr: 0,
+            // 24C01 has no device byte: the first received byte is the address.
+            rx: if device_byte {
+                EeRx::Device
+            } else {
+                EeRx::Word
+            },
+            read_pending: false,
+        }
+    }
+
+    fn cells(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn cells_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
+    /// Value seen by the CPU on the SDA line (true = high).
+    fn read_sda(&self) -> bool {
+        self.out
+    }
+
+    /// First receive state for a fresh transfer.
+    fn first_rx(&self) -> EeRx {
+        if self.device_byte {
+            EeRx::Device
+        } else {
+            EeRx::Word
+        }
+    }
+
+    /// Apply new SCL/SDA levels from a $800D write and advance the state
+    /// machine. START/STOP are recognised by SDA transitions while SCL is high;
+    /// data is shifted on SCL edges otherwise.
+    fn write_lines(&mut self, scl: bool, sda: bool) {
+        if self.scl && scl {
+            // SCL steady high: a SDA edge is a START or STOP condition.
+            if self.sda && !sda {
+                // START: begin a new transfer.
+                self.phase = EePhase::Receive;
+                self.rx = self.first_rx();
+                self.bits = 0;
+                self.shift = 0;
+                self.out = true;
+            } else if !self.sda && sda {
+                // STOP: release the bus.
+                self.phase = EePhase::Idle;
+                self.out = true;
+            }
+        } else if !self.scl && scl {
+            self.on_rise(sda);
+        } else if self.scl && !scl {
+            self.on_fall();
+        }
+        self.scl = scl;
+        self.sda = sda;
+    }
+
+    /// SCL rising edge: sample an incoming data/ack bit.
+    fn on_rise(&mut self, sda: bool) {
+        match self.phase {
+            EePhase::Receive => {
+                self.shift = (self.shift << 1) | sda as u8;
+                self.bits += 1;
+            }
+            EePhase::AckCheck => {
+                // Master ACK (SDA low) -> keep streaming; NAK (high) -> stop.
+                if sda {
+                    self.phase = EePhase::Idle;
+                    self.out = true;
+                } else {
+                    self.addr = self.addr.wrapping_add(1) & self.addr_mask;
+                    self.load_output();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// SCL falling edge: complete a received byte, drive ACK/data, or shift the
+    /// next outgoing bit.
+    fn on_fall(&mut self) {
+        match self.phase {
+            EePhase::Receive if self.bits == 8 => {
+                self.finish_received_byte();
+            }
+            EePhase::Ack => {
+                // The ACK clock just ended; resume per the queued operation.
+                self.out = true;
+                self.bits = 0;
+                self.shift = 0;
+                let start_read = match self.rx {
+                    // Device byte done: a read goes straight to shifting data
+                    // out, a write waits for the word address.
+                    EeRx::Device => {
+                        if !self.read_pending {
+                            self.rx = EeRx::Word;
+                        }
+                        self.read_pending
+                    }
+                    // Word address done: 24C01 reads start here too.
+                    EeRx::Word => {
+                        if !self.read_pending {
+                            self.rx = EeRx::Data;
+                        }
+                        self.read_pending
+                    }
+                    // A data byte was stored; keep receiving more.
+                    EeRx::Data => {
+                        self.rx = EeRx::Data;
+                        false
+                    }
+                };
+                if start_read {
+                    // We are on a falling edge, so present the first read bit
+                    // now for the master to sample on the next rising edge.
+                    self.load_output();
+                    self.shift_out_bit();
+                } else {
+                    self.phase = EePhase::Receive;
+                }
+            }
+            EePhase::Transmit => {
+                if self.bits < 8 {
+                    // Present the next bit (MSB first) for the master to sample
+                    // on the following rising edge.
+                    self.shift_out_bit();
+                } else {
+                    // Byte sent; release SDA and read the master's ACK/NAK.
+                    self.out = true;
+                    self.phase = EePhase::AckCheck;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Act on a fully received byte and drive the ACK pulse.
+    fn finish_received_byte(&mut self) {
+        match self.rx {
+            EeRx::Device => {
+                // `1010xxxR`: bit 0 is the read/write select.
+                self.read_pending = self.shift & 1 != 0;
+            }
+            EeRx::Word => {
+                if self.device_byte {
+                    self.addr = self.shift & self.addr_mask;
+                } else {
+                    // 24C01: 7-bit address + R/W in bit 0.
+                    self.read_pending = self.shift & 1 != 0;
+                    self.addr = (self.shift >> 1) & self.addr_mask;
+                }
+            }
+            EeRx::Data => {
+                self.data[self.addr as usize] = self.shift;
+                self.addr = self.addr.wrapping_add(1) & self.addr_mask;
+            }
+        }
+        // Acknowledge: pull SDA low for the ACK clock.
+        self.out = false;
+        self.phase = EePhase::Ack;
+    }
+
+    /// Latch the byte at the current address for shifting out. The first bit is
+    /// presented separately (always on a falling edge) via `shift_out_bit`.
+    fn load_output(&mut self) {
+        self.shift = self.data[self.addr as usize];
+        self.bits = 0;
+        self.phase = EePhase::Transmit;
+    }
+
+    /// Drive the next outgoing bit (MSB first) onto SDA.
+    fn shift_out_bit(&mut self) {
+        self.out = self.shift & 0x80 != 0;
+        self.shift <<= 1;
+        self.bits += 1;
     }
 }
 
@@ -351,6 +605,121 @@ mod tests {
         }
         m.cpu_clock(); // 0 -> underflow
         assert!(m.irq());
+    }
+
+    /// Bit-banging I2C master used to exercise the EEPROM the way a game would.
+    struct I2c<'a> {
+        e: &'a mut SerialEeprom,
+    }
+
+    impl I2c<'_> {
+        fn set(&mut self, scl: bool, sda: bool) {
+            self.e.write_lines(scl, sda);
+        }
+        fn start(&mut self) {
+            self.set(true, true);
+            self.set(true, false); // SDA falls while SCL high
+            self.set(false, false);
+        }
+        fn stop(&mut self) {
+            self.set(false, false);
+            self.set(true, false);
+            self.set(true, true); // SDA rises while SCL high
+        }
+        /// Send a byte MSB-first; returns true if the chip acknowledged.
+        fn send(&mut self, byte: u8) -> bool {
+            for i in (0..8).rev() {
+                let bit = (byte >> i) & 1 != 0;
+                self.set(false, bit);
+                self.set(true, bit);
+            }
+            // Release SDA and clock the ACK; chip pulls low to acknowledge.
+            self.set(false, true);
+            self.set(true, true);
+            let acked = !self.e.read_sda();
+            self.set(false, true);
+            acked
+        }
+        /// Read a byte MSB-first; `cont` drives the master ACK (true = keep going).
+        fn recv(&mut self, cont: bool) -> u8 {
+            let mut v = 0u8;
+            self.set(false, true);
+            for _ in 0..8 {
+                self.set(true, true);
+                v = (v << 1) | self.e.read_sda() as u8;
+                self.set(false, true);
+            }
+            self.set(false, !cont);
+            self.set(true, !cont);
+            self.set(false, !cont);
+            v
+        }
+    }
+
+    #[test]
+    fn eeprom_24c02_round_trip() {
+        let mut e = SerialEeprom::new_24c02();
+        // Write 0xA5 to word address 0x10.
+        {
+            let mut m = I2c { e: &mut e };
+            m.start();
+            assert!(m.send(0xA0)); // device select, write
+            assert!(m.send(0x10)); // word address
+            assert!(m.send(0xA5)); // data
+            m.stop();
+        }
+        // Random read of word address 0x10.
+        let mut m = I2c { e: &mut e };
+        m.start();
+        assert!(m.send(0xA0)); // device select, write (to set the address)
+        assert!(m.send(0x10));
+        m.start(); // repeated START
+        assert!(m.send(0xA1)); // device select, read
+        assert_eq!(m.recv(false), 0xA5); // NAK ends the read
+        m.stop();
+    }
+
+    #[test]
+    fn eeprom_24c01_round_trip() {
+        let mut e = SerialEeprom::new_24c01();
+        // 24C01: first byte is (addr << 1) | rw, no device-select byte.
+        {
+            let mut m = I2c { e: &mut e };
+            m.start();
+            assert!(m.send(0x10 << 1)); // address 0x10, write
+            assert!(m.send(0x5A)); // data
+            m.stop();
+        }
+        let mut m = I2c { e: &mut e };
+        m.start();
+        assert!(m.send((0x10 << 1) | 1)); // address 0x10, read
+        assert_eq!(m.recv(false), 0x5A);
+        m.stop();
+    }
+
+    #[test]
+    fn eeprom_auto_increment_sequential_read() {
+        let mut e = SerialEeprom::new_24c02();
+        {
+            let mut m = I2c { e: &mut e };
+            m.start();
+            assert!(m.send(0xA0));
+            assert!(m.send(0x20)); // start address
+            assert!(m.send(0x11));
+            assert!(m.send(0x22));
+            assert!(m.send(0x33)); // auto-increment writes
+            m.stop();
+        }
+        let mut m = I2c { e: &mut e };
+        m.start();
+        assert!(m.send(0xA0));
+        assert!(m.send(0x20));
+        m.start();
+        assert!(m.send(0xA1));
+        assert_eq!(m.recv(true), 0x11); // ACK -> continue
+        assert_eq!(m.recv(true), 0x22);
+        assert_eq!(m.recv(false), 0x33); // NAK -> stop
+        m.stop();
     }
 
     #[test]

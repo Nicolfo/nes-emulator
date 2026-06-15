@@ -43,6 +43,11 @@ fn main() {
 
     let rom = std::fs::read(&rom_path).expect("read rom");
     let mut nes = Nes::new(&rom).expect("load rom");
+    if std::env::var("NES_PC_LOG").is_ok() {
+        let lo = nes.cpu.bus.cart.cpu_read(0xFFFC) as u16;
+        let hi = nes.cpu.bus.cart.cpu_read(0xFFFD) as u16;
+        eprintln!("reset=${:04X}", (hi << 8) | lo);
+    }
     let log = std::env::var("NES_MMC5_LOG").is_ok();
     for f in 0..frames {
         if log {
@@ -55,6 +60,16 @@ fn main() {
             nes.cpu.bus.controller1.set_button(START, false);
         }
         nes.run_frame();
+        if std::env::var("NES_PC_LOG").is_ok() && f < 10 {
+            eprintln!(
+                "frame {f}: pc=${:04X} a={:02X} x={:02X} sp={:02X} irq_cart={}",
+                nes.cpu.pc,
+                nes.cpu.a,
+                nes.cpu.x,
+                nes.cpu.sp,
+                nes.cpu.bus.cart.irq()
+            );
+        }
         let every: u32 = std::env::var("NES_DUMP_EVERY")
             .ok()
             .and_then(|v| v.parse().ok())
