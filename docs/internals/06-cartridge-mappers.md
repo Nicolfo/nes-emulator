@@ -55,6 +55,9 @@ optional trainer, and (in the newer NES 2.0 variant) the target **region**.
 - Slices out the PRG and CHR byte ranges.
 - Constructs the right concrete mapper based on the mapper number and returns it
   as a `Box<dyn Mapper>`, along with the region and battery flag.
+- If the header's trainer flag is set, copies the 512-byte trainer into PRG RAM
+  at `$7000`-`$71FF` (via `prg_ram_mut`) after the mapper is built - a no-op for
+  boards with no PRG RAM.
 
 That `match mapper_id { 0 => Nrom, 1 => Mmc1, ... }` is the only place that knows
 about specific mapper types; everything else in the emulator talks to the
