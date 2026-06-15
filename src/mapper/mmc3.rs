@@ -134,11 +134,14 @@ impl Mapper for Mmc3 {
             }
             0xA000..=0xBFFF => {
                 if addr & 1 == 0 {
-                    self.mirroring = if val & 1 != 0 {
-                        Mirroring::Horizontal
-                    } else {
-                        Mirroring::Vertical
-                    };
+                    // A four-screen board ignores the mirroring register.
+                    if self.mirroring != Mirroring::FourScreen {
+                        self.mirroring = if val & 1 != 0 {
+                            Mirroring::Horizontal
+                        } else {
+                            Mirroring::Vertical
+                        };
+                    }
                 } else {
                     self.ram_protect = val;
                 }
@@ -257,6 +260,17 @@ mod tests {
         assert_eq!(m.mirroring(), Mirroring::Vertical);
         m.cpu_write(0xA000, 1);
         assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn four_screen_ignores_mirroring_register() {
+        let prg: Vec<u8> = (0..4 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
+        let chr: Vec<u8> = (0..8 * 0x400).map(|i| (i / 0x400) as u8).collect();
+        let mut m = Mmc3::new(prg, chr, Mirroring::FourScreen);
+        m.cpu_write(0xA000, 0);
+        assert_eq!(m.mirroring(), Mirroring::FourScreen);
+        m.cpu_write(0xA000, 1);
+        assert_eq!(m.mirroring(), Mirroring::FourScreen);
     }
 
     #[test]

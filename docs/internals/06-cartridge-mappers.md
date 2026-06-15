@@ -44,7 +44,8 @@ optional trainer, and (in the newer NES 2.0 variant) the target **region**.
 - Computes the mapper number from the split nibbles in flags 6 and 7.
 - Detects the region (NES 2.0 timing byte, with a fallback to the legacy
   TV-system bit) → `Region::Ntsc` / `Region::Pal`.
-- Reads the default mirroring and the battery flag.
+- Reads the default mirroring (horizontal/vertical, or four-screen when the
+  flags 6 bit-3 four-screen pad is set) and the battery flag.
 - Slices out the PRG and CHR byte ranges.
 - Constructs the right concrete mapper based on the mapper number and returns it
   as a `Box<dyn Mapper>`, along with the region and battery flag.
@@ -96,10 +97,12 @@ This is the one piece worth understanding in detail because it shows how the
 trait stays general. When the PPU accesses a nametable address, it asks the
 mapper [`nt_target`](../../src/mapper.rs), which returns an `NtTarget`:
 
-- `NtTarget::Ciram(offset)` — "use the console's 2 KB video RAM at this offset."
-  The default implementation computes that offset from the cartridge's mirroring
-  via [`mirror_nt`](../../src/mapper.rs), which handles the four standard modes
-  (horizontal, vertical, single-screen low/high).
+- `NtTarget::Ciram(offset)` — "use the nametable RAM at this offset." The
+  default implementation computes that offset from the cartridge's mirroring
+  via [`mirror_nt`](../../src/mapper.rs), which handles horizontal, vertical,
+  single-screen low/high, and four-screen. The first four modes index the
+  console's 2 KB CIRAM; four-screen spans the full 4 KB (CIRAM plus the
+  cartridge's extra 2 KB), so the PPU's nametable RAM is sized to 4 KB.
 - `NtTarget::Cart` — "the cartridge will serve/accept this byte itself" (used by
   mappers that map CHR ROM or their own RAM into nametable space, e.g. N163,
   MMC5 fill mode).
@@ -124,6 +127,12 @@ The [`Mirroring`](../../src/mapper.rs) enum and `mirror_nt` are shared
 infrastructure rather than mapper-specific. Mirroring controls whether scrolling
 wraps horizontally or vertically (or shows a single screen), and many mappers can
 change it at runtime by returning a different `mirroring()`.
+
+`Mirroring::FourScreen` is the exception: it is fixed by the cartridge's
+four-screen pad (iNES flags 6 bit 3), gives all four nametables their own 1 KB
+of RAM, and overrides any mapper mirroring register — so a board that normally
+drives mirroring from a register (MMC3, etc.) leaves it alone once four-screen
+is in effect. Games such as *Gauntlet* and *Rad Racer II* rely on this.
 
 ### Battery saves
 

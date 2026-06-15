@@ -41,7 +41,8 @@ The PPU's 16 KB address space (`$0000`–`$3FFF`) holds:
   indices plus **attribute** bytes that assign a palette to each 16×16 region.
   These live in the console's 2 KB video RAM (CIRAM), but how the four logical
   nametables map onto that 2 KB is decided by the cartridge's **mirroring** (see
-  [chapter 5](06-cartridge-mappers.md)).
+  [chapter 5](06-cartridge-mappers.md)). A four-screen cartridge adds its own
+  2 KB so all four nametables are distinct, hence `vram` is sized to 4 KB.
 - **Palette** (`$3F00`–`$3F1F`) — 32 entries selecting from the NES's master
   list of ~64 colors. One backdrop color, four background sub-palettes, four
   sprite sub-palettes.

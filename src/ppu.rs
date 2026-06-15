@@ -92,7 +92,10 @@ pub struct Ppu {
     spr_pat_addr: u16,
     spr_pat_lo: u8,
 
-    pub vram: [u8; 0x800],
+    /// Nametable RAM: the console's 2KB CIRAM. The upper 2KB is unused for
+    /// the plain mirrorings but backs the cartridge-supplied second pair of
+    /// nametables under four-screen mirroring.
+    pub vram: [u8; 0x1000],
     palette: [u8; 32],
     read_buffer: u8,
 
@@ -158,7 +161,7 @@ impl Ppu {
             bus_conflict: false,
             spr_pat_addr: 0,
             spr_pat_lo: 0,
-            vram: [0; 0x800],
+            vram: [0; 0x1000],
             palette: [0; 32],
             read_buffer: 0,
             scanline: -1,

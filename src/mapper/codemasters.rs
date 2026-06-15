@@ -42,11 +42,13 @@ impl Mapper for Codemasters {
         match addr {
             // Fire Hawk single-screen mirroring (BF9097).
             0x9000..=0x9FFF => {
-                self.mirroring = if val & 0x10 != 0 {
-                    Mirroring::SingleScreenHi
-                } else {
-                    Mirroring::SingleScreenLo
-                };
+                if self.mirroring != Mirroring::FourScreen {
+                    self.mirroring = if val & 0x10 != 0 {
+                        Mirroring::SingleScreenHi
+                    } else {
+                        Mirroring::SingleScreenLo
+                    };
+                }
             }
             0xC000..=0xFFFF => self.prg_bank = val,
             _ => {}

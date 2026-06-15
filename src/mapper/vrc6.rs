@@ -89,12 +89,14 @@ impl Mapper for Vrc6 {
             (0xA000, 0..=2) => self.audio.pulse_write(1, r, val),
             (0xB000, 0..=2) => self.audio.saw_write(r, val),
             (0xB000, _) => {
-                self.mirroring = match (val >> 2) & 3 {
-                    0 => Mirroring::Vertical,
-                    1 => Mirroring::Horizontal,
-                    2 => Mirroring::SingleScreenLo,
-                    _ => Mirroring::SingleScreenHi,
-                };
+                if self.mirroring != Mirroring::FourScreen {
+                    self.mirroring = match (val >> 2) & 3 {
+                        0 => Mirroring::Vertical,
+                        1 => Mirroring::Horizontal,
+                        2 => Mirroring::SingleScreenLo,
+                        _ => Mirroring::SingleScreenHi,
+                    };
+                }
                 // Bits 0-1 select exotic CHR/NT banking modes; only the
                 // common mode 0 (8 x 1KB) is emulated.
             }
