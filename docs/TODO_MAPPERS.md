@@ -18,7 +18,11 @@ Tracks mappers left to implement. Dispatch table: `src/cartridge.rs`
 | 10 | MMC4 (FxROM) | `mmc4.rs` |
 | 11 | Color Dreams | `colordreams.rs` |
 | 19 | Namco 163 | `n163.rs` |
+| 21 | VRC4a / VRC4c | `vrc4.rs` |
+| 22 | VRC2a | `vrc4.rs` |
+| 23 | VRC4e / VRC4f / VRC2b | `vrc4.rs` |
 | 24 | VRC6a | `vrc6.rs` |
+| 25 | VRC4b / VRC4d / VRC2c | `vrc4.rs` |
 | 26 | VRC6b | `vrc6.rs` |
 | 28 | Action 53 | `action53.rs` |
 | 34 | BNROM / NINA-001 | `bnrom.rs` |
@@ -37,7 +41,6 @@ verify against real game ROMs.
 
 | # | Board | Notes |
 |---|-------|-------|
-| 21/22/23/25 | VRC4 / VRC2 | Konami; many JP titles. Share core w/ VRC6 IRQ. |
 | 16/159 | Bandai FCG / LZ93D50 | Dragon Ball, EEPROM saves. |
 | 64 | RAMBO-1 (Tengen) | MMC3-like + extra IRQ mode. |
 | 65 | Irem H3001 | IRQ + banking. |

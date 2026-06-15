@@ -1,6 +1,7 @@
 use crate::mapper::{
     Action53, Axrom, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom, HolyDiver, Mapper,
-    Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163, Namco108, Nrom, Txsrom, Unrom180, Uxrom, Vrc6,
+    Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163, Namco108, Nrom, Txsrom, Unrom180, Uxrom, Vrc4,
+    Vrc6,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -72,6 +73,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
+        21 | 22 | 23 | 25 => Box::new(Vrc4::new(mapper_id, prg, chr, mirroring)),
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
         26 => Box::new(Vrc6::new_vrc6b(prg, chr, mirroring)),
         28 => Box::new(Action53::new(prg, chr, mirroring)),

@@ -18,6 +18,7 @@ mod nrom;
 mod txsrom;
 mod unrom180;
 mod uxrom;
+mod vrc4;
 mod vrc6;
 
 pub use action53::Action53;
@@ -40,6 +41,7 @@ pub use nrom::Nrom;
 pub use txsrom::Txsrom;
 pub use unrom180::Unrom180;
 pub use uxrom::Uxrom;
+pub use vrc4::Vrc4;
 pub use vrc6::Vrc6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
