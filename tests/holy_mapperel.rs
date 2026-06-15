@@ -80,12 +80,13 @@ hm_test! {
     m9_p128k_c64k: "M9_P128K_C64K.nes",
     m11_p64k_c64k_v: "M11_P64K_C64K_V.nes",
     m11_p64k_cr32k_v: "M11_P64K_CR32K_V.nes",
+    m28_p512k: "M28_P512K.nes",
+    m28_p512k_cr32k: "M28_P512K_CR32K.nes",
     m66_p64k_c16k_v: "M66_P64K_C16K_V.nes",
     m69_p128k_c64k_s8k: "M69_P128K_C64K_S8K.nes",
     m69_p128k_c64k_w8k: "M69_P128K_C64K_W8K.nes",
+    m78_3_p128k_c64k: "M78.3_P128K_C64K.nes",
+    m118_p128k_c64k: "M118_P128K_C64K.nes",
+    m180_p128k_h: "M180_P128K_H.nes",
+    m180_p128k_cr8k_h: "M180_P128K_CR8K_H.nes",
 }
-
-// M10 (MMC4) and M34 (BNROM/NINA-001) are now supported; add their board-test
-// ROMs here once their exact testroms/ filenames are confirmed.
-// Still unsupported in testroms/, kept for when support lands:
-// M28 (Action 53), M78.3 (Holy Diver), M118 (TxSROM), M180 (Crazy Climber).
