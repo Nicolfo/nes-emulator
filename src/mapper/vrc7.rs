@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub struct Vrc7 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    chr_is_ram: bool,
     #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     mirroring: Mirroring,
@@ -28,9 +29,13 @@ impl Vrc7 {
     pub fn new(submapper: u8, prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
         // Submapper 1 = VRC7b (A3 select); everything else = VRC7a (A4 select).
         let sel = if submapper == 1 { 0x08 } else { 0x10 };
+        // Lagrange Point ships 8KB CHR RAM (no CHR ROM in the header).
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Vrc7 {
             prg,
             chr,
+            chr_is_ram,
             prg_ram: [0; 0x2000],
             mirroring,
             prg_banks: [0; 3],
@@ -126,8 +131,13 @@ impl Mapper for Vrc7 {
         self.chr[bank * 0x400 + (addr as usize & 0x3FF)]
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is ROM on VRC7 boards.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // CHR ROM is read-only; CHR RAM boards (Lagrange Point) accept writes.
+        if self.chr_is_ram {
+            let banks = (self.chr.len() / 0x400).max(1);
+            let bank = self.chr_banks[(addr >> 10) as usize & 7] as usize % banks;
+            self.chr[bank * 0x400 + (addr as usize & 0x3FF)] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {
@@ -692,6 +702,16 @@ mod tests {
         m.cpu_write(0xD010, 9); // $1C00-$1FFF (A4 select -> bank 7)
         assert_eq!(m.ppu_read(0x0000), 5);
         assert_eq!(m.ppu_read(0x1C00), 9);
+    }
+
+    #[test]
+    fn chr_ram_rw_when_no_chr_rom() {
+        // Lagrange Point ships no CHR ROM; the board carries 8KB CHR RAM.
+        let prg: Vec<u8> = (0..16 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
+        let mut m = Vrc7::new(2, prg, Vec::new(), Mirroring::Vertical);
+        m.cpu_write(0xA000, 0); // map RAM bank 0 at $0000
+        m.ppu_write(0x0123, 0xAB);
+        assert_eq!(m.ppu_read(0x0123), 0xAB);
     }
 
     #[test]
