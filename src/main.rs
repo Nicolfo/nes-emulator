@@ -395,6 +395,14 @@ impl App {
             }
             return;
         }
+        // F3 is the console RESET button: re-enter the cartridge's reset vector
+        // with RAM/VRAM intact. Not rebindable (like F5/F7).
+        if pressed && code == KeyCode::F3 {
+            if let Some(nes) = &mut self.nes {
+                nes.reset();
+            }
+            return;
+        }
         let Some(nes) = &mut self.nes else { return };
         for (i, &k) in self.cfg.keys.iter().enumerate() {
             if k == code {

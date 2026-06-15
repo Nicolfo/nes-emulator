@@ -570,6 +570,17 @@ impl Apu {
         }
     }
 
+    /// 2A03 RESET line: silence every channel (as if $4015 were written 0) and
+    /// drop any pending frame IRQ. The frame-counter mode ($4017) and the
+    /// per-channel registers themselves are left as the game last set them,
+    /// matching the hardware reset - the game's reset handler reprograms them.
+    /// Host audio config (sample rate, filters, queued samples) is untouched.
+    pub fn reset(&mut self) {
+        self.write(0x4015, 0x00);
+        self.frame_irq = false;
+        self.frame_irq_clear_pending = false;
+    }
+
     /// Set the host output rate; resets the filter chain.
     pub fn set_sample_rate(&mut self, hz: f64) {
         self.cycles_per_sample = self.cpu_hz() / hz;

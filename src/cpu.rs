@@ -151,6 +151,16 @@ impl Cpu {
         self.pc = (hi << 8) | lo;
         self.sp = 0xFD;
         self.p = I | U;
+        // The RESET line takes priority over a pending interrupt: drop any
+        // NMI/IRQ latched before the reset so the reset handler runs first
+        // rather than being hijacked into an interrupt sequence. (At power-on
+        // these are already clear, so this is a no-op there.)
+        self.nmi_line_prev = false;
+        self.nmi_pending = false;
+        self.poll_prev = false;
+        self.poll_cur = false;
+        self.take_interrupt = false;
+        self.suppress_poll = false;
         self.cycles = 7;
         for _ in 0..7 {
             self.bus.tick_cycle();

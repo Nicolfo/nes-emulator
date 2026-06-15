@@ -25,6 +25,17 @@ impl Nes {
         self.region
     }
 
+    /// Soft reset (the console's RESET button): pulses the PPU and APU reset
+    /// lines and re-runs the CPU reset sequence, so execution resumes from the
+    /// cartridge's reset vector. Cartridge banking, PRG/CHR RAM, VRAM, palette
+    /// and OAM are all preserved - exactly what the RESET line does on
+    /// hardware; the game's reset handler reinitializes everything else.
+    pub fn reset(&mut self) {
+        self.cpu.bus.ppu.reset();
+        self.cpu.bus.apu.reset();
+        self.cpu.reset();
+    }
+
     /// Battery-backed PRG RAM to persist as a .sav file; None when the
     /// cartridge has no battery or the board has no PRG RAM.
     pub fn battery_ram(&self) -> Option<&[u8]> {
@@ -172,6 +183,26 @@ mod tests {
             restored.run_frame();
         }
         assert_eq!(restored.framebuffer(), reference.as_slice());
+    }
+
+    #[test]
+    fn soft_reset_reenters_reset_vector_and_clears_ppu_regs() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        // Run a while so the CPU is deep in the program and PPU regs are set.
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let reset_vec = {
+            let lo = nes.cpu.bus.cart.cpu_read(0xFFFC) as u16;
+            let hi = nes.cpu.bus.cart.cpu_read(0xFFFD) as u16;
+            (hi << 8) | lo
+        };
+        nes.reset();
+        assert_eq!(nes.cpu.pc, reset_vec, "reset re-enters the reset vector");
+        assert_eq!(nes.cpu.bus.ppu.ctrl, 0, "PPUCTRL cleared on reset");
+        assert_eq!(nes.cpu.bus.ppu.mask, 0, "PPUMASK cleared on reset");
     }
 
     #[test]
