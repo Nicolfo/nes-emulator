@@ -64,6 +64,11 @@ intact, just like the hardware. **F5** pauses the game and opens a 4-slot save p
 Escape to cancel). Each slot is written to `<rom>.stateN` next to the ROM, and a
 restore resumes exactly where you left off - mid-frame.
 
+**Gamepads** are auto-detected (via `gilrs`): plug one in and it drives player 1,
+a second drives player 2. The bottom and right face buttons are A and B, Start
+and Select map straight across, and directions come from either the D-pad or the
+left analog stick. No setup needed - the keyboard stays active alongside.
+
 ## Architecture
 
 - `src/cpu.rs` - cycle-stepped 6502 core: every CPU cycle performs exactly one bus
@@ -114,6 +119,8 @@ restore resumes exactly where you left off - mid-frame.
   and the APU resampling/filter chain). See
   [docs/internals/08-savestates.md](docs/internals/08-savestates.md).
 - `src/controller.rs` - standard joypad strobe/shift register.
+- `src/gamepad.rs` - optional physical-gamepad input via `gilrs`; maps the first
+  two connected pads to players 1 and 2, merged with the keyboard each frame.
 - `src/main.rs` - winit 0.30 + pixels frontend, home/settings/running state machine,
   paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL) while a game runs. Dynamic audio rate
   control nudges the resampling ratio (±0.3 %) so the audio queue hovers around
