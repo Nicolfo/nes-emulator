@@ -133,7 +133,13 @@ pub const NUM_SLOTS: usize = 4;
 
 /// Savestate slot picker. `saving` switches the title/hint between SAVE and
 /// LOAD; `filled[i]` marks slots that already hold a snapshot.
-pub fn render_slots(frame: &mut [u8], h: i32, saving: bool, sel: usize, filled: &[bool; NUM_SLOTS]) {
+pub fn render_slots(
+    frame: &mut [u8],
+    h: i32,
+    saving: bool,
+    sel: usize,
+    filled: &[bool; NUM_SLOTS],
+) {
     clear(frame, BG);
 
     let title = if saving { "SAVE STATE" } else { "LOAD STATE" };
@@ -284,7 +290,13 @@ mod tests {
     #[ignore]
     fn dump_menu_screens() {
         let mut frame = vec![0u8; WIDTH * HEIGHT * 4];
-        render_home(&mut frame, HEIGHT as i32, 0, true, Some("UNSUPPORTED MAPPER 4"));
+        render_home(
+            &mut frame,
+            HEIGHT as i32,
+            0,
+            true,
+            Some("UNSUPPORTED MAPPER 4"),
+        );
         write_bmp("menu_home.bmp", &frame, WIDTH, HEIGHT);
         let cfg = crate::config::Config::default();
         render_settings(&mut frame, HEIGHT as i32, &cfg, 2, false, 0);

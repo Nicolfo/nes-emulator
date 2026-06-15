@@ -493,8 +493,8 @@ impl ApplicationHandler for App {
                 // slot_states() borrows &self, which would clash with the
                 // &mut self.pixels borrow below, so snapshot it up front.
                 // Only the picker reads it.
-                let picker_slots = matches!(self.view, View::SlotPicker { .. })
-                    .then(|| self.slot_states());
+                let picker_slots =
+                    matches!(self.view, View::SlotPicker { .. }).then(|| self.slot_states());
                 let Some(pixels) = &mut self.pixels else {
                     return;
                 };
