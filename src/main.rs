@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod font;
+mod gamepad;
 mod icon;
 mod menu;
 
@@ -72,6 +73,13 @@ struct App {
     audio: Option<audio::Audio>,
     /// .sav file next to the loaded ROM; battery RAM is written back here.
     sav_path: Option<PathBuf>,
+    /// Physical gamepads (None if gilrs couldn't start - keyboard only).
+    gamepads: Option<gamepad::Gamepads>,
+    /// Per-player button masks from the keyboard and the gamepad, kept apart
+    /// so one input source never clears buttons the other is holding. The
+    /// controller sees their union (see `apply_inputs`).
+    kb_mask: [u8; 2],
+    pad_mask: [u8; 2],
 }
 
 /// Restore <rom>.sav into battery RAM (no-op without a battery) and return
@@ -95,6 +103,15 @@ impl App {
     fn clear_audio(&self) {
         if let Some(a) = &self.audio {
             a.clear();
+        }
+    }
+
+    /// Push the merged keyboard+gamepad button state into both controllers.
+    /// The two sources are OR-ed so neither clears the other's held buttons.
+    fn apply_inputs(&mut self) {
+        if let Some(nes) = &mut self.nes {
+            nes.cpu.bus.controller1.state = self.kb_mask[0] | self.pad_mask[0];
+            nes.cpu.bus.controller2.state = self.kb_mask[1] | self.pad_mask[1];
         }
     }
 
@@ -372,6 +389,7 @@ impl App {
         }
         if code == KeyCode::Escape && pressed {
             self.save_battery_ram();
+            self.kb_mask = [0, 0];
             self.view = View::Home { sel: 0 };
             self.apply_view_size();
             self.clear_audio();
@@ -390,6 +408,7 @@ impl App {
                     saving: code == KeyCode::F5,
                     sel: 0,
                 };
+                self.kb_mask = [0, 0];
                 self.clear_audio();
                 self.redraw();
             }
@@ -403,17 +422,20 @@ impl App {
             }
             return;
         }
-        let Some(nes) = &mut self.nes else { return };
+        // The keyboard owns the keyboard half of each player's button mask; the
+        // gamepad half is refreshed every frame in about_to_wait. apply_inputs
+        // OR-s the two so neither source clears the other's held buttons.
         for (i, &k) in self.cfg.keys.iter().enumerate() {
             if k == code {
-                nes.cpu.bus.controller1.set_button(BUTTON_MASKS[i], pressed);
+                set_mask(&mut self.kb_mask[0], BUTTON_MASKS[i], pressed);
             }
         }
         for (i, &k) in self.cfg.keys_p2.iter().enumerate() {
             if k == code {
-                nes.cpu.bus.controller2.set_button(BUTTON_MASKS[i], pressed);
+                set_mask(&mut self.kb_mask[1], BUTTON_MASKS[i], pressed);
             }
         }
+        self.apply_inputs();
     }
 
     fn slot_key(&mut self, code: KeyCode) {
@@ -548,6 +570,9 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
         }
+        // Sample physical gamepads once per wake-up and merge with the keyboard.
+        self.pad_mask = self.gamepads.as_mut().map_or([0, 0], |g| g.poll());
+        self.apply_inputs();
         let nes = self.nes.as_mut().unwrap();
         let period = frame_period(nes);
         let now = Instant::now();
@@ -595,6 +620,15 @@ fn blit_menu(frame: &mut [u8], draw: impl FnOnce(&mut [u8], i32)) {
     frame.copy_from_slice(&full[..h * WIDTH * 4]);
 }
 
+/// Set or clear `bit` in a button mask.
+fn set_mask(mask: &mut u8, bit: u8, on: bool) {
+    if on {
+        *mask |= bit;
+    } else {
+        *mask &= !bit;
+    }
+}
+
 fn main() {
     let cfg = Config::load();
 
@@ -605,6 +639,9 @@ fn main() {
             None
         }
     };
+
+    // Physical gamepads are optional: keyboard play still works without them.
+    let gamepads = gamepad::Gamepads::new();
 
     // optional CLI arg still works: jump straight into a ROM
     let mut nes = None;
@@ -639,6 +676,9 @@ fn main() {
         next_frame: Instant::now(),
         audio,
         sav_path,
+        gamepads,
+        kb_mask: [0, 0],
+        pad_mask: [0, 0],
     };
     event_loop.run_app(&mut app).expect("event loop");
     // single exit point for quit/close/escape-from-home

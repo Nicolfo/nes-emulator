@@ -15,6 +15,7 @@ winit = { version = "0.30", features = ["rwh_06", "serde"] }
 pixels = "0.17"
 cpal = "0.15"
 rfd = "0.15"
+gilrs = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

@@ -42,14 +42,27 @@ which is a humble **shift register**:
 
 The bus owns **two** of these - `controller1` (read at `$4016`) and
 `controller2` (read at `$4017`) - for the two physical joypad ports. A `$4016`
-write strobes both at once; reads come back on the matching port. The host wires
-keyboard input to both: player 1 from `cfg.keys`, player 2 from `cfg.keys_p2`.
+write strobes both at once; reads come back on the matching port. The host feeds
+both ports from two input sources merged per player: the keyboard
+(`cfg.keys` / `cfg.keys_p2`) and an optional physical gamepad (see below).
 
 The host doesn't call the shift register directly during gameplay - it just sets
-button state via `set_button` (from key events), and the *bus* clocks the
+the merged button state (`App::apply_inputs`), and the *bus* clocks the
 strobe/shift at the right cycle parity (`clock_put_cycle`, called from
 `tick_cycle_post`; see [chapter 4](05-bus-timing-dma.md)). The
 reload-on-put-cycle detail is what makes the shifting cycle-accurate.
+
+### Physical gamepads
+
+[`src/gamepad.rs`](../../src/gamepad.rs) adds optional gamepad input via
+[gilrs](https://docs.rs/gilrs). The first connected pad maps to player 1 and the
+second to player 2 (hot-plug tracked in plug order); South/East are A/B,
+Start/Select map across, and directions come from the D-pad or the left analog
+stick. Each player's keyboard and gamepad inputs are tracked as **separate
+bitmasks** and OR-ed together by `App::apply_inputs` before being written to the
+controller, so neither source clears the other's held buttons. `about_to_wait`
+polls the pads once per frame; key events update the keyboard mask. If gilrs
+can't initialise (no input backend), the frontend silently stays keyboard-only.
 
 ## The host application (`src/main.rs`)
 
@@ -153,6 +166,7 @@ in 1985, just cycle by cycle in software.
 |---|---|
 | The console API | `src/nes.rs` |
 | The joypad | `src/controller.rs` |
+| Physical gamepad input | `src/gamepad.rs` |
 | Window / input / view state machine | `src/main.rs` |
 | Frame pacing + audio rate control | `about_to_wait` (main.rs) |
 | Audio device output | `src/audio.rs` |
