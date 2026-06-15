@@ -1,7 +1,7 @@
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
-/// GxROM (mapper 66): one register at $8000-$FFFF — bits 4-5 select a 32KB
+/// GxROM (mapper 66): one register at $8000-$FFFF - bits 4-5 select a 32KB
 /// PRG bank, bits 0-1 select an 8KB CHR bank.
 #[derive(Serialize, Deserialize)]
 pub struct Gxrom {

@@ -1,7 +1,7 @@
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
-/// AxROM (mapper 7): one register at $8000-$FFFF — bits 0-2 select a 32KB
+/// AxROM (mapper 7): one register at $8000-$FFFF - bits 0-2 select a 32KB
 /// PRG bank, bit 4 selects the nametable (single-screen mirroring). CHR is
 /// 8KB RAM. Header mirroring is ignored; the register controls it.
 #[derive(Serialize, Deserialize)]

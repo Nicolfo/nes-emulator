@@ -1,7 +1,7 @@
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
-/// Mapper 28 — **Action 53** (homebrew multicart, Damian Yerrick).
+/// Mapper 28 - **Action 53** (homebrew multicart, Damian Yerrick).
 ///
 /// PRG up to 2MB, organised as 32KB "outer" banks each containing 16KB
 /// "inner" banks. CHR is always CHR RAM (an 8KB window, up to 32KB total
@@ -25,19 +25,19 @@ pub struct Action53 {
 
     /// Last value written to $5000-$5FFF, masked to `val & 0x81`. The board
     /// only decodes bit 7 and bit 0 of the select, giving four register
-    /// addresses — $00, $01, $80, $81 — collapsed by [`Action53::reg_index`]
+    /// addresses - $00, $01, $80, $81 - collapsed by [`Action53::reg_index`]
     /// to 0..3 (CHR, PRG inner, mode, PRG outer).
     reg_select: u8,
 
-    /// reg $00 — CHR bank (bits 1-0 = CHR-RAM A14-A13, an 8KB page). Bit 4 is
+    /// reg $00 - CHR bank (bits 1-0 = CHR-RAM A14-A13, an 8KB page). Bit 4 is
     /// the 1-screen "M" page-select bit (see [`Action53::one_screen_hi`]).
     chr_bank: u8,
-    /// reg $01 — PRG inner bank (low 4 bits). Bit 4 is also an M page bit.
+    /// reg $01 - PRG inner bank (low 4 bits). Bit 4 is also an M page bit.
     prg_inner: u8,
-    /// reg $80 — mode: bits 1-0 mirroring, bits 3-2 PRG mode, bits 5-4 outer
+    /// reg $80 - mode: bits 1-0 mirroring, bits 3-2 PRG mode, bits 5-4 outer
     /// bank size (see [`Action53::prg_offset`]).
     mode: u8,
-    /// reg $81 — PRG outer bank (32KB-granular outer bank index).
+    /// reg $81 - PRG outer bank (32KB-granular outer bank index).
     prg_outer: u8,
     /// Latched 1-screen page select (CIRAM A10). Fed by mode-register bit 0 on
     /// a mode write and by the "M" bit (bit 4) of reg $00/$01 on those writes;
@@ -65,7 +65,7 @@ impl Action53 {
             mode: 0,
             // Power-on: the board maps the ROM's last 16KB into $C000-$FFFF so
             // the reset vector and mapper-detect routine are reachable. With
-            // mode 0 (32K) an all-ones outer bank does exactly that — $C000
+            // mode 0 (32K) an all-ones outer bank does exactly that - $C000
             // resolves to (0xFF<<1)|1, which wraps to the last bank.
             prg_outer: 0xFF,
             one_screen_hi: false,
@@ -78,7 +78,7 @@ impl Action53 {
     /// the inner bank register ($01); the outer-bank-size field (`mode` bits
     /// 5-4) decides how many low bits the inner register replaces.
     ///
-    /// * PRG mode 0/1 (`mode` bits 3-2): 32KB mode — both halves switchable,
+    /// * PRG mode 0/1 (`mode` bits 3-2): 32KB mode - both halves switchable,
     ///   with CPU A14 as the low bit and `size` inner bits above it.
     /// * PRG mode 2: $8000 fixed (outer forced to full 32KB, low bit 0),
     ///   $C000 switchable.

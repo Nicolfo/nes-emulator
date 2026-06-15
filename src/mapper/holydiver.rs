@@ -1,7 +1,7 @@
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
-/// Mapper 78 (Irem 74HC161) — Holy Diver / Cosmo Carrier.
+/// Mapper 78 (Irem 74HC161) - Holy Diver / Cosmo Carrier.
 ///
 /// Single 8-bit write port: any write to $8000-$FFFF latches one byte:
 /// ```text

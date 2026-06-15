@@ -45,4 +45,4 @@ full I2C slave, and its contents persist to the .sav file.
 
 The iNES four-screen flag (flags 6 bit 3) is honored on any of these boards: it
 gives all four nametables their own RAM and overrides the board's mirroring,
-which a handful of games — *Gauntlet*, *Rad Racer II* — depend on.
+which a handful of games - *Gauntlet*, *Rad Racer II* - depend on.

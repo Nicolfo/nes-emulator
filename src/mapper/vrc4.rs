@@ -96,7 +96,7 @@ impl Vrc4 {
                 let b1 = ((addr >> 1) & 1) | ((addr >> 3) & 1);
                 b0 | (b1 << 1)
             }
-            // VRC4b uses A1,A0; VRC4d uses A3,A2 — both SWAPPED relative to
+            // VRC4b uses A1,A0; VRC4d uses A3,A2 - both SWAPPED relative to
             // mapper 23 (the low selector bit comes from the higher address
             // line). OR both candidate pairs.
             25 => {

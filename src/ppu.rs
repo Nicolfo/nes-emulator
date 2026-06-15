@@ -763,7 +763,7 @@ impl Ppu {
             pat_hi = pat_hi.reverse_bits();
         }
         // Fetch reloads the counter and shifter; the mode is only changed at
-        // dot 339 (if rendering) — a fetch alone leaves a halted counter
+        // dot 339 (if rendering) - a fetch alone leaves a halted counter
         // halted.
         let counting = self.sprites[g].counting;
         self.sprites[g] = SpriteRow {

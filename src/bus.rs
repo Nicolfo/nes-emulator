@@ -242,7 +242,7 @@ impl Bus {
     /// Rest of the CPU cycle (PPU 1 dot); interrupt lines are polled after.
     pub fn tick_cycle_post(&mut self) {
         self.ppu.tick(&mut *self.cart);
-        // PAL: 3.2 dots per CPU cycle — one extra dot every fifth cycle.
+        // PAL: 3.2 dots per CPU cycle - one extra dot every fifth cycle.
         if self.region == Region::Pal {
             self.pal_phase += 1;
             if self.pal_phase == 5 {

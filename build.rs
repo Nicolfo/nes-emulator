@@ -16,7 +16,7 @@ fn main() {
 fn embed_windows_icon() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let ico_path = std::path::Path::new(&out_dir).join("icon.ico");
-    // 16, 32, 48, 64 and 256 px — the sizes Windows actually picks from.
+    // 16, 32, 48, 64 and 256 px - the sizes Windows actually picks from.
     std::fs::write(&ico_path, build_ico(&[1, 2, 3, 4, 16])).expect("write icon.ico");
     winresource::WindowsResource::new()
         .set_icon(ico_path.to_str().expect("OUT_DIR not valid UTF-8"))

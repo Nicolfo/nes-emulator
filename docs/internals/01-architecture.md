@@ -1,4 +1,4 @@
-# 0 — Architecture overview
+# 0 - Architecture overview
 
 ## The hardware
 
@@ -7,12 +7,12 @@ chips and a cartridge slot.
 
 ### The chips
 
-- **2A03 (NTSC) / 2A07 (PAL) — the CPU package.** Inside this single chip are
+- **2A03 (NTSC) / 2A07 (PAL) - the CPU package.** Inside this single chip are
   actually two things: a **6502** processor core (minus the 6502's decimal/BCD
   arithmetic mode, which Nintendo fused off) and the **APU**, the audio hardware.
   The 6502 runs the game's program. It is an 8-bit CPU with a 16-bit address bus,
   so it can address 64 KB. It runs at **1.789773 MHz** on NTSC machines.
-- **2C02 — the PPU (Picture Processing Unit).** This is the graphics chip. It has
+- **2C02 - the PPU (Picture Processing Unit).** This is the graphics chip. It has
   its *own* separate 16 KB address space (distinct from the CPU's) wired to the
   cartridge's graphics ROM and to 2 KB of on-board video RAM. It generates a
   256×240 picture by walking across the screen one pixel ("dot") at a time, in
@@ -20,7 +20,7 @@ chips and a cartridge slot.
   the CPU clock: **5.369318 MHz**, i.e. 3 PPU dots per CPU cycle.
 - **The cartridge.** Not just passive ROM. It carries program ROM ("PRG"),
   graphics ROM ("CHR"), optionally some RAM (sometimes battery-backed for save
-  games), and very often a **mapper** — a small chip that lets the game switch
+  games), and very often a **mapper** - a small chip that lets the game switch
   which banks of its ROM are mapped into the limited address windows the CPU and
   PPU can see. Mappers are how games grew far larger than the 6502's 64 KB reach.
 
@@ -34,8 +34,8 @@ This is the single most important structural fact about the NES:
   the nametables (background layout), and the palette.
 
 The CPU cannot read video memory directly. It pokes the PPU's registers to ask
-the PPU to do reads and writes on its behalf. This indirection — and the fact
-that it can only safely happen while the PPU is *not* drawing — shapes how every
+the PPU to do reads and writes on its behalf. This indirection - and the fact
+that it can only safely happen while the PPU is *not* drawing - shapes how every
 NES game is structured.
 
 ### The master clock and regions
@@ -94,7 +94,7 @@ You can see this in [`Cpu::new`](../../src/cpu.rs) taking a `Bus`, and
 to talk to one another (the PPU fetches graphics through the mapper), so the
 mapper is *not* owned by the PPU; instead every PPU operation that touches the
 cartridge takes `&mut dyn Mapper` as an argument. That is why you will see
-signatures like `ppu.tick(&mut *self.cart)` all over `bus.rs` — the bus lends the
+signatures like `ppu.tick(&mut *self.cart)` all over `bus.rs` - the bus lends the
 cartridge to the PPU for the duration of a call.
 
 ### The master clock, in code
@@ -109,7 +109,7 @@ into two halves around the moment the CPU samples the bus
 - `tick_cycle_post` clocks the PPU a third time. On PAL, a `pal_phase` counter
   adds a fourth dot on every fifth cycle, realizing the 3.2 ratio.
 
-So "the bus runs the rest of the console while the CPU thinks" — the CPU never
+So "the bus runs the rest of the console while the CPU thinks" - the CPU never
 calls the PPU or APU directly for timing; it just performs bus cycles, and the
 bus fans those cycles out to the other chips. This is the backbone of the whole
 emulator and is covered in detail in [chapter 4](05-bus-timing-dma.md).
@@ -139,7 +139,7 @@ framebuffer; see [chapter 6](07-frontend.md).
 A simpler emulator might execute a whole instruction, look up "this instruction
 takes 4 cycles", then advance the PPU by 12 dots in one lump. That works for many
 games but breaks the ones that change PPU state *in the middle* of an
-instruction's memory accesses — which is common, because games race the beam.
+instruction's memory accesses - which is common, because games race the beam.
 This emulator instead advances the PPU/APU between every individual bus access,
 so timing-dependent effects fall out for free. The trade-off is that the CPU is
 written as explicit per-cycle access sequences rather than a cycle-count table;

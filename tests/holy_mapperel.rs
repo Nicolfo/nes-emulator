@@ -1,7 +1,7 @@
 //! Holy Mapperel (https://github.com/pinobatch/holy-mapperel) mapper test
 //! ROMs from `testroms/`. Each ROM probes PRG/CHR banking, PRG RAM, and
 //! mirroring for one board configuration and prints
-//! "DETAILED TEST RESULT: NNNN" — 0000 means every check passed.
+//! "DETAILED TEST RESULT: NNNN" - 0000 means every check passed.
 //!
 //! The letters on screen use non-ASCII tiles but the digits and ':' are
 //! ASCII, so instead of OCR we scan the PPU nametable RAM for the

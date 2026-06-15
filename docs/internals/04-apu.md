@@ -1,4 +1,4 @@
-# 3 — The APU (audio processing unit)
+# 3 - The APU (audio processing unit)
 
 ## The hardware
 
@@ -19,12 +19,12 @@ through a deliberately **non-linear** mixer to an analog output pin.
 Each channel has a **timer** (a down-counter reloaded from a period value) that
 sets its frequency, plus shared support units:
 
-- **Length counter** — auto-silences a channel after a programmed duration unless
+- **Length counter** - auto-silences a channel after a programmed duration unless
   "halted". Loaded from a 32-entry lookup table.
-- **Envelope** (pulse + noise) — either a constant volume or a decaying ramp.
-- **Sweep** (pulse only) — slides the pitch up or down over time; also has
+- **Envelope** (pulse + noise) - either a constant volume or a decaying ramp.
+- **Sweep** (pulse only) - slides the pitch up or down over time; also has
   "muting" logic that silences out-of-range periods even when disabled.
-- **Linear counter** (triangle only) — a finer-grained gate than the length
+- **Linear counter** (triangle only) - a finer-grained gate than the length
   counter.
 
 ### The frame counter
@@ -32,9 +32,9 @@ sets its frequency, plus shared support units:
 A separate **frame counter / frame sequencer** clocks the support units on a
 fixed schedule, roughly four times per video frame. It has two modes:
 
-- **4-step mode** — clocks the units in a 4-step cycle and, at the end of the
+- **4-step mode** - clocks the units in a 4-step cycle and, at the end of the
   cycle, can raise a **frame IRQ** (unless inhibited).
-- **5-step mode** — a longer cycle with no IRQ.
+- **5-step mode** - a longer cycle with no IRQ.
 
 The frame counter is driven by the CPU clock, and its IRQ timing is precise
 enough that games and test ROMs depend on the exact cycles involved.
@@ -44,7 +44,7 @@ enough that games and test ROMs depend on the exact cycles involved.
 The DMC (delta modulation channel) is special: it plays back compressed audio
 samples that live in the cartridge's PRG ROM. To get each sample byte, the DMC
 **steals a CPU cycle** to perform a memory read (a DMA). This stall is observable
-— it can delay the CPU by a few cycles at a time — and interacts with the OAM
+- it can delay the CPU by a few cycles at a time - and interacts with the OAM
 DMA and with controller reads in ways real games stumbled over. The mechanics of
 that stall are a *CPU/bus* concern and are covered in
 [chapter 4](05-bus-timing-dma.md); this chapter covers the DMC as a *sound
@@ -66,17 +66,17 @@ a `clock_timer`, an `output`, and the relevant support methods.
 
 ### Channel structs
 
-- [`Pulse`](../../src/apu.rs) — duty sequencer (`DUTY` table), `Envelope`, and a
+- [`Pulse`](../../src/apu.rs) - duty sequencer (`DUTY` table), `Envelope`, and a
   full sweep unit (`sweep_target`, `muted`, `clock_sweep`). The
   `ones_complement` flag captures the one-bit difference between pulse 1 and
   pulse 2's negate behavior. `output` returns 0 when muted/silenced, else the
   envelope volume.
-- [`Triangle`](../../src/apu.rs) — steps through the 32-entry `TRIANGLE_SEQ`;
+- [`Triangle`](../../src/apu.rs) - steps through the 32-entry `TRIANGLE_SEQ`;
   gated by both the length and linear counters. Note `output` keeps returning the
-  current step when halted (the DAC holds its value — no click).
-- [`Noise`](../../src/apu.rs) — a 15-bit LFSR (`shift`) with the two tap modes;
+  current step when halted (the DAC holds its value - no click).
+- [`Noise`](../../src/apu.rs) - a 15-bit LFSR (`shift`) with the two tap modes;
   period comes from a region-specific table (`NOISE_PERIOD` / `PAL_NOISE_PERIOD`).
-- [`Dmc`](../../src/apu.rs) — the delta decoder: `clock_output` shifts the
+- [`Dmc`](../../src/apu.rs) - the delta decoder: `clock_output` shifts the
   current byte one bit and nudges `level` ±2, and when the bit buffer empties it
   pulls the next byte (which the DMA delivered via `supply`). It tracks
   `bytes_remaining`, address wrap (`$FFFF`→`$8000`), looping, and the DMC IRQ.
@@ -102,15 +102,15 @@ linear counter) and half-frame clocks (`clock_half`: length counters + sweeps)
 land at cycles 7457, 14913, 22371, and 29829, and the frame IRQ flag is driven
 across the **3-cycle window** 29828–29830.
 
-> **Quirk — the frame IRQ window.** Even with the IRQ-inhibit bit set, the first
+> **Quirk - the frame IRQ window.** Even with the IRQ-inhibit bit set, the first
 > two cycles of that window still set the *readable* flag; only the final cycle
 > respects inhibit. [`set_frame_irq`](../../src/apu.rs) encodes this. Also, the
 > `$4017` write that selects the mode takes effect 3 or 4 cycles later depending
 > on the cycle parity (`frame_reset_delay`), and writing mode 5 immediately
 > issues one quarter + half clock.
 
-> **Quirk — $4015 read clears the frame IRQ, but late.** Reading the status
-> register clears the frame IRQ flag — but the clear only lands on the next
+> **Quirk - $4015 read clears the frame IRQ, but late.** Reading the status
+> register clears the frame IRQ flag - but the clear only lands on the next
 > "get" cycle (`frame_irq_clear_pending`), not instantly.
 
 ### Register writes
@@ -124,7 +124,7 @@ configures the frame counter.
 
 The DMC enable path in the `$4015` handler is where most of the
 [chapter 4](05-bus-timing-dma.md) DMA timing originates (`load_dma`,
-`pending_disable`, `enable_delay`, etc.) — those fields decide *when* a sample
+`pending_disable`, `enable_delay`, etc.) - those fields decide *when* a sample
 fetch DMA is raised and whether it is a normal, "ghost" (aborted), or
 "blocked-retry" DMA. As a sound generator you can mostly ignore them; they exist
 to get the CPU-stall timing right.
@@ -143,7 +143,7 @@ The APU runs at ~1.79 MHz but the host sound card wants ~48 kHz, so `tick` does
 **boxcar decimation**: it accumulates every cycle's mixed sample into `acc` and,
 once enough CPU cycles have elapsed per output sample (`cycles_per_sample`),
 averages them into one output sample and passes it through the analog filter
-chain — `hp1` (90 Hz), `hp2` (440 Hz), `lp` (14 kHz) — before pushing it to the
+chain - `hp1` (90 Hz), `hp2` (440 Hz), `lp` (14 kHz) - before pushing it to the
 `samples` buffer. [`HighPass`](../../src/apu.rs) and [`LowPass`](../../src/apu.rs)
 are textbook one-pole RC filters.
 
@@ -161,7 +161,7 @@ before decimation, so expansion sound rides the same filters.
 The host drains generated samples with [`Apu::take_samples`](../../src/apu.rs)
 (exposed up the stack as `Nes::take_audio`). Dynamic rate control on the frontend
 nudges `cycles_per_sample` slightly via [`Apu::tune`](../../src/apu.rs) to keep
-the host audio queue from drifting into under/overflow — see
+the host audio queue from drifting into under/overflow - see
 [chapter 6](07-frontend.md).
 
 ### Where to look

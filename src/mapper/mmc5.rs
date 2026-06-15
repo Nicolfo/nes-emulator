@@ -2,7 +2,7 @@ use super::{Mapper, Mirroring, NtTarget};
 use serde::{Deserialize, Serialize};
 
 /// MMC5 (mapper 5, Castlevania III, Just Breed, Uncharted Waters):
-/// game-compatible core — all four PRG and CHR banking modes with banked
+/// game-compatible core - all four PRG and CHR banking modes with banked
 /// PRG RAM, per-quadrant nametable mapping (CIRAM/ExRAM/fill), the
 /// scanline IRQ, the 8x16-sprite CHR set switch, the $5205 multiplier and
 /// expansion audio (two APU-style pulses plus raw PCM).

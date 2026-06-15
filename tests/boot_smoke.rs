@@ -2,7 +2,7 @@
 //! itself when its ROM is absent, so CI (which has no ROMs) stays green.
 //! A game "boots" if, after a few seconds of emulated time, the
 //! framebuffer shows a real picture (more than a handful of distinct
-//! pixel values) — a crashed or black-screen boot fails this.
+//! pixel values) - a crashed or black-screen boot fails this.
 
 use nes_emulator::nes::Nes;
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// CHR: eight 1KB banks selected by `$B000-$B007`, one register per 1KB slot
 /// across `$0000-$1FFF`.
 ///
-/// Mirroring: `$9001` bits 7-6 — %00=Vertical, %10=Horizontal, %01/%11=1-screen.
+/// Mirroring: `$9001` bits 7-6 - %00=Vertical, %10=Horizontal, %01/%11=1-screen.
 ///
 /// IRQ: a 16-bit down-counter clocked once per CPU cycle. When enabled it
 /// decrements every cycle and asserts IRQ when it reaches 0, then *stops* at 0

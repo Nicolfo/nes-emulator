@@ -25,7 +25,7 @@ impl N163 {
         // The four nametable registers power up selecting CIRAM pages that
         // match the header mirroring (a value of $E0|page). True N163 games
         // overwrite these during init, so this only matters for boards that
-        // never touch them — notably Namco 175/340 carts (mapper 210) that are
+        // never touch them - notably Namco 175/340 carts (mapper 210) that are
         // mislabeled as plain mapper 19 in iNES 1.0 dumps, where leaving the
         // registers at 0 would wrongly fetch nametables from CHR ROM.
         let nt = |i: u16| 0xE0 | ((mirror_nt(mirroring, 0x2000 + i * 0x400) >> 10) & 1) as u8;

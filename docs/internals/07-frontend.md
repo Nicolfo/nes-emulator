@@ -1,4 +1,4 @@
-# 6 — The frontend
+# 6 - The frontend
 
 Everything so far has been the emulated *console*. This chapter covers the parts
 that connect it to your actual computer: the console facade, the windowing/input
@@ -33,18 +33,18 @@ PPU sets it again at vblank.
 which is a humble **shift register**:
 
 - Eight buttons live in a single byte `state` (A, B, Select, Start, Up, Down,
-  Left, Right — the `BTN_*` constants).
+  Left, Right - the `BTN_*` constants).
 - Writing `$4016` with bit 0 set raises the **strobe**: while high, the pad
   continuously reloads its shift register from the live button state.
 - When strobe drops, each read returns the next button bit (A first) and shifts;
   after the 8 buttons it returns 1s.
 
-The bus owns **two** of these — `controller1` (read at `$4016`) and
-`controller2` (read at `$4017`) — for the two physical joypad ports. A `$4016`
+The bus owns **two** of these - `controller1` (read at `$4016`) and
+`controller2` (read at `$4017`) - for the two physical joypad ports. A `$4016`
 write strobes both at once; reads come back on the matching port. The host wires
 keyboard input to both: player 1 from `cfg.keys`, player 2 from `cfg.keys_p2`.
 
-The host doesn't call the shift register directly during gameplay — it just sets
+The host doesn't call the shift register directly during gameplay - it just sets
 button state via `set_button` (from key events), and the *bus* clocks the
 strobe/shift at the right cycle parity (`clock_put_cycle`, called from
 `tick_cycle_post`; see [chapter 4](05-bus-timing-dma.md)). The
@@ -53,7 +53,7 @@ reload-on-put-cycle detail is what makes the shifting cycle-accurate.
 ## The host application (`src/main.rs`)
 
 The frontend is a [winit](https://docs.rs/winit) 0.30 + [pixels](https://docs.rs/pixels)
-application — a small state machine with four views:
+application - a small state machine with four views:
 
 ```rust
 enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Running }
@@ -63,7 +63,7 @@ enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Running }
   framebuffer by `src/menu.rs` using the embedded bitmap font in `src/font.rs`).
   Settings let you rebind keys per player (an EDIT PLAYER toggle switches the
   button rows between player 1 and player 2), change window scale, toggle NTSC
-  overscan cropping and reset defaults — all persisted via `src/config.rs`.
+  overscan cropping and reset defaults - all persisted via `src/config.rs`.
 - **SlotPicker** is the savestate overlay shown over the paused game; its
   `saving` flag picks F5 (save) vs F7 (load) behaviour (see Savestates below).
 - **Running** is where the emulation actually pumps.
@@ -91,7 +91,7 @@ avoid clicks. The interesting bit is in `about_to_wait`: the emulator generates
 audio at a rate tied to *emulated* time, but the sound card consumes at its own
 real rate, and the two drift. So the frontend measures how full the audio queue
 is and nudges the resampling ratio by up to ±0.3 % via `nes.tune_audio` to keep
-the queue hovering around ~50 ms of buffered audio — neither starving nor
+the queue hovering around ~50 ms of buffered audio - neither starving nor
 overflowing. This is why `Apu::tune` exists separately from `set_sample_rate`
 (see [chapter 3](04-apu.md)).
 
@@ -105,10 +105,10 @@ menu (`save_battery_ram`), all through the `Nes::battery_ram` accessors from
 ### Savestates
 
 While running, **F5** and **F7** pause the game and open the `SlotPicker`
-overlay — F5 to save, F7 to load. It offers `menu::NUM_SLOTS` (4) slots stored
+overlay - F5 to save, F7 to load. It offers `menu::NUM_SLOTS` (4) slots stored
 next to the ROM as `<rom>.stateN`; `App::slot_states` marks which are filled,
 and confirming a slot calls `App::save_state` / `App::load_state`. Unlike a
-battery save — which only persists PRG RAM between sessions — a savestate
+battery save - which only persists PRG RAM between sessions - a savestate
 captures the *exact* live state of every chip, so you can resume mid-frame. The
 format and what is (and isn't) captured are covered in
 [chapter 7](08-savestates.md).
@@ -133,7 +133,7 @@ main.rs about_to_wait
 ```
 
 Sixty times a second, that loop turns 30,000-ish CPU instructions and ~90,000
-PPU dots into one image and a slice of sound — the same work the real silicon did
+PPU dots into one image and a slice of sound - the same work the real silicon did
 in 1985, just cycle by cycle in software.
 
 ### Where to look

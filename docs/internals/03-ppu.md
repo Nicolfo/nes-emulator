@@ -1,4 +1,4 @@
-# 2 — The PPU (picture processing unit)
+# 2 - The PPU (picture processing unit)
 
 The PPU is the largest and trickiest part of the machine. This chapter builds up
 the model in layers: first what it draws and when, then how the scroll registers
@@ -34,16 +34,16 @@ split the screen.
 
 The PPU's 16 KB address space (`$0000`–`$3FFF`) holds:
 
-- **Pattern tables** (`$0000`–`$1FFF`) — the actual 8×8 tile bitmaps ("CHR").
+- **Pattern tables** (`$0000`–`$1FFF`) - the actual 8×8 tile bitmaps ("CHR").
   Each tile is 16 bytes: 8 bytes for bit-plane 0, 8 for bit-plane 1; combined
   they give each pixel a 2-bit value (0–3). This is on the cartridge.
-- **Nametables** (`$2000`–`$2FFF`) — the background layout: a grid of tile
+- **Nametables** (`$2000`–`$2FFF`) - the background layout: a grid of tile
   indices plus **attribute** bytes that assign a palette to each 16×16 region.
   These live in the console's 2 KB video RAM (CIRAM), but how the four logical
   nametables map onto that 2 KB is decided by the cartridge's **mirroring** (see
   [chapter 5](06-cartridge-mappers.md)). A four-screen cartridge adds its own
   2 KB so all four nametables are distinct, hence `vram` is sized to 4 KB.
-- **Palette** (`$3F00`–`$3F1F`) — 32 entries selecting from the NES's master
+- **Palette** (`$3F00`–`$3F1F`) - 32 entries selecting from the NES's master
   list of ~64 colors. One backdrop color, four background sub-palettes, four
   sprite sub-palettes.
 
@@ -54,13 +54,13 @@ pixel and decides which wins:
 
 - **Background** comes from the nametable + attribute + pattern, positioned by
   the scroll registers.
-- **Sprites** (up to 64, defined in **OAM** — object attribute memory, 256 bytes)
+- **Sprites** (up to 64, defined in **OAM** - object attribute memory, 256 bytes)
   are independently positioned 8×8 or 8×16 tiles. Only **8 sprites per scanline**
   can be drawn; the 9th sets an overflow flag.
 
 Priority, transparency (color 0 = transparent), and the special **sprite-zero
 hit** (set when sprite 0 and the background both have an opaque pixel at the same
-spot — games use it as a mid-frame timing beacon) all resolve here.
+spot - games use it as a mid-frame timing beacon) all resolve here.
 
 ### The loopy registers
 
@@ -68,12 +68,12 @@ Scrolling is implemented with two 15-bit internal registers, conventionally
 named after the person who reverse-engineered them (`v`, `t`), plus `fine_x` and
 a write toggle `w`:
 
-- **`v`** — the "current" VRAM address used during rendering. Its bits encode
+- **`v`** - the "current" VRAM address used during rendering. Its bits encode
   coarse-X, coarse-Y, the nametable select, and fine-Y scroll, all packed
   together so the rendering hardware can increment them cheaply.
-- **`t`** — a "temporary" address; the staging copy that scroll writes go into.
-- **`fine_x`** — the sub-tile horizontal scroll (0–7).
-- **`w`** — toggles between the first and second write of the two-write registers
+- **`t`** - a "temporary" address; the staging copy that scroll writes go into.
+- **`fine_x`** - the sub-tile horizontal scroll (0–7).
+- **`w`** - toggles between the first and second write of the two-write registers
   (`$2005` scroll and `$2006` address).
 
 This packed layout is why a single hardware increment can step the scroll through
@@ -97,7 +97,7 @@ sprite pipeline state, OAM, secondary OAM, palette, CIRAM (`vram`), the
 [`Ppu::tick`](../../src/ppu.rs) is the heart. Each call, in order, it:
 
 1. Applies any pending `$2001` (mask) write that is now due (writes take effect a
-   few dots late — see Quirks).
+   few dots late - see Quirks).
 2. Advances the `$2007` data-bus state machine (see "The register interface").
 3. Applies any pending OAM corruption.
 4. If rendering is on and we're on a visible/pre-render line, runs one dot of the
@@ -117,7 +117,7 @@ The background is produced by a small assembly line, exactly like the hardware's
 shift registers. Over each 8-dot span, [`bg_fetch`](../../src/ppu.rs) performs
 four memory fetches in sequence:
 
-- dot %8 == 0: the **nametable** byte (which tile) — and reload the shifters
+- dot %8 == 0: the **nametable** byte (which tile) - and reload the shifters
 - dot %8 == 2: the **attribute** byte (which palette)
 - dot %8 == 4: pattern **low** plane
 - dot %8 == 6: pattern **high** plane
@@ -127,15 +127,15 @@ The fetched bytes go into latches (`nt_latch`, `at_latch`, `pat_lo_latch`,
 `pat_hi_latch`), and [`load_shifters`](../../src/ppu.rs) feeds them into the
 16-bit shift registers (`bg_pat_lo/hi`, `bg_attr_lo/hi`). Every drawing dot,
 [`shift`](../../src/ppu.rs) shifts these one position, and `render_pixel` reads
-the bit selected by `fine_x` (`bit = 15 - fine_x`). The loopy address math —
+the bit selected by `fine_x` (`bit = 15 - fine_x`). The loopy address math -
 [`increment_coarse_x`](../../src/ppu.rs), [`increment_y`](../../src/ppu.rs),
-[`copy_horizontal`](../../src/ppu.rs), [`copy_vertical`](../../src/ppu.rs) — is a
+[`copy_horizontal`](../../src/ppu.rs), [`copy_vertical`](../../src/ppu.rs) - is a
 direct transcription of the documented register operations.
 
-> **Quirk — shifter serial inputs.** `shift` doesn't just shift in zeros; it
+> **Quirk - shifter serial inputs.** `shift` doesn't just shift in zeros; it
 > shifts a 0 into the low plane and a 1 into the high plane, mirroring real
 > silicon. This is invisible normally (reloads overwrite those bits) but becomes
-> visible when rendering is blanked right around the reload dot — which some test
+> visible when rendering is blanked right around the reload dot - which some test
 > ROMs check.
 
 ### Sprite pipeline
@@ -145,16 +145,16 @@ hardware's 32-byte scratch buffer for the (up to) 8 sprites on the next line.
 [`sprite_pipeline_dot`](../../src/ppu.rs) reproduces the three phases of a
 scanline:
 
-1. **Dots 1–64 — clear.** Secondary OAM is initialized to `$FF`; `$2004` reads
+1. **Dots 1–64 - clear.** Secondary OAM is initialized to `$FF`; `$2004` reads
    return `$FF`.
-2. **Dots 65–256 — evaluation.** Walk primary OAM looking for sprites in range
+2. **Dots 65–256 - evaluation.** Walk primary OAM looking for sprites in range
    for the next line, copying their 4 bytes into secondary OAM, stopping at 8.
    This is implemented at the same 2-dot read/write cadence the hardware uses,
    starting from the live `OAMADDR` (so a misaligned `OAMADDR` misaligns every
    sprite, exactly as on hardware), including the **buggy overflow scan** (the
    "diagonal" where both indices increment) that makes the sprite-overflow flag
    famously unreliable.
-3. **Dots 257–320 — fetch.** For each of the 8 slots, fetch the pattern bytes
+3. **Dots 257–320 - fetch.** For each of the 8 slots, fetch the pattern bytes
    ([`sprite_pat_addr`](../../src/ppu.rs), handling 8×16 sprites and vertical
    flip) and load them into the eight `SpriteRow` shifters.
 
@@ -166,7 +166,7 @@ opaque sprite pixel and whether it is sprite zero / behind the background.
 **sprite-zero hit** flag when sprite 0 and background pixels are both opaque
 (except at x=255).
 
-> **Quirk — counting/halted sprite modes & OAM corruption.** The `SpriteRow`
+> **Quirk - counting/halted sprite modes & OAM corruption.** The `SpriteRow`
 > `counting` flag and `arm_sprite_counters` reproduce the exact dot (339) on
 > which counters are armed, and `pending_corruption` models the OAM corruption
 > that real hardware exhibits when rendering is disabled mid-line. These are the
@@ -196,7 +196,7 @@ A few implementation points worth calling out:
   manipulations in `write_register` cases 5 and 6 are the canonical loopy
   formulas. `$2006`'s second write copies `t` into `v`.
 - **Buffered `$2007` reads.** Reading VRAM (outside the palette) returns the
-  *previous* buffered byte and then refills the buffer — a one-read delay that
+  *previous* buffered byte and then refills the buffer - a one-read delay that
   matches the hardware's internal read buffer. Palette reads are immediate but
   still update the buffer with the nametable byte "underneath."
 - **Open bus / I/O decay.** The PPU data bus is a capacitive latch: bits that
@@ -204,7 +204,7 @@ A few implementation points worth calling out:
   `io_bus_read`, and `io_bus_refresh` model this per-bit analog decay, so reads
   of write-only registers return the plausible "open bus" value.
 
-> **Quirk — the $2007 data-bus state machine.** When the CPU reads `$2007`
+> **Quirk - the $2007 data-bus state machine.** When the CPU reads `$2007`
 > *during* active rendering, the buffer refill doesn't happen immediately; it
 > goes through a small state machine that fires a few dots later from whatever
 > the rendering pipeline is driving on the bus, and can collide with a pipeline
@@ -213,14 +213,14 @@ A few implementation points worth calling out:
 > ([`increment_v_after_2007`](../../src/ppu.rs)). This is exotic but required for
 > full accuracy.
 
-> **Quirk — vblank/NMI suppression race.** Reading `$2002` one PPU clock before
+> **Quirk - vblank/NMI suppression race.** Reading `$2002` one PPU clock before
 > the vblank flag is set returns it clear *and* suppresses it for the whole
 > frame (`suppress_vbl`), which kills the NMI. The pre-render-line read also sees
 > the sprite flags as already cleared. Both are handled in `read_register` case
 > 2 and at scanline 241 dot 1 in `tick`.
 
-> **Quirk — odd-frame dot skip.** On NTSC, when rendering is enabled, odd frames
-> are one dot shorter — the pre-render line skips its last dot. This keeps the
+> **Quirk - odd-frame dot skip.** On NTSC, when rendering is enabled, odd frames
+> are one dot shorter - the pre-render line skips its last dot. This keeps the
 > color subcarrier phase consistent on a real TV. The `skip` logic lives at the
 > end of `tick`; PAL has no such skip.
 

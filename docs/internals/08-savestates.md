@@ -1,7 +1,7 @@
-# 7 — Savestates
+# 7 - Savestates
 
 A **savestate** freezes the entire emulated machine to a blob of bytes and
-thaws it later, restoring play to the exact instant it was taken — mid-frame,
+thaws it later, restoring play to the exact instant it was taken - mid-frame,
 mid-instruction, mid-DMA. This is different from a **battery save** (chapter 5),
 which only persists the cartridge's PRG RAM across sessions the way a real
 save-game does. A savestate is the whole console, not just the game's save slot.
@@ -22,19 +22,19 @@ fn load_state(&mut self, data: &[u8]) -> Result<(), String>;
 The machine's state is spread across every chip, and *all* of the mutable parts
 must be captured or the restore won't be bit-exact:
 
-- **CPU** — registers (`A`/`X`/`Y`/`SP`/`PC`/`P`), the cycle counter, and the
+- **CPU** - registers (`A`/`X`/`Y`/`SP`/`PC`/`P`), the cycle counter, and the
   interrupt-pipeline flags (NMI edge latch, the two-stage IRQ poll, the
   BRK/interrupt poll-suppression and OAM-DMA bookkeeping). Skipping the pipeline
   flags would mis-time an interrupt that was one cycle from firing.
-- **Bus** — the 2 KB work RAM, the cycle counter, the PAL dot-phase counter,
+- **Bus** - the 2 KB work RAM, the cycle counter, the PAL dot-phase counter,
   the open-bus / internal-bus latches, and the pending OAM/DMC DMA latches.
-- **PPU** — the loopy `v`/`t`/`x`/`w` scroll state, `CTRL`/`MASK`/`STATUS`, OAM
+- **PPU** - the loopy `v`/`t`/`x`/`w` scroll state, `CTRL`/`MASK`/`STATUS`, OAM
   and secondary OAM, the 2 KB CIRAM, palette RAM, the background and sprite
   pipeline shifters/latches, and the scanline/dot position.
-- **APU** — all five channels (pulse ×2, triangle, noise, DMC) and the frame
+- **APU** - all five channels (pulse ×2, triangle, noise, DMC) and the frame
   counter.
-- **Controller** — the strobe line and shift register.
-- **Cartridge / mapper** — banking registers, IRQ counters, PRG/CHR RAM, and any
+- **Controller** - the strobe line and shift register.
+- **Cartridge / mapper** - banking registers, IRQ counters, PRG/CHR RAM, and any
   expansion-audio state.
 
 ## What is deliberately left out
@@ -60,7 +60,7 @@ file), and JSON keeps the format debuggable. The leaf state structs derive
 [`src/savestate.rs`](../../src/savestate.rs), which defines the top-level
 [`SaveState`](../../src/savestate.rs) aggregate plus two small pieces of glue:
 
-- **`byte_array`** — a `serde` `with`-module for fixed `[u8; N]` arrays larger
+- **`byte_array`** - a `serde` `with`-module for fixed `[u8; N]` arrays larger
   than 32 elements. `serde` only derives array impls up to length 32, so the
   work RAM, OAM, CIRAM, ExRAM, and the mappers' PRG RAM ride through this helper
   (serialized as a byte sequence, deserialized back into the fixed array).

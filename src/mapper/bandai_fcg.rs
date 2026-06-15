@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// EEPROM: the LZ93D50 carries a 24Cxx serial EEPROM (128 bytes / 24C01 on
 /// mapper 159 and submapper 1, 256 bytes / 24C02 on submapper 5) driven over
-/// the two-wire interface — $xD bit 6 = SDA, bit 5 = SCL — and read back at
+/// the two-wire interface - $xD bit 6 = SDA, bit 5 = SCL - and read back at
 /// $6000 bit 4. The full I2C slave protocol is emulated in [`SerialEeprom`] and
 /// persists to the .sav file. The bare FCG-1/2 has no EEPROM.
 #[derive(Serialize, Deserialize)]
@@ -290,7 +290,7 @@ impl IrqState {
 ///
 /// The two parts differ only in addressing: the 24C02 begins a transfer with a
 /// `1010xxxR` device-select byte followed by a separate word-address byte,
-/// while the 24C01 has no device byte — its first byte is the 7-bit word
+/// while the 24C01 has no device byte - its first byte is the 7-bit word
 /// address plus the R/W bit. Everything else (START/STOP detection, MSB-first
 /// byte shifts, master/slave ACK handshakes, address auto-increment) is shared.
 #[derive(Serialize, Deserialize)]

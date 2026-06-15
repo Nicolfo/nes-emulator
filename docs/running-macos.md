@@ -8,7 +8,7 @@ Intel Macs. To build from source instead, see the main `README.md` (included in 
 
 1. Extract `nes-emulator-macos-universal.zip` (double-click in Finder, or
    `unzip` in Terminal) and open a Terminal in the extracted directory.
-2. Remove the Gatekeeper quarantine flag — the binary is not notarized, so
+2. Remove the Gatekeeper quarantine flag - the binary is not notarized, so
    macOS will otherwise refuse to run a file downloaded from the internet:
 
    ```

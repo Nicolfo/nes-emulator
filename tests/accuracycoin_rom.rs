@@ -1,6 +1,6 @@
 //! Runs the full AccuracyCoin test ROM (https://github.com/100thCoin/AccuracyCoin)
 //! and asserts every test passes. Skips itself when the ROM is absent; see
-//! docs/accuracy.md for how to obtain it. Run with `--release` — the suite
+//! docs/accuracy.md for how to obtain it. Run with `--release` - the suite
 //! emulates ~75 seconds of NES time.
 
 use nes_emulator::controller::BTN_START;

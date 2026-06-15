@@ -790,7 +790,7 @@ impl Apu {
                         // The write only schedules a delayed "load" DMA when
                         // the sample buffer is empty; with a full buffer the
                         // next fetch waits for the shifter to consume it and
-                        // uses normal reload timing — unless the buffer
+                        // uses normal reload timing - unless the buffer
                         // empties within the enable's 3-cycle pipeline, in
                         // which case the reload is blocked until the enable
                         // takes effect.
@@ -905,7 +905,7 @@ impl Apu {
             }
         }
         // Implicit DMA abort: the buffer drained right after the sample's
-        // final byte was fetched — "sample over" hasn't propagated yet, so a
+        // final byte was fetched - "sample over" hasn't propagated yet, so a
         // reload DMA is still raised; it aborts after one halt cycle.
         if fetch.is_none()
             && self.cycle & 1 == 1

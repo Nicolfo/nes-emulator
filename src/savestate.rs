@@ -2,9 +2,9 @@
 //! (CPU, PPU, APU, controller, work RAM, and the cartridge/mapper state).
 //!
 //! The snapshot is serialized with `serde_json`. It deliberately omits host
-//! concerns — the PPU framebuffer (regenerated on the next frame) and the
+//! concerns - the PPU framebuffer (regenerated on the next frame) and the
 //! APU's resampling/filter chain (tied to the host output rate, reapplied by
-//! the caller) — so a state restored on a machine with a different audio
+//! the caller) - so a state restored on a machine with a different audio
 //! configuration keeps playing cleanly. A state is only valid for the same
 //! ROM it was taken from; [`Nes::load_state`](crate::nes::Nes::load_state)
 //! checks the magic, version, and TV region before applying it.

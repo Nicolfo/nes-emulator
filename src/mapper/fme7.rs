@@ -172,7 +172,7 @@ impl Mapper for Fme7 {
 
 /// Sunsoft 5B sound: three YM2149 square-tone channels. The chip divides
 /// the CPU clock by 16 per tone step (twice the YM2149's /8, at twice the
-/// typical clock — same pitch).
+/// typical clock - same pitch).
 #[derive(Serialize, Deserialize)]
 struct Sunsoft5b {
     reg_select: u8,

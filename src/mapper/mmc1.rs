@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 /// mirroring (including single-screen), PRG mode (32KB / fix-first /
 /// fix-last) and CHR mode (8KB / two 4KB banks).
 ///
-/// WRAM can be disabled by PRG bank register bit 4, or — on SNROM boards
-/// (8KB CHR RAM, <512KB PRG) — by CHR bank register bit 4. Disabled WRAM
+/// WRAM can be disabled by PRG bank register bit 4, or - on SNROM boards
+/// (8KB CHR RAM, <512KB PRG) - by CHR bank register bit 4. Disabled WRAM
 /// reads as open bus and ignores writes.
 ///
 /// Not emulated: the consecutive-cycle write-ignore quirk (only matters for
@@ -81,7 +81,7 @@ impl Mmc1 {
     }
 
     /// WRAM disable: PRG bank register bit 4 on all boards; on SNROM
-    /// (8KB CHR RAM, <512KB PRG — bit 4 isn't a CHR bank or SUROM half
+    /// (8KB CHR RAM, <512KB PRG - bit 4 isn't a CHR bank or SUROM half
     /// select there) the CHR bank registers' bit 4 too.
     fn wram_disabled(&self) -> bool {
         if self.prg_bank & 0x10 != 0 {
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn surom_512k_half_select() {
         // 32 PRG banks (512KB); bank index mod 256 per byte won't fit, so
-        // store (bank index) in each byte truncated — use bank index
+        // store (bank index) in each byte truncated - use bank index
         // directly since 32 < 256.
         let prg: Vec<u8> = (0..32 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
         let mut m = Mmc1::new(prg, vec![]);

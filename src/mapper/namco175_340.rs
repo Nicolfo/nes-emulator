@@ -52,7 +52,7 @@ pub struct Namco175340 {
 impl Namco175340 {
     /// `submapper` is the NES 2.0 submapper: 1 = Namco 175 (hardwired header
     /// mirroring + battery PRG RAM), 2 = Namco 340 (mapper-controlled
-    /// mirroring), 0 = unspecified (plain iNES) — fall back to a heuristic that
+    /// mirroring), 0 = unspecified (plain iNES) - fall back to a heuristic that
     /// honors the header until the game writes the $E000 mirroring bits.
     pub fn new(submapper: u8, prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
         let (use_reg_mirroring, mode_locked) = match submapper {

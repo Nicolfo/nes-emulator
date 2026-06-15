@@ -1,4 +1,4 @@
-# 4 — The bus, timing & DMA
+# 4 - The bus, timing & DMA
 
 This chapter covers the connective tissue: the CPU memory map, the clock
 interleave that keeps the three chips in sync, the two kinds of DMA, and how
@@ -25,7 +25,7 @@ The 6502's 64 KB address space is carved up by address decoding:
 | `$6000`–`$7FFF` | Cartridge PRG RAM (often battery-backed) |
 | `$8000`–`$FFFF` | Cartridge PRG ROM |
 
-Addresses from `$4020` upward are the **cartridge's** to decode — that is the
+Addresses from `$4020` upward are the **cartridge's** to decode - that is the
 mapper's territory.
 
 ### Open bus
@@ -40,16 +40,16 @@ test ROMs definitely do.
 Two mechanisms copy data without the CPU executing instructions, by **halting**
 the CPU and using its bus:
 
-- **OAM DMA** (`$4014` write) — copies a 256-byte page of CPU RAM into the PPU's
+- **OAM DMA** (`$4014` write) - copies a 256-byte page of CPU RAM into the PPU's
   sprite memory in one shot. Costs 513 or 514 CPU cycles (the CPU is frozen the
   whole time). This is how games update all sprites each frame.
-- **DMC DMA** — the sound chip's sample fetch (see [chapter 3](04-apu.md)). It
+- **DMC DMA** - the sound chip's sample fetch (see [chapter 3](04-apu.md)). It
   steals individual cycles whenever the DMC needs its next byte.
 
 These DMAs *halt* the CPU on a read cycle: the CPU's read keeps repeating on the
 bus until the DMA engine can perform its access on the right cycle. The precise
-choreography of who gets which cycle — especially when both DMAs and an
-interrupt collide — is the source of the trickiest hardware behavior on the
+choreography of who gets which cycle - especially when both DMAs and an
+interrupt collide - is the source of the trickiest hardware behavior on the
 machine.
 
 ## The implementation
@@ -72,7 +72,7 @@ decoder. Note how each region is handled:
 
 `open_bus` and `internal_bus` are the two latches that make open-bus behavior
 correct. `internal_bus` is the CPU's own data-bus latch, updated on real CPU
-read/write cycles but *not* by a DMC fetch (because the CPU is halted then) —
+read/write cycles but *not* by a DMC fetch (because the CPU is halted then) -
 this distinction is what makes a `$4015` read during a DMA return the right value.
 
 ### The per-cycle interleave
@@ -100,7 +100,7 @@ self.ppu.tick(&mut *self.cart);   // the 3rd PPU dot
 // controller strobe latches on odd ("put") cycles
 ```
 
-So the canonical timing — **1 CPU cycle = 3 PPU dots = 1 APU step** — is enforced
+So the canonical timing - **1 CPU cycle = 3 PPU dots = 1 APU step** - is enforced
 right here, and the CPU code never has to think about it: it just calls
 `tick_cycle_pre` / `bus.read` / `tick_cycle_post` (wrapped in `fetch_cycle`,
 see [chapter 1](02-cpu.md)).
@@ -114,7 +114,7 @@ reads.
 
 [`run_oam_dma_if_pending`](../../src/cpu.rs) runs after a `$4014` write. It
 performs: one halt read, an alignment read if the cycle is odd, then 256
-read-from-RAM / write-to-`$2004` pairs — exactly the 513/514 cycles hardware
+read-from-RAM / write-to-`$2004` pairs - exactly the 513/514 cycles hardware
 takes. Crucially it ticks the bus for every one of those cycles, so the PPU keeps
 rendering during the DMA.
 
@@ -139,7 +139,7 @@ The complications the code handles:
   retries off the normal parity grid and skips its alignment cycle
   (`dmc_skip_align`).
 - **Bus conflicts.** If the halted CPU's address happens to select the APU
-  register range, the DMC's fetch collides with that register — modeled as two
+  register range, the DMC's fetch collides with that register - modeled as two
   reads on the same cycle in `dmc_dma`, each given its real hardware semantics.
 - **DMC during OAM DMA.** A DMC fetch that comes due while an OAM DMA is running
   shares the OAM DMA's halt/dummy cycles and steals a "get" cycle in the middle;
@@ -158,15 +158,15 @@ down this alignment (change them and rebuild to experiment).
 
 The bus exposes two line-level queries the CPU polls every cycle:
 
-- [`nmi_line`](../../src/bus.rs) — the PPU's NMI output (vblank flag AND NMI
+- [`nmi_line`](../../src/bus.rs) - the PPU's NMI output (vblank flag AND NMI
   enable). The CPU edge-detects this (see [chapter 1](02-cpu.md)).
-- [`irq_asserted`](../../src/bus.rs) — the logical OR of the APU's IRQ (frame
+- [`irq_asserted`](../../src/bus.rs) - the logical OR of the APU's IRQ (frame
   counter + DMC) and the cartridge's IRQ. Level-triggered; the CPU honors it only
   when its `I` flag is clear.
 
 Because these are just level queries, the timing-sensitive races (NMI
 suppression, the exact cycle an IRQ is recognized) are decided by *when* the CPU
-polls, not by any push/queue mechanism — which is why they come out right.
+polls, not by any push/queue mechanism - which is why they come out right.
 
 ### Controllers on the bus
 

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Sunsoft-4 (mapper 68, After Burner, Maharaja): 16KB PRG banking with a
 /// fixed last bank, four 2KB CHR banks, optional 8KB PRG RAM, and the
-/// defining feature — two CHR-ROM banks that can be mapped into nametable
+/// defining feature - two CHR-ROM banks that can be mapped into nametable
 /// space in place of the console's CIRAM.
 #[derive(Serialize, Deserialize)]
 pub struct Sunsoft4 {
