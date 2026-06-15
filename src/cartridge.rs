@@ -86,7 +86,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let prg = data[prg_start..prg_start + prg_size].to_vec();
     let chr = data[chr_start..chr_start + chr_size].to_vec();
 
-    let mapper: Box<dyn Mapper> = match mapper_id {
+    let mut mapper: Box<dyn Mapper> = match mapper_id {
         0 => Box::new(Nrom::new(prg, chr, mirroring)),
         1 => Box::new(Mmc1::new(prg, chr)), // mirroring register-controlled
         2 => Box::new(Uxrom::new(prg, chr, mirroring)),
@@ -120,6 +120,18 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
+
+    // An iNES trainer is 512 bytes that the loader places into PRG RAM at
+    // $7000-$71FF (RAM offset 0x1000), where cracked games expect to find it.
+    // No-op for boards without PRG RAM.
+    if has_trainer && let Some(ram) = mapper.prg_ram_mut() {
+        let trainer = &data[16..16 + 512];
+        let end = ram.len().min(0x1000 + trainer.len());
+        if end > 0x1000 {
+            ram[0x1000..end].copy_from_slice(&trainer[..end - 0x1000]);
+        }
+    }
+
     Ok((mapper, region, battery))
 }
 
@@ -205,5 +217,26 @@ mod tests {
         assert!(load_rom(&data).is_err());
         data[9] = 0x00;
         assert!(load_rom(&data).is_ok());
+    }
+
+    #[test]
+    fn trainer_loads_into_prg_ram_at_7000() {
+        // mapper 1 (MMC1 has PRG RAM) with the trainer flag and a 512-byte
+        // trainer carrying an incrementing pattern.
+        let mut data = vec![0u8; 16 + 512 + 32 * 1024 + 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2; // 32KB PRG
+        data[5] = 1; // 8KB CHR
+        data[6] = 0x14; // mapper low nibble = 1, trainer bit (flags6 bit 2) set
+        for (i, b) in data[16..16 + 512].iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let (mut mapper, _, _) = load_rom(&data).unwrap();
+        // $7000 maps to PRG RAM offset 0x1000; the trainer fills $7000-$71FF.
+        assert_eq!(mapper.prg_ram_read(0x7000), Some(0x00));
+        assert_eq!(mapper.prg_ram_read(0x7001), Some(0x01));
+        assert_eq!(mapper.prg_ram_read(0x71FF), Some(0xFF));
+        // Bytes past the trainer stay zero-initialised.
+        assert_eq!(mapper.prg_ram_read(0x7200), Some(0x00));
     }
 }
