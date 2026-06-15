@@ -64,12 +64,14 @@ impl Fme7 {
             0x8 => self.wram_ctrl = val,
             0x9..=0xB => self.prg_banks[self.command as usize - 9] = val & 0x3F,
             0xC => {
-                self.mirroring = match val & 3 {
-                    0 => Mirroring::Vertical,
-                    1 => Mirroring::Horizontal,
-                    2 => Mirroring::SingleScreenLo,
-                    _ => Mirroring::SingleScreenHi,
-                };
+                if self.mirroring != Mirroring::FourScreen {
+                    self.mirroring = match val & 3 {
+                        0 => Mirroring::Vertical,
+                        1 => Mirroring::Horizontal,
+                        2 => Mirroring::SingleScreenLo,
+                        _ => Mirroring::SingleScreenHi,
+                    };
+                }
             }
             0xD => {
                 // Any write acknowledges a pending IRQ.

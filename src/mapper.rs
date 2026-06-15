@@ -40,6 +40,10 @@ pub enum Mirroring {
     Vertical,
     SingleScreenLo,
     SingleScreenHi,
+    /// All four nametables are distinct. The board carries an extra 2KB of
+    /// RAM (alongside the console's 2KB CIRAM) wired via the cartridge's
+    /// four-screen pad, so the mapper's own mirroring control is bypassed.
+    FourScreen,
 }
 
 /// Where a nametable access ($2000-$3EFF) is routed.
@@ -51,7 +55,9 @@ pub enum NtTarget {
     Cart,
 }
 
-/// CIRAM offset for a nametable address under plain mirroring.
+/// Nametable RAM offset for a nametable address. For the plain mirrorings
+/// this is an index into the console's 2KB CIRAM; under four-screen it spans
+/// the full 4KB (CIRAM plus the cartridge's extra 2KB), addressed linearly.
 pub fn mirror_nt(mirroring: Mirroring, addr: u16) -> u16 {
     let a = addr & 0x0FFF;
     match mirroring {
@@ -59,6 +65,7 @@ pub fn mirror_nt(mirroring: Mirroring, addr: u16) -> u16 {
         Mirroring::Horizontal => ((a >> 1) & 0x400) | (a & 0x3FF),
         Mirroring::SingleScreenLo => a & 0x3FF,
         Mirroring::SingleScreenHi => 0x400 | (a & 0x3FF),
+        Mirroring::FourScreen => a,
     }
 }
 
@@ -133,4 +140,22 @@ macro_rules! impl_mapper_savestate {
             Ok(())
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn four_screen_keeps_all_nametables_distinct() {
+        // The four nametables at $2000/$2400/$2800/$2C00 must map to four
+        // separate 1KB regions of the 4KB nametable RAM.
+        let offs: Vec<u16> = [0x2000, 0x2400, 0x2800, 0x2C00]
+            .iter()
+            .map(|&a| mirror_nt(Mirroring::FourScreen, a))
+            .collect();
+        assert_eq!(offs, vec![0x000, 0x400, 0x800, 0xC00]);
+        // Top of the range stays within the 4KB window.
+        assert_eq!(mirror_nt(Mirroring::FourScreen, 0x2FFF), 0xFFF);
+    }
 }

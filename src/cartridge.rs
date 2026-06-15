@@ -35,7 +35,12 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     } else {
         Region::Ntsc
     };
-    let mirroring = if flags6 & 1 != 0 {
+    // flags6 bit 3 is the four-screen pad: the cartridge supplies its own
+    // nametable RAM and all four nametables are distinct, overriding the
+    // horizontal/vertical bit (and any mapper mirroring register).
+    let mirroring = if flags6 & 0x08 != 0 {
+        Mirroring::FourScreen
+    } else if flags6 & 1 != 0 {
         Mirroring::Vertical
     } else {
         Mirroring::Horizontal
@@ -104,5 +109,30 @@ mod tests {
     #[test]
     fn rejects_bad_magic() {
         assert!(load_rom(&[0u8; 32]).is_err());
+    }
+
+    /// Minimal 32KB mapper-0 image; `flags6` carries the mirroring bits.
+    fn rom(flags6: u8) -> Vec<u8> {
+        let mut data = vec![0u8; 16 + 32 * 1024 + 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2; // 2x 16KB PRG
+        data[5] = 1; // 8KB CHR
+        data[6] = flags6;
+        data
+    }
+
+    #[test]
+    fn four_screen_flag_sets_four_screen_mirroring() {
+        // flags6 bit 3 set; bit 0 (vertical) must be overridden.
+        let (mapper, _, _) = load_rom(&rom(0x09)).unwrap();
+        assert_eq!(mapper.mirroring(), Mirroring::FourScreen);
+    }
+
+    #[test]
+    fn without_four_screen_flag_uses_mirroring_bit() {
+        let (mapper, _, _) = load_rom(&rom(0x01)).unwrap();
+        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
+        let (mapper, _, _) = load_rom(&rom(0x00)).unwrap();
+        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
     }
 }

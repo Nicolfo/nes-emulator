@@ -21,7 +21,9 @@ use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
 
 use config::{BUTTON_MASKS, Config};
-use menu::{HomeAction, ROW_BACK, ROW_OVERSCAN, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items};
+use menu::{
+    HomeAction, ROW_BACK, ROW_OVERSCAN, ROW_PLAYER, ROW_RESET, ROW_SCALE, SETTINGS_ROWS, home_items,
+};
 
 /// Scanlines hidden by NTSC overscan. Top crop is deeper: raster-split
 /// games (e.g. Castlevania III) finish their scanline-IRQ bank switch a
@@ -42,8 +44,14 @@ fn frame_period(nes: &Nes) -> Duration {
 }
 
 enum View {
-    Home { sel: usize },
-    Settings { sel: usize, waiting: bool },
+    Home {
+        sel: usize,
+    },
+    Settings {
+        sel: usize,
+        waiting: bool,
+        player: usize,
+    },
     Running,
 }
 
@@ -212,6 +220,7 @@ impl App {
                         self.view = View::Settings {
                             sel: 0,
                             waiting: false,
+                            player: 0,
                         }
                     }
                     HomeAction::Quit => event_loop.exit(),
@@ -224,7 +233,12 @@ impl App {
     }
 
     fn settings_key(&mut self, code: KeyCode) {
-        let View::Settings { sel, waiting } = &mut self.view else {
+        let View::Settings {
+            sel,
+            waiting,
+            player,
+        } = &mut self.view
+        else {
             return;
         };
 
@@ -232,12 +246,18 @@ impl App {
             // capture next key as the new binding (Escape cancels)
             if code != KeyCode::Escape {
                 let row = *sel;
-                let old = self.cfg.keys[row];
-                // if the key is already bound elsewhere, swap to keep all buttons usable
-                if let Some(other) = self.cfg.keys.iter().position(|&k| k == code) {
-                    self.cfg.keys[other] = old;
+                let keys = if *player == 0 {
+                    &mut self.cfg.keys
+                } else {
+                    &mut self.cfg.keys_p2
+                };
+                let old = keys[row];
+                // if the key is already bound elsewhere (same player), swap to
+                // keep all buttons usable
+                if let Some(other) = keys.iter().position(|&k| k == code) {
+                    keys[other] = old;
                 }
-                self.cfg.keys[row] = code;
+                keys[row] = code;
                 self.cfg.save();
             }
             *waiting = false;
@@ -248,6 +268,9 @@ impl App {
         match code {
             KeyCode::ArrowUp => *sel = (*sel + SETTINGS_ROWS - 1) % SETTINGS_ROWS,
             KeyCode::ArrowDown => *sel = (*sel + 1) % SETTINGS_ROWS,
+            KeyCode::ArrowLeft | KeyCode::ArrowRight if *sel == ROW_PLAYER => {
+                *player ^= 1;
+            }
             KeyCode::ArrowLeft | KeyCode::ArrowRight if *sel == ROW_SCALE => {
                 let delta = if code == KeyCode::ArrowLeft { -1i32 } else { 1 };
                 self.cfg.scale = (self.cfg.scale as i32 + delta).clamp(1, 5) as u32;
@@ -260,6 +283,7 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Space => match *sel {
                 0..=7 => *waiting = true,
+                ROW_PLAYER => *player ^= 1,
                 ROW_SCALE => {
                     self.cfg.scale = self.cfg.scale % 5 + 1;
                     self.cfg.save();
@@ -313,6 +337,11 @@ impl App {
         for (i, &k) in self.cfg.keys.iter().enumerate() {
             if k == code {
                 nes.cpu.bus.controller1.set_button(BUTTON_MASKS[i], pressed);
+            }
+        }
+        for (i, &k) in self.cfg.keys_p2.iter().enumerate() {
+            if k == code {
+                nes.cpu.bus.controller2.set_button(BUTTON_MASKS[i], pressed);
             }
         }
     }
@@ -389,8 +418,12 @@ impl ApplicationHandler for App {
                     View::Home { sel } => {
                         menu::render_home(frame, *sel, self.nes.is_some(), self.error.as_deref());
                     }
-                    View::Settings { sel, waiting } => {
-                        menu::render_settings(frame, &self.cfg, *sel, *waiting);
+                    View::Settings {
+                        sel,
+                        waiting,
+                        player,
+                    } => {
+                        menu::render_settings(frame, &self.cfg, *sel, *waiting, *player);
                     }
                 }
                 if let Err(e) = pixels.render() {

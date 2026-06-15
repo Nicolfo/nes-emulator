@@ -148,7 +148,8 @@ hidden by TV overscan.
 
 | Game | What to check |
 |---|---|
-| Gauntlet | MMC3-style $8000/$8001 banking in fixed mode, hardwired mirroring, no IRQ. Wrong tiles/PRG = bank-register masking bug (CHR 6-bit, PRG 4-bit). |
+| Gauntlet | MMC3-style $8000/$8001 banking in fixed mode, four-screen mirroring (flags 6 bit 3), no IRQ. Wrong tiles/PRG = bank-register masking bug (CHR 6-bit, PRG 4-bit); scrolling/maze that wraps or mirrors wrongly = four-screen nametable bug. |
+| Rad Racer II | Four-screen mirroring (flags 6 bit 3) — the road/horizon split across all four nametables; mirror-folding artifacts mean the four-screen RAM isn't wired. |
 | Pac-Mania, Dragon Buster (J) | 2KB+1KB CHR banking layout, PRG R6/R7 switching |
 
 ## Test ROMs (non-game)

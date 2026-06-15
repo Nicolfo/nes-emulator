@@ -26,3 +26,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 
 Expansion audio is summed into the APU mix (before decimation/filtering) for
 the MMC5, VRC6, Namco 163 and Sunsoft 5B.
+
+The iNES four-screen flag (flags 6 bit 3) is honored on any of these boards: it
+gives all four nametables their own RAM and overrides the board's mirroring,
+which a handful of games — *Gauntlet*, *Rad Racer II* — depend on.

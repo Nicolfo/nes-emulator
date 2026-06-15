@@ -19,6 +19,7 @@ pub struct Bus {
     pub apu: Apu,
     pub cart: Box<dyn Mapper>,
     pub controller1: Controller,
+    pub controller2: Controller,
     pub cycles: u64,
     region: Region,
     /// PAL runs 3.2 PPU dots per CPU cycle: phase counter for the extra dot
@@ -66,6 +67,7 @@ impl Bus {
             apu,
             cart,
             controller1: Controller::default(),
+            controller2: Controller::default(),
             cycles: 0,
             region,
             pal_phase: 0,
@@ -112,7 +114,7 @@ impl Bus {
                 r
             }
             0x4017 => {
-                let ctrl_val = 0x00; // controller 2 not connected
+                let ctrl_val = self.controller2.read();
                 let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
                 self.open_bus = r;
                 r
@@ -155,7 +157,11 @@ impl Bus {
                 self.ppu.write_register(addr & 7, val, &mut *self.cart);
             }
             0x4014 => self.oam_dma_page = Some(val),
-            0x4016 => self.controller1.write(val),
+            // $4016 bit 0 is the shared strobe line for both controller ports.
+            0x4016 => {
+                self.controller1.write(val);
+                self.controller2.write(val);
+            }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),
             0x4018..=0x401F => {}
             _ => self.cart.cpu_write(addr, val),
@@ -184,10 +190,18 @@ impl Bus {
             if cpu_addr_in_apu && addr & 0x1F == 0x15 {
                 (self.apu.read_status() & !0x20) | (v & 0x20)
             } else {
-                // $4016 mirrors still clock the controller shift register,
-                // even though the driven source wins the bus conflict.
-                if cpu_addr_in_apu && addr & 0x1F == 0x16 {
-                    self.controller1.read();
+                // $4016/$4017 mirrors still clock the controller shift
+                // registers, even though the driven source wins the bus conflict.
+                if cpu_addr_in_apu {
+                    match addr & 0x1F {
+                        0x16 => {
+                            self.controller1.read();
+                        }
+                        0x17 => {
+                            self.controller2.read();
+                        }
+                        _ => {}
+                    }
                 }
                 v
             }
@@ -239,6 +253,7 @@ impl Bus {
         // Controller strobe latches button state on "put" cycles (odd here).
         if self.cycles & 1 == 1 {
             self.controller1.clock_put_cycle();
+            self.controller2.clock_put_cycle();
         }
     }
 
@@ -343,5 +358,23 @@ mod tests {
         let mut b = bus();
         b.write(0x4014, 0x02);
         assert_eq!(b.oam_dma_page, Some(0x02));
+    }
+
+    #[test]
+    fn second_controller_port_shifts_independently() {
+        use crate::controller::{BTN_A, BTN_START};
+        let mut b = bus();
+        b.controller2.set_button(BTN_A, true);
+        b.controller2.set_button(BTN_START, true);
+        // A $4016 write strobes both ports; latch on a put cycle, then release.
+        b.write(0x4016, 1);
+        b.controller1.clock_put_cycle();
+        b.controller2.clock_put_cycle();
+        b.write(0x4016, 0);
+        // $4017 D0 shifts out A, B, Select, Start for player 2.
+        let p2: Vec<u8> = (0..4).map(|_| b.read(0x4017) & 1).collect();
+        assert_eq!(p2, vec![1, 0, 0, 1]);
+        // Player 1 is wired separately and was left unpressed.
+        assert_eq!(b.read(0x4016) & 1, 0);
     }
 }
