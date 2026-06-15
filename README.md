@@ -1,7 +1,9 @@
+![NES Emulator](docs/banner.png)
+
 # NES Emulator
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
-input, NTSC and PAL machines (auto-detected from the ROM header), and 18 mappers
+input, NTSC and PAL machines (auto-detected from the ROM header), and 34 mappers
 — with expansion audio for the MMC5, VRC6, N163 and Sunsoft 5B — covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
 Akumajou Densetsu and Castlevania III. See [docs/mappers.md](docs/mappers.md)
