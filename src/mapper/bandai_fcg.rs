@@ -10,22 +10,22 @@ use serde::{Deserialize, Serialize};
 ///   - software mirroring, a 16-bit cycle-counted IRQ, and a serial EEPROM
 ///     for battery-backed saves.
 ///
-/// The registers are decoded by the *low nibble* of the write address. The
-/// FCG-1/2 decoded them at $6000-$7FFF; the LZ93D50 moved them to
-/// $8000-$FFFF (where they overlap the PRG ROM window). To support cartridges
-/// of either generation we decode the low nibble in BOTH ranges — see
-/// `cpu_write`. (This is the common emulator convention for mappers 16/153/159.)
+/// The registers are decoded by the *low nibble* of the write address, but the
+/// range differs by board: the FCG-1/2 (mapper 16 submapper 4) decodes them at
+/// $6000-$7FFF, while the LZ93D50 (submapper 5, and mapper 159) decodes them at
+/// $8000-$FFFF (overlapping the PRG ROM window). The submapper picks the range;
+/// when it is unspecified (plain iNES, submapper 0) we decode BOTH ranges, the
+/// behavior the NES 2.0 spec mandates for that case.
 ///
-/// IRQ: FCG-1/2 wrote $xB/$xC straight into the down-counter, while the
-/// LZ93D50 writes a *latch* that is copied into the counter when the IRQ is
-/// enabled via $xA. Mappers 16 and 159 are LZ93D50 parts, so we implement the
-/// latch + copy-on-enable behavior (see `IrqState`).
+/// IRQ: the FCG-1/2 writes $xB/$xC straight into the down-counter, while the
+/// LZ93D50 writes a *latch* copied into the counter when the IRQ is enabled via
+/// $xA. `IrqState::immediate` selects which (see [`IrqState`]).
 ///
-/// EEPROM: the board carries a 24Cxx serial EEPROM (128 bytes / 24C01 on
-/// mapper 159, 256 bytes / 24C02 on mapper 16) driven bit-by-bit over the
-/// two-wire interface — $xD bit 6 = SDA, bit 5 = SCL — and read back through
-/// $6000 bit 4. The full I2C slave protocol is emulated in [`SerialEeprom`],
-/// and the contents persist to the .sav file via the prg_ram hooks.
+/// EEPROM: the LZ93D50 carries a 24Cxx serial EEPROM (128 bytes / 24C01 on
+/// mapper 159 and submapper 1, 256 bytes / 24C02 on submapper 5) driven over
+/// the two-wire interface — $xD bit 6 = SDA, bit 5 = SCL — and read back at
+/// $6000 bit 4. The full I2C slave protocol is emulated in [`SerialEeprom`] and
+/// persists to the .sav file. The bare FCG-1/2 has no EEPROM.
 #[derive(Serialize, Deserialize)]
 pub struct BandaiFcg {
     prg: Vec<u8>,
@@ -35,40 +35,59 @@ pub struct BandaiFcg {
     /// True when the header marked the board four-screen; we must never
     /// override that via the $x9 mirroring register.
     four_screen: bool,
+    /// Decode registers in $6000-$7FFF (FCG-1/2) and/or $8000-$FFFF (LZ93D50).
+    reg_lo: bool,
+    reg_hi: bool,
     /// 16KB PRG bank mapped at $8000-$BFFF.
     prg_bank: u8,
     /// Eight 1KB CHR bank registers.
     chr_banks: [u8; 8],
     irq: IrqState,
-    /// Battery-backed serial EEPROM (24C01 on mapper 159, 24C02 on mapper 16),
-    /// driven over the two-wire ($xD) interface and read back at $6000.
-    eeprom: SerialEeprom,
+    /// Serial EEPROM, present only on EEPROM-equipped LZ93D50 boards.
+    eeprom: Option<SerialEeprom>,
 }
 
 impl BandaiFcg {
-    /// `mapper` is the iNES mapper number (16 or 159); it selects the EEPROM
-    /// size (159 -> 24C01 / 128 bytes, otherwise 24C02 / 256 bytes).
-    pub fn new(mapper: u8, prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+    /// `mapper` is the iNES number (16 or 159) and `submapper` the NES 2.0
+    /// submapper (0 when unspecified). Together they pick the board: register
+    /// decode range, IRQ latch behavior, and EEPROM type.
+    pub fn new(
+        mapper: u8,
+        submapper: u8,
+        prg: Vec<u8>,
+        chr: Vec<u8>,
+        mirroring: Mirroring,
+    ) -> Self {
         let chr_is_ram = chr.is_empty();
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         let four_screen = mirroring == Mirroring::FourScreen;
-        // Mapper 159 fits a 128-byte 24C01 (7-bit word address in the first
-        // serial byte); mapper 16 fits a 256-byte 24C02 (separate I2C
-        // device-select and word-address bytes).
-        let eeprom = if mapper == 159 {
-            SerialEeprom::new_24c01()
-        } else {
-            SerialEeprom::new_24c02()
+
+        // (reg_lo, reg_hi, immediate IRQ, EEPROM).
+        let (reg_lo, reg_hi, immediate, eeprom) = match (mapper, submapper) {
+            // FCG-1/2: $6000-$7FFF registers, counter written directly, no EEPROM.
+            (16, 4) => (true, false, true, None),
+            // LZ93D50 + 24C02: $8000-$FFFF, latched IRQ.
+            (16, 5) => (false, true, false, Some(SerialEeprom::new_24c02())),
+            // LZ93D50 + 24C01 (deprecated submapper 1; modern split is mapper 159).
+            (16, 1) => (false, true, false, Some(SerialEeprom::new_24c01())),
+            // Mapper 159 is the LZ93D50 + 24C01 split-off.
+            (159, _) => (false, true, false, Some(SerialEeprom::new_24c01())),
+            // Unspecified (submapper 0, plain iNES, or 2/3): emulate both ranges
+            // with FCG-style immediate IRQ; keep a 24C02 so LZ93D50 saves work.
+            _ => (true, true, true, Some(SerialEeprom::new_24c02())),
         };
+
         BandaiFcg {
             prg,
             chr,
             chr_is_ram,
             mirroring,
             four_screen,
+            reg_lo,
+            reg_hi,
             prg_bank: 0,
             chr_banks: [0; 8],
-            irq: IrqState::new(),
+            irq: IrqState::new(immediate),
             eeprom,
         }
     }
@@ -101,7 +120,11 @@ impl BandaiFcg {
             // $xC: IRQ latch/counter high byte.
             0xC => self.irq.write_high(val),
             // $xD: serial EEPROM I/O. bit6 = SDA (data), bit5 = SCL (clock).
-            0xD => self.eeprom.write_lines(val & 0x20 != 0, val & 0x40 != 0),
+            0xD => {
+                if let Some(ee) = self.eeprom.as_mut() {
+                    ee.write_lines(val & 0x20 != 0, val & 0x40 != 0);
+                }
+            }
             _ => {}
         }
     }
@@ -135,12 +158,11 @@ impl Mapper for BandaiFcg {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
-        // The LZ93D50 register file overlaps the PRG ROM window; writes in
-        // $8000-$FFFF land here (ROM is read-only, so this is unambiguous).
-        // FCG-1/2 cartridges that decode at $6000-$7FFF are handled by
-        // `prg_ram` routing in the bus, which also forwards here via the
-        // write path below for completeness.
-        if addr >= 0x8000 {
+        // Decode register writes in whichever range(s) this board uses. The bus
+        // forwards both $6000-$7FFF and $8000-$FFFF writes here.
+        let in_lo = (0x6000..=0x7FFF).contains(&addr);
+        let in_hi = addr >= 0x8000;
+        if (in_lo && self.reg_lo) || (in_hi && self.reg_hi) {
             self.write_reg(addr, val);
         }
     }
@@ -164,17 +186,18 @@ impl Mapper for BandaiFcg {
     }
 
     fn prg_ram_read(&mut self, _addr: u16) -> Option<u8> {
-        // $6000-$7FFF reads return the EEPROM's serial data-out line in bit 4.
-        Some((self.eeprom.read_sda() as u8) << 4)
+        // EEPROM boards return the serial data-out line in bit 4; the bare
+        // FCG-1/2 has nothing here (open bus).
+        self.eeprom.as_ref().map(|ee| (ee.read_sda() as u8) << 4)
     }
 
     fn prg_ram(&self) -> Option<&[u8]> {
         // Expose the EEPROM cells for .sav persistence.
-        Some(self.eeprom.cells())
+        self.eeprom.as_ref().map(|ee| ee.cells())
     }
 
     fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
-        Some(self.eeprom.cells_mut())
+        self.eeprom.as_mut().map(|ee| ee.cells_mut())
     }
 
     fn irq(&self) -> bool {
@@ -191,47 +214,58 @@ impl Mapper for BandaiFcg {
     }
 }
 
-/// The LZ93D50 16-bit IRQ: a down-counter clocked once per CPU cycle. When it
+/// The Bandai 16-bit IRQ: a down-counter clocked once per CPU cycle. When it
 /// underflows (wraps past 0) the IRQ line asserts and stays asserted until the
-/// next $xA write. The counter value is loaded from a 16-bit *latch* (written
-/// via $xB/$xC) when the IRQ is enabled — this is the LZ93D50 behavior; the
-/// older FCG-1/2 wrote the counter directly.
+/// next $xA write.
+///
+/// The two board generations differ in how $xB/$xC writes reach the counter:
+/// the LZ93D50 writes a *latch* copied into the counter when the IRQ is enabled
+/// via $xA, while the older FCG-1/2 writes the counter directly. `immediate`
+/// selects the FCG-1/2 behavior.
 #[derive(Serialize, Deserialize)]
 struct IrqState {
     enabled: bool,
+    immediate: bool,
     counter: u16,
     latch: u16,
     line: bool,
 }
 
 impl IrqState {
-    fn new() -> Self {
+    fn new(immediate: bool) -> Self {
         IrqState {
             enabled: false,
+            immediate,
             counter: 0,
             latch: 0,
             line: false,
         }
     }
 
-    /// $xA: bit0 = enable. Writing this acknowledges the pending IRQ; on
-    /// enable the latch is copied into the counter (LZ93D50).
+    /// $xA: bit0 = enable. Writing this acknowledges the pending IRQ; on the
+    /// LZ93D50 enabling also copies the latch into the counter.
     fn write_control(&mut self, val: u8) {
         self.line = false;
         self.enabled = val & 1 != 0;
-        if self.enabled {
+        if self.enabled && !self.immediate {
             self.counter = self.latch;
         }
     }
 
-    /// $xB: IRQ latch low byte.
+    /// $xB: IRQ counter/latch low byte.
     fn write_low(&mut self, val: u8) {
         self.latch = (self.latch & 0xFF00) | val as u16;
+        if self.immediate {
+            self.counter = (self.counter & 0xFF00) | val as u16;
+        }
     }
 
-    /// $xC: IRQ latch high byte.
+    /// $xC: IRQ counter/latch high byte.
     fn write_high(&mut self, val: u8) {
         self.latch = (self.latch & 0x00FF) | ((val as u16) << 8);
+        if self.immediate {
+            self.counter = (self.counter & 0x00FF) | ((val as u16) << 8);
+        }
     }
 
     /// One CPU cycle: decrement; underflow past 0 asserts the IRQ.
@@ -514,10 +548,15 @@ mod tests {
     use super::*;
 
     /// 8 x 16KB PRG (byte = 16KB bank index), 16 x 1KB CHR (byte = 1KB bank).
-    fn fcg(mapper: u8) -> BandaiFcg {
+    fn fcg_sub(mapper: u8, submapper: u8) -> BandaiFcg {
         let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
         let chr: Vec<u8> = (0..16 * 0x400).map(|i| (i / 0x400) as u8).collect();
-        BandaiFcg::new(mapper, prg, chr, Mirroring::Vertical)
+        BandaiFcg::new(mapper, submapper, prg, chr, Mirroring::Vertical)
+    }
+
+    /// Default test board: LZ93D50 (submapper 5), registers at $8000-$FFFF.
+    fn fcg(mapper: u8) -> BandaiFcg {
+        fcg_sub(mapper, 5)
     }
 
     #[test]
@@ -559,14 +598,14 @@ mod tests {
 
     #[test]
     fn register_decode_in_6000_range() {
-        // FCG-1/2 decode at $6000-$7FFF. The bus forwards those writes via the
-        // same low-nibble decoder. We exercise the decoder directly here since
-        // cpu_write only handles $8000+; the $6000 path shares `write_reg`.
-        let mut m = fcg(16);
-        m.write_reg(0x6008, 4); // PRG bank
-        m.write_reg(0x7005, 12); // CHR slot 5
+        // FCG-1/2 (submapper 4) decodes registers at $6000-$7FFF via cpu_write.
+        let mut m = fcg_sub(16, 4);
+        m.cpu_write(0x6008, 4); // PRG bank
+        m.cpu_write(0x7005, 12); // CHR slot 5
         assert_eq!(m.cpu_read(0x8000), 4);
         assert_eq!(m.ppu_read(0x1400), 12);
+        // The bare FCG-1/2 has no EEPROM: $6000 reads are open bus.
+        assert_eq!(m.prg_ram_read(0x6000), None);
     }
 
     #[test]
@@ -586,9 +625,25 @@ mod tests {
     fn four_screen_header_is_never_overridden() {
         let prg: Vec<u8> = vec![0; 8 * 0x4000];
         let chr: Vec<u8> = vec![0; 16 * 0x400];
-        let mut m = BandaiFcg::new(16, prg, chr, Mirroring::FourScreen);
+        let mut m = BandaiFcg::new(16, 5, prg, chr, Mirroring::FourScreen);
         m.cpu_write(0x8009, 1); // would request Horizontal
         assert_eq!(m.mirroring(), Mirroring::FourScreen);
+    }
+
+    #[test]
+    fn fcg1_irq_writes_counter_directly() {
+        // Submapper 4 (FCG-1/2): $xB/$xC write the counter immediately, with no
+        // separate enable-time latch copy.
+        let mut m = fcg_sub(16, 4);
+        m.cpu_write(0x600A, 1); // enable (immediate mode: counter unchanged)
+        m.cpu_write(0x600B, 2); // counter low = 2
+        m.cpu_write(0x600C, 0); // counter high = 0 -> counter = 2
+        m.cpu_clock(); // 2 -> 1
+        assert!(!m.irq());
+        m.cpu_clock(); // 1 -> 0
+        assert!(!m.irq());
+        m.cpu_clock(); // 0 -> underflow asserts
+        assert!(m.irq());
     }
 
     #[test]

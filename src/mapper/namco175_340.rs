@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 ///   $E800 = $A000 bank (low 6 bits), $F000 = $C000 bank (low 6 bits). The
 ///   last 8KB ($E000-$FFFF of the CPU map) is fixed to the final PRG bank.
 ///
-/// Submapper differences (we cannot read the NES 2.0 submapper from here):
+/// The NES 2.0 submapper picks the board:
 /// - Namco 340 (submapper 2): mapper-controlled mirroring via $E000 bits 7-6
 ///   (0 = 1-screen A, 1 = vertical, 2 = 1-screen B, 3 = horizontal). No PRG
 ///   RAM.
@@ -20,12 +20,10 @@ use serde::{Deserialize, Serialize};
 ///   an 8KB battery PRG RAM at $6000-$7FFF gated by an enable bit at
 ///   $C000 bit 0.
 ///
-/// Since the submapper is unknown, we DEFAULT to honoring the header mirroring
-/// (175-like). If a game ever writes the $E000 mirroring bits we switch to the
-/// 340 register-driven path. Both paths are kept and isolated below so a
-/// caller can force one mode after testing against a real ROM (see
-/// `force_namco175` / `force_namco340`). FourScreen from the header is always
-/// honored and never overridden.
+/// When the submapper is unspecified (submapper 0 / plain iNES) we honor the
+/// header mirroring until the game writes the $E000 mirroring bits, at which
+/// point we commit to the 340 register-driven path. A submapper-locked board
+/// keeps its fixed interpretation. FourScreen headers are never overridden.
 #[derive(Serialize, Deserialize)]
 pub struct Namco175340 {
     prg: Vec<u8>,
@@ -39,9 +37,12 @@ pub struct Namco175340 {
     header_mirroring: Mirroring,
     /// Mirroring last selected via the $E000 bits 7-6 (340 path).
     reg_mirroring: Mirroring,
-    /// Set once a game writes the $E000 mirroring bits; switches us onto the
-    /// 340 register-driven mirroring path. May be forced by the caller.
+    /// Set once a game writes the $E000 mirroring bits (when not locked);
+    /// switches us onto the 340 register-driven mirroring path.
     use_reg_mirroring: bool,
+    /// When the NES 2.0 submapper pins the board down (175 or 340), the mode is
+    /// locked and $E000 mirroring writes can no longer flip it.
+    mode_locked: bool,
     /// 175 PRG RAM enable ($C000 bit 0). Defaults enabled so a 175 game that
     /// never bothers writing the register still sees working save RAM, and so
     /// the field is harmless for 340 (which has no PRG RAM accesses anyway).
@@ -49,7 +50,16 @@ pub struct Namco175340 {
 }
 
 impl Namco175340 {
-    pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+    /// `submapper` is the NES 2.0 submapper: 1 = Namco 175 (hardwired header
+    /// mirroring + battery PRG RAM), 2 = Namco 340 (mapper-controlled
+    /// mirroring), 0 = unspecified (plain iNES) — fall back to a heuristic that
+    /// honors the header until the game writes the $E000 mirroring bits.
+    pub fn new(submapper: u8, prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let (use_reg_mirroring, mode_locked) = match submapper {
+            1 => (false, true),  // Namco 175: hardwired header mirroring
+            2 => (true, true),   // Namco 340: register-driven mirroring
+            _ => (false, false), // unspecified: heuristic, may flip on a write
+        };
         Namco175340 {
             prg,
             chr,
@@ -60,22 +70,10 @@ impl Namco175340 {
             // Seed the register path with the header value so a 340 game that
             // reads mirroring before its first $E000 write still behaves.
             reg_mirroring: mirroring,
-            use_reg_mirroring: false,
+            use_reg_mirroring,
+            mode_locked,
             prg_ram_enabled: true,
         }
-    }
-
-    /// Force the Namco 175 interpretation: hardwired header mirroring, PRG RAM
-    /// present. Ignores any $E000 mirroring writes from here on.
-    #[allow(dead_code)]
-    pub fn force_namco175(&mut self) {
-        self.use_reg_mirroring = false;
-    }
-
-    /// Force the Namco 340 interpretation: mirroring driven by $E000 bits 7-6.
-    #[allow(dead_code)]
-    pub fn force_namco340(&mut self) {
-        self.use_reg_mirroring = true;
     }
 
     fn chr_byte(&self, bank: u8, addr: u16) -> u8 {
@@ -128,8 +126,11 @@ impl Mapper for Namco175340 {
                     2 => Mirroring::SingleScreenHi,
                     _ => Mirroring::Horizontal,
                 };
-                // Don't clobber a header FourScreen board.
-                if self.header_mirroring != Mirroring::FourScreen {
+                // In the unspecified case, the first $E000 mirroring write
+                // commits us to the 340 path. A submapper-locked board keeps
+                // its fixed interpretation. FourScreen headers are never
+                // overridden.
+                if !self.mode_locked && self.header_mirroring != Mirroring::FourScreen {
                     self.use_reg_mirroring = true;
                 }
             }
@@ -189,11 +190,16 @@ impl Mapper for Namco175340 {
 mod tests {
     use super::*;
 
-    fn mapper(mirroring: Mirroring) -> Namco175340 {
+    fn mapper_sub(submapper: u8, mirroring: Mirroring) -> Namco175340 {
         // 8 x 8KB PRG, 64 x 1KB CHR; each byte equals its bank index.
         let prg: Vec<u8> = (0..8 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
         let chr: Vec<u8> = (0..64 * 0x400).map(|i| (i / 0x400) as u8).collect();
-        Namco175340::new(prg, chr, mirroring)
+        Namco175340::new(submapper, prg, chr, mirroring)
+    }
+
+    /// Default test board: submapper 0 (unspecified, heuristic).
+    fn mapper(mirroring: Mirroring) -> Namco175340 {
+        mapper_sub(0, mirroring)
     }
 
     #[test]
@@ -262,16 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn mirroring_forced_modes() {
-        let mut m = mapper(Mirroring::Vertical);
-        m.cpu_write(0xE000, 0b1100_0000); // would select horizontal (340)
-        assert_eq!(m.mirroring(), Mirroring::Horizontal);
-        // Force 175: ignore the register, revert to hardwired header value.
-        m.force_namco175();
-        assert_eq!(m.mirroring(), Mirroring::Vertical);
-        // Force 340: register value applies again.
-        m.force_namco340();
-        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    fn submapper_locks_mirroring_mode() {
+        // Submapper 1 (Namco 175): hardwired header mirroring; $E000 writes to
+        // the mirroring bits are ignored.
+        let mut m175 = mapper_sub(1, Mirroring::Vertical);
+        m175.cpu_write(0xE000, 0b1100_0000); // would select horizontal
+        assert_eq!(m175.mirroring(), Mirroring::Vertical);
+        // Submapper 2 (Namco 340): register-driven mirroring from the start.
+        let mut m340 = mapper_sub(2, Mirroring::Vertical);
+        m340.cpu_write(0xE000, 0b1100_0000); // horizontal
+        assert_eq!(m340.mirroring(), Mirroring::Horizontal);
     }
 
     #[test]

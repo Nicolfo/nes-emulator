@@ -23,6 +23,12 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let flags6 = data[6];
     let flags7 = data[7];
     let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
+    // NES 2.0 (flags7 bits 2-3 = %10) carries a submapper in the high nibble of
+    // byte 8; plain iNES has none, so it reads as 0 ("unspecified"). Mappers
+    // that share a number across distinct boards (e.g. Bandai 16, Namco 210)
+    // use it to pick the exact hardware.
+    let nes2 = flags7 & 0x0C == 0x08;
+    let submapper = if nes2 { data[8] >> 4 } else { 0 };
     let region = if flags7 & 0x0C == 0x08 {
         // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
         if data[12] & 3 == 1 {
@@ -72,7 +78,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
         10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
-        16 | 159 => Box::new(BandaiFcg::new(mapper_id, prg, chr, mirroring)),
+        16 | 159 => Box::new(BandaiFcg::new(mapper_id, submapper, prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
         21 | 22 | 23 | 25 => Box::new(Vrc4::new(mapper_id, prg, chr, mirroring)),
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
@@ -91,7 +97,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         118 => Box::new(Txsrom::new(prg, chr, mirroring)),
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
         206 => Box::new(Namco108::new(prg, chr, mirroring)),
-        210 => Box::new(Namco175340::new(prg, chr, mirroring)),
+        210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
     Ok((mapper, region, battery))
