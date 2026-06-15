@@ -6,6 +6,8 @@
 //! and downsampling to the host sample rate (boxcar decimation followed by
 //! the NES's analog filter chain: 90 Hz and 440 Hz high-pass, 14 kHz low-pass).
 
+use serde::{Deserialize, Serialize};
+
 use crate::cartridge::Region;
 
 const CPU_HZ: f64 = 1_789_772.727;
@@ -46,7 +48,7 @@ const PAL_DMC_RATE: [u16; 16] = [
     398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50,
 ];
 
-#[derive(Default)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct Envelope {
     start: bool,
     loop_flag: bool, // doubles as the length counter halt flag
@@ -83,6 +85,7 @@ impl Envelope {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Pulse {
     enabled: bool,
     duty: u8,
@@ -179,7 +182,7 @@ impl Pulse {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct Triangle {
     enabled: bool,
     control: bool, // length counter halt / linear counter control
@@ -235,6 +238,7 @@ impl Triangle {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Noise {
     enabled: bool,
     mode: bool, // bit 6 tap when set (short loop), bit 1 otherwise
@@ -292,6 +296,7 @@ impl Noise {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Dmc {
     irq_enabled: bool,
     loop_flag: bool,
@@ -463,6 +468,25 @@ impl LowPass {
     }
 }
 
+/// Serializable APU emulation state for a savestate (see [`Apu::save_state`]).
+#[derive(Serialize, Deserialize)]
+pub struct ApuSave {
+    pulse1: Pulse,
+    pulse2: Pulse,
+    triangle: Triangle,
+    noise: Noise,
+    dmc: Dmc,
+    region: Region,
+    cycle: u64,
+    frame_cycle: u32,
+    frame_mode5: bool,
+    pending_mode5: bool,
+    irq_inhibit: bool,
+    frame_irq: bool,
+    frame_irq_clear_pending: bool,
+    frame_reset_delay: u8,
+}
+
 pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
@@ -561,6 +585,47 @@ impl Apu {
 
     pub fn take_samples(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.samples)
+    }
+
+    /// Snapshot the emulation state (channels and frame counter) for a
+    /// savestate. The mixer lookup tables, resampling accumulators, and filter
+    /// chain are host-output concerns and are left for the live APU to keep.
+    pub fn save_state(&self) -> ApuSave {
+        ApuSave {
+            pulse1: self.pulse1.clone(),
+            pulse2: self.pulse2.clone(),
+            triangle: self.triangle.clone(),
+            noise: self.noise.clone(),
+            dmc: self.dmc.clone(),
+            region: self.region,
+            cycle: self.cycle,
+            frame_cycle: self.frame_cycle,
+            frame_mode5: self.frame_mode5,
+            pending_mode5: self.pending_mode5,
+            irq_inhibit: self.irq_inhibit,
+            frame_irq: self.frame_irq,
+            frame_irq_clear_pending: self.frame_irq_clear_pending,
+            frame_reset_delay: self.frame_reset_delay,
+        }
+    }
+
+    /// Restore a snapshot from [`Apu::save_state`], preserving the live host
+    /// audio configuration (sample rate, filters).
+    pub fn load_state(&mut self, s: ApuSave) {
+        self.pulse1 = s.pulse1;
+        self.pulse2 = s.pulse2;
+        self.triangle = s.triangle;
+        self.noise = s.noise;
+        self.dmc = s.dmc;
+        self.region = s.region;
+        self.cycle = s.cycle;
+        self.frame_cycle = s.frame_cycle;
+        self.frame_mode5 = s.frame_mode5;
+        self.pending_mode5 = s.pending_mode5;
+        self.irq_inhibit = s.irq_inhibit;
+        self.frame_irq = s.frame_irq;
+        self.frame_irq_clear_pending = s.frame_irq_clear_pending;
+        self.frame_reset_delay = s.frame_reset_delay;
     }
 
     /// Frame IRQ and DMC IRQ are level-triggered. The frame flag only pulls

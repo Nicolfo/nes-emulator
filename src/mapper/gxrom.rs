@@ -1,7 +1,9 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// GxROM (mapper 66): one register at $8000-$FFFF — bits 4-5 select a 32KB
 /// PRG bank, bits 0-1 select an 8KB CHR bank.
+#[derive(Serialize, Deserialize)]
 pub struct Gxrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -23,6 +25,7 @@ impl Gxrom {
 }
 
 impl Mapper for Gxrom {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             let banks = self.prg.len() / 0x8000;

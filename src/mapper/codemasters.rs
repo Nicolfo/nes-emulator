@@ -1,9 +1,11 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// Camerica/Codemasters (mapper 71): a UxROM-like board with a 16KB switchable
 /// PRG bank at $8000-$BFFF, the last 16KB fixed at $C000-$FFFF, and 8KB CHR
 /// RAM. The bank register sits at $C000-$FFFF. A few BF9097 titles (Fire Hawk)
 /// also drive single-screen mirroring from $9000-$9FFF bit 4.
+#[derive(Serialize, Deserialize)]
 pub struct Codemasters {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -27,6 +29,7 @@ impl Codemasters {
 }
 
 impl Mapper for Codemasters {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;
         match addr {

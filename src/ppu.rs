@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::cartridge::Region;
 use crate::mapper::{Mapper, NtTarget};
 use crate::palette::NES_PALETTE;
@@ -13,7 +15,7 @@ const MASK_DELAY: u8 = 4;
 /// machine), when the read lands during active rendering.
 const PPUDATA_READ_DELAY: u8 = 5;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 struct SpriteRow {
     /// X-position down-counter: decrements every visible dot regardless of
     /// rendering enable; the shifter outputs once it reaches 0.
@@ -29,6 +31,7 @@ struct SpriteRow {
     is_zero: bool,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Ppu {
     // loopy registers
     v: u16,
@@ -46,6 +49,7 @@ pub struct Ppu {
     dots: u64,
 
     oam_addr: u8,
+    #[serde(with = "crate::savestate::byte_array")]
     pub oam: [u8; 256],
     sprites: [SpriteRow; 8],
     sprite_count: usize,
@@ -95,6 +99,7 @@ pub struct Ppu {
     /// Nametable RAM: the console's 2KB CIRAM. The upper 2KB is unused for
     /// the plain mirrorings but backs the cartridge-supplied second pair of
     /// nametables under four-screen mirroring.
+    #[serde(with = "crate::savestate::byte_array")]
     pub vram: [u8; 0x1000],
     palette: [u8; 32],
     read_buffer: u8,
@@ -116,7 +121,13 @@ pub struct Ppu {
     pat_lo_latch: u8,
     pat_hi_latch: u8,
 
+    // Host output buffer, regenerated every frame; excluded from savestates.
+    #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u8>, // RGBA, 256*240*4
+}
+
+fn default_framebuffer() -> Vec<u8> {
+    vec![0; WIDTH * HEIGHT * 4]
 }
 
 impl Default for Ppu {

@@ -1,8 +1,10 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// MMC2 (mapper 9, Punch-Out!!): 8KB PRG banking with the top three banks
 /// fixed, and dual 4KB CHR banks selected by latches that flip when the PPU
 /// fetches the magic tiles $FD/$FE.
+#[derive(Serialize, Deserialize)]
 pub struct Mmc2 {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -47,6 +49,7 @@ impl Mmc2 {
 }
 
 impl Mapper for Mmc2 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;

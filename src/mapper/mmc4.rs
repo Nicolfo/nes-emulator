@@ -1,12 +1,15 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// MMC4 (mapper 10, Fire Emblem): the MMC2 CHR-latch board scaled up to 16KB
 /// PRG banking with the last 16KB fixed, plus 8KB of (usually battery-backed)
 /// PRG RAM. The dual 4KB CHR banks are selected by latches that flip when the
 /// PPU fetches the magic tiles $FD/$FE — identical to MMC2.
+#[derive(Serialize, Deserialize)]
 pub struct Mmc4 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     mirroring: Mirroring,
     prg_bank: u8,
@@ -50,6 +53,7 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;

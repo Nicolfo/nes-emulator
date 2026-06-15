@@ -1,10 +1,12 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// Namco 108 / DxROM (mapper 206): the bank-switching ancestor of the MMC3.
 /// It uses the same $8000/$8001 select/data register pair and the same fixed
 /// banking layout as MMC3's mode 0, but drops the PRG/CHR mode bits, the
 /// scanline IRQ, the mirroring register (hardwired by the board) and PRG RAM.
 /// Bank numbers are narrower: CHR registers are 6-bit, PRG registers 4-bit.
+#[derive(Serialize, Deserialize)]
 pub struct Namco108 {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -57,6 +59,7 @@ impl Namco108 {
 }
 
 impl Mapper for Namco108 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

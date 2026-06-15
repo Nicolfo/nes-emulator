@@ -1,4 +1,5 @@
 use super::{Mapper, Mirroring, NtTarget};
+use serde::{Deserialize, Serialize};
 
 /// MMC5 (mapper 5, Castlevania III, Just Breed, Uncharted Waters):
 /// game-compatible core — all four PRG and CHR banking modes with banked
@@ -7,10 +8,12 @@ use super::{Mapper, Mirroring, NtTarget};
 /// expansion audio (two APU-style pulses plus raw PCM).
 ///
 /// Not emulated: vertical split mode ($5200-$5202).
+#[derive(Serialize, Deserialize)]
 pub struct Mmc5 {
     prg: Vec<u8>,
     prg_ram: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(with = "crate::savestate::byte_array")]
     exram: [u8; 0x400],
     prg_mode: u8,
     chr_mode: u8,
@@ -220,6 +223,7 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;
@@ -473,6 +477,7 @@ impl Mapper for Mmc5 {
 
 /// MMC5 audio: two APU-style pulse channels (envelope and length counter,
 /// no sweep) sequenced by an internal ~240 Hz divider, plus raw PCM.
+#[derive(Serialize, Deserialize)]
 struct Mmc5Audio {
     pulses: [Pulse; 2],
     pcm_level: u8,
@@ -480,7 +485,7 @@ struct Mmc5Audio {
     frame_step: u8,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Pulse {
     duty: u8,
     halt: bool,

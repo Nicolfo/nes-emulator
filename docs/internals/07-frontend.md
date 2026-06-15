@@ -20,6 +20,7 @@ everything else) and exposes a small, frontend-agnostic API:
 | `region()` | NTSC or PAL (drives frame pacing) |
 | `set_sample_rate` / `tune_audio` / `take_audio` | Audio plumbing |
 | `battery_ram` / `load_battery_ram` | Save-game persistence |
+| `save_state` / `load_state` | Whole-machine snapshots (see [chapter 7](08-savestates.md)) |
 
 This is the *only* surface the GUI and the test harnesses need; both drive the
 emulator purely through it. `run_frame` is the loop described in
@@ -93,6 +94,15 @@ RAM (`restore_battery_ram`) and writes it back on exit / game switch / return to
 menu (`save_battery_ram`), all through the `Nes::battery_ram` accessors from
 [chapter 5](06-cartridge-mappers.md).
 
+### Savestates
+
+While running, **F5** snapshots the entire machine and **F7** restores it, using
+a single slot stored next to the ROM as `<rom>.state` (`App::save_state` /
+`App::load_state`). Unlike a battery save — which only persists PRG RAM between
+sessions — a savestate captures the *exact* live state of every chip, so you can
+resume mid-frame. The format and what is (and isn't) captured are covered in
+[chapter 7](08-savestates.md).
+
 ## How a frame flows, end to end
 
 Putting the whole guide together, one frame of gameplay is:
@@ -127,3 +137,4 @@ in 1985, just cycle by cycle in software.
 | Audio device output | `src/audio.rs` |
 | Menu UI + font | `src/menu.rs`, `src/font.rs` |
 | Persisted settings | `src/config.rs` |
+| Savestate snapshot/restore | `src/savestate.rs`, `Nes::save_state`/`load_state` |

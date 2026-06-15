@@ -1,8 +1,10 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// CNROM (mapper 3): fixed PRG like NROM, one 8KB switchable CHR bank.
 /// Real boards have bus conflicts (written value ANDed with ROM byte);
 /// not emulated.
+#[derive(Serialize, Deserialize)]
 pub struct Cnrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -22,6 +24,7 @@ impl Cnrom {
 }
 
 impl Mapper for Cnrom {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             // mask handles both 16KB (mirrored) and 32KB PRG

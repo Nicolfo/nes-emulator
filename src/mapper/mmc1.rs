@@ -1,4 +1,5 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// MMC1 (mapper 1): registers loaded one bit at a time through a 5-bit
 /// shift register on writes to $8000-$FFFF. Control register selects
@@ -11,10 +12,12 @@ use super::{Mapper, Mirroring};
 ///
 /// Not emulated: the consecutive-cycle write-ignore quirk (only matters for
 /// games doing read-modify-write stores to $8000+).
+#[derive(Serialize, Deserialize)]
 pub struct Mmc1 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
+    #[serde(with = "crate::savestate::byte_array")]
     prg_ram: [u8; 0x2000],
     shift: u8,
     shift_count: u8,
@@ -112,6 +115,7 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

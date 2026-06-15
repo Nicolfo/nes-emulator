@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::apu::Apu;
 use crate::cartridge::Region;
 use crate::controller::Controller;
@@ -277,6 +279,57 @@ impl Bus {
     pub fn irq_asserted(&self) -> bool {
         self.apu.irq() || self.cart.irq()
     }
+
+    /// Snapshot the bus's own state (work RAM and DMA/timing latches) for a
+    /// savestate. The PPU, APU, controller, and cartridge are snapshotted
+    /// separately; debug watch logs are not preserved.
+    pub fn save_state(&self) -> BusSave {
+        BusSave {
+            ram: self.ram,
+            cycles: self.cycles,
+            region: self.region,
+            pal_phase: self.pal_phase,
+            open_bus: self.open_bus,
+            internal_bus: self.internal_bus,
+            dmc_request: self.dmc_request,
+            dmc_ghost: self.dmc_ghost,
+            dmc_skip_align: self.dmc_skip_align,
+            dmc_delay: self.dmc_delay,
+            oam_dma_page: self.oam_dma_page,
+        }
+    }
+
+    /// Restore a snapshot from [`Bus::save_state`].
+    pub fn load_state(&mut self, s: BusSave) {
+        self.ram = s.ram;
+        self.cycles = s.cycles;
+        self.region = s.region;
+        self.pal_phase = s.pal_phase;
+        self.open_bus = s.open_bus;
+        self.internal_bus = s.internal_bus;
+        self.dmc_request = s.dmc_request;
+        self.dmc_ghost = s.dmc_ghost;
+        self.dmc_skip_align = s.dmc_skip_align;
+        self.dmc_delay = s.dmc_delay;
+        self.oam_dma_page = s.oam_dma_page;
+    }
+}
+
+/// Serializable bus state for a savestate (see [`Bus::save_state`]).
+#[derive(Serialize, Deserialize)]
+pub struct BusSave {
+    #[serde(with = "crate::savestate::byte_array")]
+    ram: [u8; 0x800],
+    cycles: u64,
+    region: Region,
+    pal_phase: u8,
+    open_bus: u8,
+    internal_bus: u8,
+    dmc_request: Option<u16>,
+    dmc_ghost: bool,
+    dmc_skip_align: bool,
+    dmc_delay: u8,
+    oam_dma_page: Option<u8>,
 }
 
 #[cfg(test)]

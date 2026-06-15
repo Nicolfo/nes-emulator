@@ -1,8 +1,10 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// AxROM (mapper 7): one register at $8000-$FFFF — bits 0-2 select a 32KB
 /// PRG bank, bit 4 selects the nametable (single-screen mirroring). CHR is
 /// 8KB RAM. Header mirroring is ignored; the register controls it.
+#[derive(Serialize, Deserialize)]
 pub struct Axrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -26,6 +28,7 @@ impl Axrom {
 }
 
 impl Mapper for Axrom {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             let banks = self.prg.len() / 0x8000;

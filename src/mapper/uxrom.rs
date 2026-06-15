@@ -1,8 +1,10 @@
 use super::{Mapper, Mirroring};
+use serde::{Deserialize, Serialize};
 
 /// UxROM (mapper 2): 16KB switchable PRG at $8000, last 16KB fixed at $C000,
 /// 8KB CHR (usually RAM). Real boards have bus conflicts (written value
 /// ANDed with ROM byte); not emulated.
+#[derive(Serialize, Deserialize)]
 pub struct Uxrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -26,6 +28,7 @@ impl Uxrom {
 }
 
 impl Mapper for Uxrom {
+    crate::impl_mapper_savestate!();
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;
         match addr {
