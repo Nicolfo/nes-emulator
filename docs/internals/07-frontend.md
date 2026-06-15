@@ -36,28 +36,36 @@ which is a humble **shift register**:
   Left, Right — the `BTN_*` constants).
 - Writing `$4016` with bit 0 set raises the **strobe**: while high, the pad
   continuously reloads its shift register from the live button state.
-- When strobe drops, each read of `$4016` returns the next button bit (A first)
-  and shifts; after the 8 buttons it returns 1s.
+- When strobe drops, each read returns the next button bit (A first) and shifts;
+  after the 8 buttons it returns 1s.
 
-The host doesn't call these directly during gameplay — it just sets button state
-via `set_button` (from key events), and the *bus* clocks the strobe/shift at the
-right cycle parity (`clock_put_cycle`, called from `tick_cycle_post`; see
-[chapter 4](05-bus-timing-dma.md)). The reload-on-put-cycle detail is what makes
-the shifting cycle-accurate.
+The bus owns **two** of these — `controller1` (read at `$4016`) and
+`controller2` (read at `$4017`) — for the two physical joypad ports. A `$4016`
+write strobes both at once; reads come back on the matching port. The host wires
+keyboard input to both: player 1 from `cfg.keys`, player 2 from `cfg.keys_p2`.
+
+The host doesn't call the shift register directly during gameplay — it just sets
+button state via `set_button` (from key events), and the *bus* clocks the
+strobe/shift at the right cycle parity (`clock_put_cycle`, called from
+`tick_cycle_post`; see [chapter 4](05-bus-timing-dma.md)). The
+reload-on-put-cycle detail is what makes the shifting cycle-accurate.
 
 ## The host application (`src/main.rs`)
 
 The frontend is a [winit](https://docs.rs/winit) 0.30 + [pixels](https://docs.rs/pixels)
-application — a small state machine with three views:
+application — a small state machine with four views:
 
 ```rust
-enum View { Home { .. }, Settings { .. }, Running }
+enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Running }
 ```
 
 - **Home / Settings** render the NES-style menu UI (drawn into the same 256×240
   framebuffer by `src/menu.rs` using the embedded bitmap font in `src/font.rs`).
-  Settings let you rebind keys and change window scale, persisted via
-  `src/config.rs`.
+  Settings let you rebind keys per player (an EDIT PLAYER toggle switches the
+  button rows between player 1 and player 2), change window scale, toggle NTSC
+  overscan cropping and reset defaults — all persisted via `src/config.rs`.
+- **SlotPicker** is the savestate overlay shown over the paused game; its
+  `saving` flag picks F5 (save) vs F7 (load) behaviour (see Savestates below).
 - **Running** is where the emulation actually pumps.
 
 ### Frame pacing
@@ -96,11 +104,13 @@ menu (`save_battery_ram`), all through the `Nes::battery_ram` accessors from
 
 ### Savestates
 
-While running, **F5** snapshots the entire machine and **F7** restores it, using
-a single slot stored next to the ROM as `<rom>.state` (`App::save_state` /
-`App::load_state`). Unlike a battery save — which only persists PRG RAM between
-sessions — a savestate captures the *exact* live state of every chip, so you can
-resume mid-frame. The format and what is (and isn't) captured are covered in
+While running, **F5** and **F7** pause the game and open the `SlotPicker`
+overlay — F5 to save, F7 to load. It offers `menu::NUM_SLOTS` (4) slots stored
+next to the ROM as `<rom>.stateN`; `App::slot_states` marks which are filled,
+and confirming a slot calls `App::save_state` / `App::load_state`. Unlike a
+battery save — which only persists PRG RAM between sessions — a savestate
+captures the *exact* live state of every chip, so you can resume mid-frame. The
+format and what is (and isn't) captured are covered in
 [chapter 7](08-savestates.md).
 
 ## How a frame flows, end to end

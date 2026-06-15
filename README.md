@@ -32,25 +32,32 @@ cargo run --release -- path\to\rom.nes   # skips the menu, boots the ROM directl
 
 The home menu offers **Load ROM** (native file picker), **Settings**, **Resume**
 (when a game is loaded) and **Quit**. Settings lets you rebind every controller
-button (select a row, press Enter, then press the new key) and change the window
-scale; everything is persisted to `nes-emulator-config.json`.
+button for either player (toggle the EDIT PLAYER row, select a button, press
+Enter, then press the new key), change the window scale, toggle NTSC overscan
+cropping and reset defaults; everything is persisted to
+`nes-emulator-config.json`.
 
 ## Default controls
 
-| NES button | Key |
+| NES button | Player 1 | Player 2 |
+|---|---|---|
+| D-Pad | Arrow keys | W A S D |
+| A | Z | L |
+| B | X | K |
+| Start | Enter | M |
+| Select | Right Shift | N |
+
+| Action | Key |
 |---|---|
-| D-Pad | Arrow keys |
-| A | Z |
-| B | X |
-| Start | Enter |
-| Select | Right Shift |
 | Back to menu | Escape |
 | Save state | F5 |
 | Load state | F7 |
 
-All bindings except Escape (and the F5/F7 savestate slot) can be changed in
-Settings. **F5** snapshots the whole machine to `<rom>.state` next to the ROM and
-**F7** restores it — resuming exactly where you left off, mid-frame.
+Per-player button bindings (except Escape and the F5/F7 savestate keys) can be
+changed in Settings. **F5** pauses the game and opens a 4-slot save picker;
+**F7** opens the matching load picker (↑/↓ to choose a slot, Enter to confirm,
+Escape to cancel). Each slot is written to `<rom>.stateN` next to the ROM, and a
+restore resumes exactly where you left off — mid-frame.
 
 ## Architecture
 

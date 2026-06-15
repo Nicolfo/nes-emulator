@@ -6,9 +6,11 @@ mid-instruction, mid-DMA. This is different from a **battery save** (chapter 5),
 which only persists the cartridge's PRG RAM across sessions the way a real
 save-game does. A savestate is the whole console, not just the game's save slot.
 
-The frontend exposes it as a single per-ROM slot: **F5** writes `<rom>.state`,
-**F7** reads it back (see [chapter 6](07-frontend.md)). The library API is two
-methods on the `Nes` facade:
+The frontend exposes **four** per-ROM slots through a picker UI: **F5** pauses
+the game and opens the save picker, **F7** the load picker; the chosen slot maps
+to `<rom>.stateN` (N = 1..4) next to the ROM (see
+[chapter 6](07-frontend.md)). The library API is two methods on the `Nes`
+facade:
 
 ```rust
 fn save_state(&self) -> Result<Vec<u8>, String>;
