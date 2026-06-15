@@ -1,7 +1,7 @@
 use crate::mapper::{
-    Action53, Axrom, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom, HolyDiver, Mapper,
-    Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163, Namco108, Nrom, Txsrom, Unrom180, Uxrom, Vrc4,
-    Vrc6,
+    Action53, Axrom, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom, H3001,
+    HolyDiver, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163, Namco108, Namco175340, Nrom,
+    Rambo1, Sunsoft4, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -23,6 +23,12 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let flags6 = data[6];
     let flags7 = data[7];
     let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
+    // NES 2.0 (flags7 bits 2-3 = %10) carries a submapper in the high nibble of
+    // byte 8; plain iNES has none, so it reads as 0 ("unspecified"). Mappers
+    // that share a number across distinct boards (e.g. Bandai 16, Namco 210)
+    // use it to pick the exact hardware.
+    let nes2 = flags7 & 0x0C == 0x08;
+    let submapper = if nes2 { data[8] >> 4 } else { 0 };
     let region = if flags7 & 0x0C == 0x08 {
         // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
         if data[12] & 3 == 1 {
@@ -72,19 +78,26 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
         10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
+        16 | 159 => Box::new(BandaiFcg::new(mapper_id, submapper, prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
         21 | 22 | 23 | 25 => Box::new(Vrc4::new(mapper_id, prg, chr, mirroring)),
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
         26 => Box::new(Vrc6::new_vrc6b(prg, chr, mirroring)),
         28 => Box::new(Action53::new(prg, chr, mirroring)),
         34 => Box::new(Bnrom::new(prg, chr, mirroring)),
+        64 => Box::new(Rambo1::new(prg, chr, mirroring)),
+        65 => Box::new(H3001::new(prg, chr, mirroring)),
         66 => Box::new(Gxrom::new(prg, chr, mirroring)),
+        68 => Box::new(Sunsoft4::new(prg, chr, mirroring)),
         69 => Box::new(Fme7::new(prg, chr, mirroring)),
         71 => Box::new(Codemasters::new(prg, chr, mirroring)),
+        73 => Box::new(Vrc3::new(prg, chr, mirroring)),
+        75 => Box::new(Vrc1::new(prg, chr, mirroring)),
         78 => Box::new(HolyDiver::new(prg, chr, mirroring)),
         118 => Box::new(Txsrom::new(prg, chr, mirroring)),
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
         206 => Box::new(Namco108::new(prg, chr, mirroring)),
+        210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
     Ok((mapper, region, battery))

@@ -1,4 +1,4 @@
-use super::{Mapper, Mirroring, NtTarget};
+use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
 /// Namco 163 (mapper 19, Rolling Thunder, Megami Tensei II): 1KB CHR
@@ -21,13 +21,21 @@ pub struct N163 {
 }
 
 impl N163 {
-    pub fn new(prg: Vec<u8>, chr: Vec<u8>, _mirroring: Mirroring) -> Self {
+    pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        // The four nametable registers power up selecting CIRAM pages that
+        // match the header mirroring (a value of $E0|page). True N163 games
+        // overwrite these during init, so this only matters for boards that
+        // never touch them — notably Namco 175/340 carts (mapper 210) that are
+        // mislabeled as plain mapper 19 in iNES 1.0 dumps, where leaving the
+        // registers at 0 would wrongly fetch nametables from CHR ROM.
+        let nt = |i: u16| 0xE0 | ((mirror_nt(mirroring, 0x2000 + i * 0x400) >> 10) & 1) as u8;
+        let chr_banks = [0, 0, 0, 0, 0, 0, 0, 0, nt(0), nt(1), nt(2), nt(3)];
         N163 {
             prg,
             chr,
             prg_ram: [0; 0x2000],
             prg_banks: [0; 3],
-            chr_banks: [0; 12],
+            chr_banks,
             irq_counter: 0,
             irq_enabled: false,
             irq_line: false,
