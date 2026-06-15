@@ -95,12 +95,54 @@ pub fn render_home(frame: &mut [u8], sel: usize, game_loaded: bool, error: Optio
     }
 
     if let Some(msg) = error {
-        draw_text_centered(frame, 198, msg, RED, 1);
+        draw_text_centered(frame, 186, msg, RED, 1);
     }
 
-    fill_rect(frame, 48, 209, 160, 1, DIM);
-    draw_text_centered(frame, 214, "(C) 2026 NICOLFO", DIM, 1);
-    draw_text_centered(frame, 226, "BUILT IN RUST", DIM, 1);
+    // Keep the footer inside the 216-line band that survives the NTSC overscan
+    // crop (see blit_menu), so nothing clips when the menu fills the window.
+    fill_rect(frame, 48, 200, 160, 1, DIM);
+    draw_text_centered(frame, 208, "(C) 2026 NICOLFO", DIM, 1);
+    draw_text_centered(frame, 220, "BUILT IN RUST", DIM, 1);
+}
+
+/// Number of savestate slots offered in the F5/F7 picker.
+pub const NUM_SLOTS: usize = 4;
+
+/// Savestate slot picker. `saving` switches the title/hint between SAVE and
+/// LOAD; `filled[i]` marks slots that already hold a snapshot.
+pub fn render_slots(frame: &mut [u8], saving: bool, sel: usize, filled: &[bool; NUM_SLOTS]) {
+    clear(frame, BG);
+
+    let title = if saving { "SAVE STATE" } else { "LOAD STATE" };
+    draw_text_centered(frame, 20, title, FG, 2);
+    fill_rect(frame, 40, 42, 176, 1, DIM);
+
+    let start_y = 64i32;
+    let spacing = 28i32;
+    for (i, &is_filled) in filled.iter().enumerate() {
+        let y = start_y + i as i32 * spacing;
+        let selected = i == sel;
+        let color = if selected { ACCENT } else { FG };
+        if selected {
+            draw_text(frame, 44, y + 4, ">", ACCENT, 1);
+        }
+        draw_text(frame, 64, y + 4, &format!("SLOT {}", i + 1), color, 1);
+        let (status, scol) = if is_filled {
+            ("SAVED", if selected { ACCENT } else { FG })
+        } else {
+            ("EMPTY", DIM)
+        };
+        draw_text(frame, 150, y + 4, status, scol, 1);
+    }
+
+    fill_rect(frame, 40, 200, 176, 1, DIM);
+    let hint = if saving {
+        "ENTER: SAVE   ESC: CANCEL"
+    } else {
+        "ENTER: LOAD   ESC: CANCEL"
+    };
+    draw_text_centered(frame, 208, hint, DIM, 1);
+    draw_text_centered(frame, 220, "ARROWS: NAVIGATE", DIM, 1);
 }
 
 /// Settings rows: 0-7 buttons, 8 = player select, 9 = scale, 10 = overscan,
@@ -212,5 +254,27 @@ mod tests {
         let mut frame2 = vec![0u8; WIDTH * HEIGHT * 4];
         render_settings(&mut frame2, &cfg, 0, true, 0);
         write_bmp("menu_rebind.bmp", &frame2, WIDTH, HEIGHT);
+    }
+
+    /// Dump each menu as the player actually sees it with NTSC overscan crop:
+    /// rendered at 240 then center-cropped to the 216-line window (the same
+    /// slice `blit_menu` blits). Lets us eyeball clipping.
+    #[test]
+    #[ignore]
+    fn dump_cropped_menus() {
+        const CROP_H: usize = 216; // HEIGHT - OVERSCAN_TOP(16) - OVERSCAN_BOTTOM(8)
+        let skip = (HEIGHT - CROP_H) / 2;
+        let crop = |full: &[u8]| -> Vec<u8> {
+            full[skip * WIDTH * 4..(skip + CROP_H) * WIDTH * 4].to_vec()
+        };
+        let cfg = crate::config::Config::default();
+        let mut f = vec![0u8; WIDTH * HEIGHT * 4];
+
+        render_home(&mut f, 0, true, None);
+        write_bmp("crop_home.bmp", &crop(&f), WIDTH, CROP_H);
+        render_settings(&mut f, &cfg, 2, false, 0);
+        write_bmp("crop_settings.bmp", &crop(&f), WIDTH, CROP_H);
+        render_slots(&mut f, true, 1, &[true, false, true, false]);
+        write_bmp("crop_slots.bmp", &crop(&f), WIDTH, CROP_H);
     }
 }
