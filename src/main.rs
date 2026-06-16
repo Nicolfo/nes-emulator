@@ -1,3 +1,8 @@
+// Release builds use the Windows GUI subsystem so launching the .exe (from
+// Explorer or a shortcut) doesn't pop up a console window behind the emulator.
+// Debug builds keep the console so NES_*_LOG / trace output stays visible.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod audio;
 mod config;
 mod font;
@@ -520,6 +525,26 @@ impl ApplicationHandler for App {
                 (WIDTH as u32 * self.cfg.scale) as f64,
                 (HEIGHT as u32 * self.cfg.scale) as f64,
             ));
+        // The desktop environment matches a window to its launcher entry (and
+        // thus its taskbar icon) by app_id on Wayland / WM_CLASS on X11. Both
+        // must equal the .desktop file's basename ("nes-emulator") for the
+        // installed icon to render, since winit's RGBA window icon is X11-only.
+        // Gated to the targets where winit exposes its Wayland/X11 extension
+        // modules (Linux + BSDs); other Unixes lack them and wouldn't compile.
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+        ))]
+        let attrs = {
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            use winit::platform::x11::WindowAttributesExtX11;
+            let attrs =
+                WindowAttributesExtWayland::with_name(attrs, "nes-emulator", "nes-emulator");
+            WindowAttributesExtX11::with_name(attrs, "nes-emulator", "nes-emulator")
+        };
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, window.clone());

@@ -140,7 +140,14 @@ jobs:
           mkdir -p ${{ matrix.artifact_name }}
           cp target/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
           cp README.md ${{ matrix.artifact_name }}/
+          cp LICENSE ${{ matrix.artifact_name }}/
           cp docs/running-linux.md ${{ matrix.artifact_name }}/RUNNING.md
+          # Launcher entry + icon + a no-root installer so the app shows up in
+          # the desktop menu with its icon (the bare binary alone has none).
+          cp assets/nes-emulator.desktop ${{ matrix.artifact_name }}/
+          cp assets/icon.png ${{ matrix.artifact_name }}/nes-emulator.png
+          cp assets/install-linux.sh ${{ matrix.artifact_name }}/install.sh
+          chmod +x ${{ matrix.artifact_name }}/install.sh
           tar -czf ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
 
       - name: Package Artifacts (Windows)
@@ -150,6 +157,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path ${{ matrix.artifact_name }}
           Copy-Item "target\release\${{ matrix.binary_name }}" -Destination "${{ matrix.artifact_name }}\"
           Copy-Item "README.md" -Destination "${{ matrix.artifact_name }}\"
+          Copy-Item "LICENSE" -Destination "${{ matrix.artifact_name }}\LICENSE.txt"
           Copy-Item "docs\running-windows.md" -Destination "${{ matrix.artifact_name }}\RUNNING.md"
           Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.artifact_name }}.${{ matrix.archive_ext }}"
 
@@ -157,10 +165,29 @@ jobs:
         if: github.event_name == 'push' && matrix.os == 'macos-latest'
         run: |
           mkdir -p ${{ matrix.artifact_name }}
-          cp target/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
+          # Assemble a double-clickable .app bundle (Finder won't launch a bare
+          # binary). The universal binary goes in Contents/MacOS.
+          APP="${{ matrix.artifact_name }}/NES Emulator.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/release/${{ matrix.binary_name }} "$APP/Contents/MacOS/nes-emulator"
+          # Stamp the bundle with the crate version so Info.plist never drifts
+          # from Cargo.toml (the source of truth).
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          sed "s/__VERSION__/$VERSION/g" assets/Info.plist > "$APP/Contents/Info.plist"
+          # Build a real multi-resolution .icns from the source PNG for the dock.
+          mkdir icon.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s assets/icon.png --out "icon.iconset/icon_${s}x${s}.png" >/dev/null
+            sips -z $((s*2)) $((s*2)) assets/icon.png --out "icon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+          done
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/icon.icns"
+          # GPL: ship the license. Inside the bundle so it travels with the
+          # .app, plus a top-level copy for users who never open the bundle.
+          cp LICENSE "$APP/Contents/Resources/LICENSE"
+          cp LICENSE ${{ matrix.artifact_name }}/
           cp README.md ${{ matrix.artifact_name }}/
           cp docs/running-macos.md ${{ matrix.artifact_name }}/RUNNING.md
-          zip -r ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
+          zip -ry ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
 
       - name: Upload Artifact
         if: github.event_name == 'push'

@@ -36,8 +36,10 @@ The home menu offers **Load ROM** (native file picker), **Settings**, **Resume**
 (when a game is loaded) and **Quit**. Settings lets you rebind every controller
 button for either player (toggle the EDIT PLAYER row, select a button, press
 Enter, then press the new key), change the window scale, toggle NTSC overscan
-cropping and reset defaults; everything is persisted to
-`nes-emulator-config.json`.
+cropping and reset defaults; everything is persisted to a `config.json` in the
+platform's per-user config directory (`~/.config/nes-emulator` on Linux,
+`~/Library/Application Support/nes-emulator` on macOS, `%APPDATA%\nes-emulator`
+on Windows).
 
 ## Default controls
 
