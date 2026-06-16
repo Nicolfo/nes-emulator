@@ -140,6 +140,7 @@ jobs:
           mkdir -p ${{ matrix.artifact_name }}
           cp target/release/${{ matrix.binary_name }} ${{ matrix.artifact_name }}/
           cp README.md ${{ matrix.artifact_name }}/
+          cp LICENSE ${{ matrix.artifact_name }}/
           cp docs/running-linux.md ${{ matrix.artifact_name }}/RUNNING.md
           # Launcher entry + icon + a no-root installer so the app shows up in
           # the desktop menu with its icon (the bare binary alone has none).
@@ -156,6 +157,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path ${{ matrix.artifact_name }}
           Copy-Item "target\release\${{ matrix.binary_name }}" -Destination "${{ matrix.artifact_name }}\"
           Copy-Item "README.md" -Destination "${{ matrix.artifact_name }}\"
+          Copy-Item "LICENSE" -Destination "${{ matrix.artifact_name }}\LICENSE.txt"
           Copy-Item "docs\running-windows.md" -Destination "${{ matrix.artifact_name }}\RUNNING.md"
           Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.artifact_name }}.${{ matrix.archive_ext }}"
 
@@ -179,6 +181,10 @@ jobs:
             sips -z $((s*2)) $((s*2)) assets/icon.png --out "icon.iconset/icon_${s}x${s}@2x.png" >/dev/null
           done
           iconutil -c icns icon.iconset -o "$APP/Contents/Resources/icon.icns"
+          # GPL: ship the license. Inside the bundle so it travels with the
+          # .app, plus a top-level copy for users who never open the bundle.
+          cp LICENSE "$APP/Contents/Resources/LICENSE"
+          cp LICENSE ${{ matrix.artifact_name }}/
           cp README.md ${{ matrix.artifact_name }}/
           cp docs/running-macos.md ${{ matrix.artifact_name }}/RUNNING.md
           zip -ry ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} ${{ matrix.artifact_name }}
