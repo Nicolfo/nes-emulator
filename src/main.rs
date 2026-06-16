@@ -529,7 +529,15 @@ impl ApplicationHandler for App {
         // thus its taskbar icon) by app_id on Wayland / WM_CLASS on X11. Both
         // must equal the .desktop file's basename ("nes-emulator") for the
         // installed icon to render, since winit's RGBA window icon is X11-only.
-        #[cfg(all(unix, not(target_os = "macos")))]
+        // Gated to the targets where winit exposes its Wayland/X11 extension
+        // modules (Linux + BSDs); other Unixes lack them and wouldn't compile.
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+        ))]
         let attrs = {
             use winit::platform::wayland::WindowAttributesExtWayland;
             use winit::platform::x11::WindowAttributesExtX11;
