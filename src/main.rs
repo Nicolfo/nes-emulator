@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 use pixels::{Pixels, SurfaceTexture};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 use nes_emulator::cartridge::Region;
 use nes_emulator::nes::Nes;
@@ -80,7 +80,12 @@ struct App {
     /// controller sees their union (see `apply_inputs`).
     kb_mask: [u8; 2],
     pad_mask: [u8; 2],
+    /// Timestamp of the last left-button press, for double-click detection.
+    last_click: Option<Instant>,
 }
+
+/// Max gap between two left clicks to count as a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// Restore <rom>.sav into battery RAM (no-op without a battery) and return
 /// the path so it can be written back later.
@@ -260,11 +265,44 @@ impl App {
         if let Some(p) = &mut self.pixels {
             let _ = p.resize_buffer(WIDTH as u32, h as u32);
         }
-        if let Some(w) = &self.window {
+        // A fullscreen window must not be snapped back to the scaled size, or
+        // loading a ROM / changing scale would silently drop out of fullscreen.
+        if let Some(w) = &self.window
+            && w.fullscreen().is_none()
+        {
             let _ = w.request_inner_size(LogicalSize::new(
                 (WIDTH as u32 * self.cfg.scale) as f64,
                 (h as u32 * self.cfg.scale) as f64,
             ));
+        }
+    }
+
+    /// Flip OS borderless fullscreen on the active monitor (no title bar).
+    /// Reading the live `fullscreen()` state keeps the toggle correct even if
+    /// the OS dropped us out on its own. `apply_view_size` skips its resize
+    /// while fullscreen so loading a ROM doesn't snap the window back.
+    fn toggle_fullscreen(&mut self) {
+        if let Some(w) = &self.window {
+            let mode = w
+                .fullscreen()
+                .is_none()
+                .then_some(Fullscreen::Borderless(None));
+            w.set_fullscreen(mode);
+        }
+    }
+
+    /// Treat the second of two quick left clicks as a double-click and toggle
+    /// fullscreen. Resets the timer so a third click starts a fresh pair.
+    fn handle_click(&mut self) {
+        let now = Instant::now();
+        let double = self
+            .last_click
+            .is_some_and(|t| now.duration_since(t) <= DOUBLE_CLICK);
+        if double {
+            self.last_click = None;
+            self.toggle_fullscreen();
+        } else {
+            self.last_click = Some(now);
         }
     }
 
@@ -505,11 +543,23 @@ impl ApplicationHandler for App {
                 }
                 self.redraw();
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => self.handle_click(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
                 let pressed = event.state.is_pressed();
+                // F11 toggles fullscreen in every view (not rebindable). Escape
+                // is left to the per-view handlers (opens the menu / backs out)
+                // and never exits fullscreen.
+                if pressed && !event.repeat && code == KeyCode::F11 {
+                    self.toggle_fullscreen();
+                    return;
+                }
                 match self.view {
                     View::Running => self.running_key(code, pressed, event.repeat),
                     View::Home { .. } if pressed => self.home_key(code, event_loop),
@@ -679,6 +729,7 @@ fn main() {
         gamepads,
         kb_mask: [0, 0],
         pad_mask: [0, 0],
+        last_click: None,
     };
     event_loop.run_app(&mut app).expect("event loop");
     // single exit point for quit/close/escape-from-home

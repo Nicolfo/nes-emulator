@@ -55,6 +55,7 @@ cropping and reset defaults; everything is persisted to
 | Reset console | F3 |
 | Save state | F5 |
 | Load state | F7 |
+| Fullscreen | F11 / double-click |
 
 Per-player button bindings (except Escape, the **F3** reset key and the F5/F7
 savestate keys) can be changed in Settings. **F3** soft-resets the console (the
