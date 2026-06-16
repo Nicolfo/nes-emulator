@@ -180,14 +180,12 @@ impl Mapper for TaitoTc0690 {
                 self.irq_enabled = false;
                 self.irq_line = false;
             }
-            0xE000 => {
-                if !self.four_screen {
-                    self.mirroring = if val & 0x40 != 0 {
-                        Mirroring::Horizontal
-                    } else {
-                        Mirroring::Vertical
-                    };
-                }
+            0xE000 if !self.four_screen => {
+                self.mirroring = if val & 0x40 != 0 {
+                    Mirroring::Horizontal
+                } else {
+                    Mirroring::Vertical
+                };
             }
             _ => {}
         }
