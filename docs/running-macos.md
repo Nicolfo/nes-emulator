@@ -33,10 +33,8 @@ see the main `README.md` (included in this archive).
 - **Dock icon**: the bundle includes the emulator icon, so it shows in the dock
   and Finder instead of a generic one.
 - **Settings**: key bindings and window scale are saved to
-  `nes-emulator-config.json`. When launched from Finder a bundle's working
-  directory is `/`, which isn't writable, so settings won't persist across
-  runs unless you launch the inner binary from a writable directory in a
-  terminal (as in step 3). A future release will move the config to
-  `~/Library/Application Support`.
+  `~/Library/Application Support/nes-emulator/config.json`, so they persist
+  whether you launch the app from Finder or run the inner binary from a
+  terminal.
 - **Controls**: see the *Default controls* table in the included `README.md`.
   All bindings except Escape can be changed in Settings.

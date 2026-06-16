@@ -51,7 +51,10 @@ The icon shows on both X11 and Wayland because the emulator sets its window
 ## Notes
 
 - **Settings**: key bindings and window scale are saved to
-  `nes-emulator-config.json`, created in the directory the emulator is
-  launched from.
+  `$XDG_CONFIG_HOME/nes-emulator/config.json` (defaults to
+  `~/.config/nes-emulator/config.json`), so they persist whether you launch
+  from a terminal or the app menu. A config from an older version (a
+  `nes-emulator-config.json` next to where you ran it) is migrated
+  automatically on first save.
 - **Controls**: see the *Default controls* table in the included `README.md`.
   All bindings except Escape can be changed in Settings.

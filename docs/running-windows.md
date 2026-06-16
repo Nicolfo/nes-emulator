@@ -24,7 +24,9 @@ archive. To build from source instead, see the main `README.md` (included in thi
   it. (Trace/log output via the `NES_*_LOG` env vars is available in debug
   builds only.)
 - **Settings**: key bindings and window scale are saved to
-  `nes-emulator-config.json`, created in the directory the emulator is
-  launched from.
+  `%APPDATA%\nes-emulator\config.json`, so they persist no matter where the
+  emulator is launched from. A config from an older version (a
+  `nes-emulator-config.json` next to where you ran it) is migrated
+  automatically on first save.
 - **Controls**: see the *Default controls* table in the included `README.md`.
   All bindings except Escape can be changed in Settings.

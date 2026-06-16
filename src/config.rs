@@ -1,4 +1,9 @@
-//! Persistent settings: button mapping + window scale. Saved as JSON next to the cwd.
+//! Persistent settings: button mapping + window scale. Saved as JSON in the
+//! platform's per-user config directory so settings persist no matter the
+//! working directory (e.g. when launched from Finder or a desktop launcher,
+//! where the cwd is `/` or `$HOME` rather than the binary's folder).
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
@@ -7,7 +12,52 @@ use nes_emulator::controller::{
     BTN_A, BTN_B, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_SELECT, BTN_START, BTN_UP,
 };
 
-pub const CONFIG_PATH: &str = "nes-emulator-config.json";
+/// Config filename inside the per-user config directory.
+const CONFIG_FILE: &str = "config.json";
+/// Pre-0.2 location: a file next to the working directory. Still read once for
+/// a one-time migration so existing users keep their bindings.
+const LEGACY_CONFIG_PATH: &str = "nes-emulator-config.json";
+
+/// Per-user config directory for this app, following each platform's
+/// convention. `None` only if the environment defines no home/config location
+/// (then we fall back to the legacy cwd-relative file).
+fn config_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join("Library/Application Support/nes-emulator"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // %APPDATA% (Roaming) is the conventional home for per-user app config.
+        let appdata = std::env::var_os("APPDATA")?;
+        Some(PathBuf::from(appdata).join("nes-emulator"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // XDG Base Directory spec: $XDG_CONFIG_HOME, else ~/.config.
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
+            && !xdg.is_empty()
+        {
+            return Some(PathBuf::from(xdg).join("nes-emulator"));
+        }
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join(".config/nes-emulator"))
+    }
+}
+
+/// Absolute path the config is read from and written to, creating the parent
+/// directory if needed. Falls back to the legacy cwd-relative filename when no
+/// config directory can be resolved.
+fn config_path() -> PathBuf {
+    match config_dir() {
+        Some(dir) => {
+            let _ = std::fs::create_dir_all(&dir);
+            dir.join(CONFIG_FILE)
+        }
+        None => PathBuf::from(LEGACY_CONFIG_PATH),
+    }
+}
 
 pub const BUTTON_LABELS: [&str; 8] = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
 pub const BUTTON_MASKS: [u8; 8] = [
@@ -67,7 +117,10 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Self {
-        std::fs::read_to_string(CONFIG_PATH)
+        // Prefer the standard config path; if absent, fall back to the legacy
+        // cwd file so a pre-existing config migrates on the next save().
+        std::fs::read_to_string(config_path())
+            .or_else(|_| std::fs::read_to_string(LEGACY_CONFIG_PATH))
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .map(|mut c: Config| {
@@ -79,7 +132,7 @@ impl Config {
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(CONFIG_PATH, json);
+            let _ = std::fs::write(config_path(), json);
         }
     }
 
