@@ -33,6 +33,21 @@ archive. To build from source instead, see the main `README.md` (included in thi
    If the binary lost its executable bit during extraction, restore it with
    `chmod +x nes-emulator`.
 
+## Adding it to your application menu (optional)
+
+The archive bundles a launcher entry (`nes-emulator.desktop`), an icon
+(`nes-emulator.png`) and an installer. Running it installs everything into
+`~/.local` (no root required), so "NES Emulator" shows up in your desktop's
+app launcher with its icon:
+
+```
+./install.sh
+```
+
+To install system-wide instead, set a prefix: `PREFIX=/usr/local sudo ./install.sh`.
+The icon shows on both X11 and Wayland because the emulator sets its window
+`app_id`/`WM_CLASS` to `nes-emulator`, matching the launcher entry.
+
 ## Notes
 
 - **Settings**: key bindings and window scale are saved to
