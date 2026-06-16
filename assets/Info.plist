@@ -8,10 +8,12 @@
 	<string>NES Emulator</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.nicolfo.nes-emulator</string>
+	<!-- __VERSION__ is substituted with the Cargo.toml version when CI builds
+	     the .app bundle, so the two never drift. -->
 	<key>CFBundleVersion</key>
-	<string>0.1.6</string>
+	<string>__VERSION__</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.6</string>
+	<string>__VERSION__</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleExecutable</key>

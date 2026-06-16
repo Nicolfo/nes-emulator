@@ -168,7 +168,10 @@ jobs:
           APP="${{ matrix.artifact_name }}/NES Emulator.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp target/release/${{ matrix.binary_name }} "$APP/Contents/MacOS/nes-emulator"
-          cp assets/Info.plist "$APP/Contents/Info.plist"
+          # Stamp the bundle with the crate version so Info.plist never drifts
+          # from Cargo.toml (the source of truth).
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          sed "s/__VERSION__/$VERSION/g" assets/Info.plist > "$APP/Contents/Info.plist"
           # Build a real multi-resolution .icns from the source PNG for the dock.
           mkdir icon.iconset
           for s in 16 32 128 256 512; do
