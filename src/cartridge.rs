@@ -1,7 +1,8 @@
 use crate::mapper::{
-    Action53, Axrom, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom, H3001,
-    HolyDiver, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163, Namco108, Namco175340, Nrom,
-    Rambo1, Sunsoft4, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
+    Action53, Axrom, Bandai74161, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom,
+    H3001, HolyDiver, IremG101, JalecoJf17, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163,
+    Namco108, Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft3, Sunsoft4, TaitoTc0690, Txsrom,
+    Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -103,19 +104,27 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
         26 => Box::new(Vrc6::new_vrc6b(prg, chr, mirroring)),
         28 => Box::new(Action53::new(prg, chr, mirroring)),
+        32 => Box::new(IremG101::new(submapper, prg, chr, mirroring)),
+        // 33 (TC0190) and 48 (TC0690) share one core; a "mapper 33" ROM that
+        // drives the IRQ registers is auto-promoted to TC0690 behaviour.
+        33 | 48 => Box::new(TaitoTc0690::new(mapper_id, prg, chr, mirroring)),
         34 => Box::new(Bnrom::new(prg, chr, mirroring)),
         64 => Box::new(Rambo1::new(prg, chr, mirroring)),
         65 => Box::new(H3001::new(prg, chr, mirroring)),
         66 => Box::new(Gxrom::new(prg, chr, mirroring)),
+        67 => Box::new(Sunsoft3::new(prg, chr, mirroring)),
         68 => Box::new(Sunsoft4::new(prg, chr, mirroring)),
         69 => Box::new(Fme7::new(prg, chr, mirroring)),
+        70 | 152 => Box::new(Bandai74161::new(mapper_id, prg, chr, mirroring)),
         71 => Box::new(Codemasters::new(prg, chr, mirroring)),
+        72 => Box::new(JalecoJf17::new(prg, chr, mirroring)),
         73 => Box::new(Vrc3::new(prg, chr, mirroring)),
         75 => Box::new(Vrc1::new(prg, chr, mirroring)),
         78 => Box::new(HolyDiver::new(prg, chr, mirroring)),
         85 => Box::new(Vrc7::new(submapper, prg, chr, mirroring)),
         118 => Box::new(Txsrom::new(prg, chr, mirroring)),
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
+        184 => Box::new(Sunsoft1::new(prg, chr, mirroring)),
         206 => Box::new(Namco108::new(prg, chr, mirroring)),
         210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
