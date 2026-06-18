@@ -51,6 +51,13 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     // for the exponent-multiplier form NES 2.0 uses when the nibble is 0xF.
     let prg_size = rom_size(data[4], if nes2 { data[9] & 0x0F } else { 0 }, 16 * 1024);
     let chr_size = rom_size(data[5], if nes2 { data[9] >> 4 } else { 0 }, 8 * 1024);
+    // A cartridge with no PRG ROM is unusable: every mapper indexes PRG to
+    // serve the reset vector at $FFFC, and an empty bank panics (len-1 / %0).
+    // Reject it here so a corrupt or crafted header fails as a clean error
+    // rather than crashing the emulator on the first fetch.
+    if prg_size == 0 {
+        return Err("ROM declares no PRG ROM".into());
+    }
     let region = if nes2 {
         // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
         if data[12] & 3 == 1 {
@@ -77,10 +84,14 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let has_trainer = flags6 & 0x04 != 0;
     let battery = flags6 & 0x02 != 0;
 
-    let prg_start = 16 + if has_trainer { 512 } else { 0 };
-    let chr_start = prg_start + prg_size;
+    let prg_start: usize = 16 + if has_trainer { 512 } else { 0 };
+    // NES 2.0's exponent size form can encode absurd sizes; saturating math
+    // keeps a bogus header from overflowing the offset arithmetic. The length
+    // check below then rejects it as truncated instead of panicking.
+    let chr_start = prg_start.saturating_add(prg_size);
+    let end = chr_start.saturating_add(chr_size);
 
-    if data.len() < chr_start + chr_size {
+    if data.len() < end {
         return Err("ROM file truncated".into());
     }
 
@@ -169,6 +180,16 @@ mod tests {
     #[test]
     fn rejects_bad_magic() {
         assert!(load_rom(&[0u8; 32]).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_prg_without_panicking() {
+        // Valid magic + mapper 0 but byte 4 (PRG bank count) = 0. Must be a
+        // clean Err, not a panic from indexing an empty PRG bank at reset.
+        let mut data = vec![0u8; 16];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        // data[4] = 0 (no PRG), data[5] = 0 (no CHR)
+        assert!(load_rom(&data).is_err());
     }
 
     /// Minimal 32KB mapper-0 image; `flags6` carries the mirroring bits.
