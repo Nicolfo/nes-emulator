@@ -3,7 +3,7 @@
 //! working directory (e.g. when launched from Finder or a desktop launcher,
 //! where the cwd is `/` or `$HOME` rather than the binary's folder).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
@@ -42,7 +42,7 @@ fn config_dir() -> Option<PathBuf> {
         // honoring one would put config back under the cwd, the very thing this
         // is meant to avoid.
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
-            && Path::new(&xdg).is_absolute()
+            && std::path::Path::new(&xdg).is_absolute()
         {
             return Some(PathBuf::from(xdg).join("nes-emulator"));
         }
@@ -135,7 +135,14 @@ impl Config {
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(config_path(), json);
+            // Write to a temp sibling then rename over the target, so an
+            // interrupted write can't leave a truncated (unparseable) config
+            // that would reset all the user's bindings on next launch.
+            let path = config_path();
+            let tmp = path.with_extension("json.tmp");
+            if std::fs::write(&tmp, json).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+            }
         }
     }
 

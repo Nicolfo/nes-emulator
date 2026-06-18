@@ -10,6 +10,7 @@ mod gamepad;
 mod icon;
 mod menu;
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -155,7 +156,7 @@ impl App {
             return;
         };
         match nes.save_state().and_then(|data| {
-            std::fs::write(&path, data).map_err(|e| format!("write {}: {e}", path.display()))
+            atomic_write(&path, &data).map_err(|e| format!("write {}: {e}", path.display()))
         }) {
             Ok(()) => eprintln!("saved state to {}", path.display()),
             Err(e) => eprintln!("save state failed: {e}"),
@@ -172,10 +173,15 @@ impl App {
             eprintln!("no savestate at {}", path.display());
             return;
         }
+        // A savestate is a local file but still untrusted input: a hand-edited
+        // blob can carry inconsistent state. load_state validates magic/region,
+        // and the catch_unwind contains any panic from restoring bad mapper data.
         match std::fs::read(&path)
             .map_err(|e| format!("read {}: {e}", path.display()))
-            .and_then(|data| nes.load_state(&data))
-        {
+            .and_then(|data| {
+                catch_unwind(AssertUnwindSafe(|| nes.load_state(&data)))
+                    .unwrap_or_else(|p| Err(format!("savestate rejected: {}", panic_msg(p))))
+            }) {
             Ok(()) => {
                 eprintln!("loaded state from {}", path.display());
                 self.clear_audio();
@@ -191,7 +197,7 @@ impl App {
             return;
         };
         if let Some(ram) = nes.battery_ram()
-            && let Err(e) = std::fs::write(path, ram)
+            && let Err(e) = atomic_write(path, ram)
         {
             eprintln!("failed to write {}: {e}", path.display());
         }
@@ -204,7 +210,7 @@ impl App {
             .pick_file();
         let Some(path) = picked else { return };
         match std::fs::read(&path) {
-            Ok(rom) => match Nes::new(&rom) {
+            Ok(rom) => match safe_new(&rom) {
                 Ok(mut nes) => {
                     self.save_battery_ram(); // flush the outgoing game first
                     if let Some(a) = &self.audio {
@@ -648,13 +654,21 @@ impl ApplicationHandler for App {
         // Sample physical gamepads once per wake-up and merge with the keyboard.
         self.pad_mask = self.gamepads.as_mut().map_or([0, 0], |g| g.poll());
         self.apply_inputs();
-        let nes = self.nes.as_mut().unwrap();
-        let period = frame_period(nes);
+        let period = frame_period(self.nes.as_ref().unwrap());
         let now = Instant::now();
         let mut ran = false;
+        // Set when a frame panics (a malformed/tampered ROM that slipped past
+        // load-time checks and trips a mapper's bank math mid-run). We unload
+        // the ROM and surface an error instead of letting the panic abort the
+        // whole emulator.
+        let mut crash: Option<String> = None;
+        let nes = self.nes.as_mut().unwrap();
         let mut catch_up = 0;
         while now >= self.next_frame && catch_up < 3 {
-            nes.run_frame();
+            if let Err(p) = catch_unwind(AssertUnwindSafe(|| nes.run_frame())) {
+                crash = Some(panic_msg(p));
+                break;
+            }
             self.next_frame += period;
             ran = true;
             catch_up += 1;
@@ -663,7 +677,7 @@ impl ApplicationHandler for App {
             // fell too far behind (e.g. window drag); resync instead of spiraling
             self.next_frame = now + period;
         }
-        if ran {
+        if ran && crash.is_none() {
             let samples = nes.take_audio();
             if let Some(audio) = &self.audio {
                 audio.push(&samples);
@@ -674,6 +688,20 @@ impl ApplicationHandler for App {
                 nes.tune_audio(audio.sample_rate as f64 * (1.0 - 0.003 * err));
             }
             self.redraw();
+        }
+        if let Some(msg) = crash {
+            // The machine is in an unknown state after a panic; drop it whole
+            // rather than reuse it. Skip the .sav write - its RAM may be corrupt.
+            eprintln!("emulation panicked, unloading ROM: {msg}");
+            self.nes = None;
+            self.sav_path = None;
+            self.error = Some(format!("EMULATION CRASHED: {msg}"));
+            self.view = View::Home { sel: 0 };
+            self.clear_audio();
+            self.apply_view_size();
+            self.redraw();
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
@@ -693,6 +721,46 @@ fn blit_menu(frame: &mut [u8], draw: impl FnOnce(&mut [u8], i32)) {
     let mut full = vec![0u8; WIDTH * HEIGHT * 4];
     draw(&mut full, h as i32);
     frame.copy_from_slice(&full[..h * WIDTH * 4]);
+}
+
+/// Turn a caught panic payload into a printable message.
+fn panic_msg(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// Build a `Nes` from ROM bytes, converting a panic in the cartridge/mapper
+/// setup (e.g. a malformed header that survives `load_rom` but trips a mapper's
+/// bank math at reset) into an `Err`. Untrusted ROM files must never crash the
+/// emulator, only fail to load.
+fn safe_new(rom: &[u8]) -> Result<Nes, String> {
+    match catch_unwind(|| Nes::new(rom)) {
+        Ok(res) => res,
+        Err(p) => Err(format!("ROM rejected: {}", panic_msg(p))),
+    }
+}
+
+/// Write `data` to `path` atomically: write a sibling temp file, then rename it
+/// over the target. A crash or full disk mid-write leaves the previous file
+/// intact instead of a truncated one - important for .sav/.state files that
+/// hold the player's progress. Falls back to a direct write if no temp path can
+/// be formed.
+fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Rename can fail across some filesystems; don't leave the temp behind.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 /// Set or clear `bit` in a button mask.
@@ -725,7 +793,7 @@ fn main() {
     let mut sav_path = None;
     if let Some(path) = std::env::args().nth(1) {
         match std::fs::read(&path) {
-            Ok(rom) => match Nes::new(&rom) {
+            Ok(rom) => match safe_new(&rom) {
                 Ok(mut n) => {
                     if let Some(a) = &audio {
                         n.set_sample_rate(a.sample_rate as f64);
