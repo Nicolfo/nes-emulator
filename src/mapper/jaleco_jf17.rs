@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 /// is hardwired. The JF-19 adds a uPD7756C sample player, which is not emulated
 /// (no game depends on it for gameplay). Games: Pinball Quest, Moero!! Pro
 /// Yakyuu, Moero!! Pro Tennis.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JalecoJf17 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -42,7 +43,7 @@ impl JalecoJf17 {
 }
 
 impl Mapper for JalecoJf17 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;

@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 /// keeps its fixed interpretation. FourScreen headers are never overridden.
 #[derive(Serialize, Deserialize)]
 pub struct Namco175340 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(with = "crate::savestate::byte_array")]

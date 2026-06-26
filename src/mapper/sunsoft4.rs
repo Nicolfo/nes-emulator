@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// space in place of the console's CIRAM.
 #[derive(Serialize, Deserialize)]
 pub struct Sunsoft4 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(with = "crate::savestate::byte_array")]

@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 /// The board has no bus-conflict prevention, so the written value is ANDed
 /// with the ROM byte at the written address. Headers declaring no CHR ROM
 /// get 8KB of unbanked CHR RAM.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ColorDreams {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -41,7 +42,7 @@ impl ColorDreams {
 }
 
 impl Mapper for ColorDreams {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

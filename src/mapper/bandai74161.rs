@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 /// Mapper 70 ignores bit 7 and keeps the header-supplied mirroring; mapper 152
 /// uses bit 7 to pick single-screen page A (0) or B (1). Games: Kamen Rider
 /// Club, Family Trainer (70); Arkanoid II, Saint Seiya, Pocket Zaurus (152).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Bandai74161 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -49,7 +50,7 @@ impl Bandai74161 {
 }
 
 impl Mapper for Bandai74161 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;

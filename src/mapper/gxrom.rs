@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// PRG bank, bits 0-1 select an 8KB CHR bank.
 #[derive(Serialize, Deserialize)]
 pub struct Gxrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     prg_bank: u8,

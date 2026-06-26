@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// not emulated.
 #[derive(Serialize, Deserialize)]
 pub struct Cnrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_bank: u8,

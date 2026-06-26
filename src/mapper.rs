@@ -164,18 +164,76 @@ pub trait Mapper {
 }
 
 /// Implements [`Mapper::save_state`]/[`Mapper::load_state`] for a mapper type
-/// by round-tripping the whole struct through `serde_json`. The mapper must
-/// derive `Serialize`/`Deserialize`. Invoke inside the `impl Mapper` block.
+/// by round-tripping the struct through `serde_json`. The mapper must derive
+/// `Serialize`/`Deserialize`, have a `prg: Vec<u8>` and a `chr: Vec<u8>` field,
+/// and mark `prg` with `#[serde(skip)]`. Invoke inside the `impl Mapper` block.
+///
+/// PRG ROM is never embedded in the blob: it is elided on save (via the
+/// `#[serde(skip)]` on the field) and re-injected from the live cartridge on
+/// restore. This keeps savestates small and makes a malformed blob unable to
+/// shrink `prg` into an out-of-bounds bank index (`len()/bank - 1`, `% banks`).
+/// CHR length is checked against the loaded board on restore for the same
+/// reason.
+///
+/// Two forms:
+/// - `impl_mapper_savestate!()` keeps `chr` in the blob (correct whether the
+///   board's CHR is ROM or RAM).
+/// - `impl_mapper_savestate!(chr_is_ram = field)` additionally elides CHR-ROM
+///   (re-injected on restore) while keeping CHR-RAM, which is genuine state.
+///   Requires the mapper to also derive `Clone`.
 #[macro_export]
 macro_rules! impl_mapper_savestate {
     () => {
         fn save_state(&self) -> ::std::vec::Vec<u8> {
+            // `prg` carries `#[serde(skip)]`, so the ROM is not embedded here.
             ::serde_json::to_vec(self).expect("serialize mapper state")
         }
 
         fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
-            *self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
-            Ok(())
+            let mut restored: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            if restored.chr.len() != self.chr.len() {
+                return ::std::result::Result::Err(::std::format!(
+                    "savestate CHR size {} does not match ROM ({})",
+                    restored.chr.len(),
+                    self.chr.len()
+                ));
+            }
+            restored.prg = ::std::mem::take(&mut self.prg);
+            *self = restored;
+            ::std::result::Result::Ok(())
+        }
+    };
+
+    (chr_is_ram = $flag:ident) => {
+        fn save_state(&self) -> ::std::vec::Vec<u8> {
+            if self.$flag {
+                // CHR is RAM: its contents are state, so keep them in the blob.
+                ::serde_json::to_vec(self).expect("serialize mapper state")
+            } else {
+                // CHR is ROM: blank it in a copy so it is elided like PRG.
+                let mut shadow = ::std::clone::Clone::clone(self);
+                shadow.chr = ::std::vec::Vec::new();
+                ::serde_json::to_vec(&shadow).expect("serialize mapper state")
+            }
+        }
+
+        fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
+            let mut restored: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            if restored.$flag {
+                if restored.chr.len() != self.chr.len() {
+                    return ::std::result::Result::Err(::std::format!(
+                        "savestate CHR-RAM size {} does not match board ({})",
+                        restored.chr.len(),
+                        self.chr.len()
+                    ));
+                }
+            } else {
+                // CHR-ROM was elided: re-inject it from the live cartridge.
+                restored.chr = ::std::mem::take(&mut self.chr);
+            }
+            restored.prg = ::std::mem::take(&mut self.prg);
+            *self = restored;
+            ::std::result::Result::Ok(())
         }
     };
 }

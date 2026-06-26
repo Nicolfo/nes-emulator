@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 ///   bank at $7FFD and two 4KB CHR banks at $7FFE/$7FFF. Impossible Mission II.
 ///   The register writes pass through to PRG RAM as well, since they share the
 ///   $6000-$7FFF window.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Bnrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -62,7 +63,7 @@ impl Bnrom {
 }
 
 impl Mapper for Bnrom {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

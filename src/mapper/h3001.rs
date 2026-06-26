@@ -23,8 +23,9 @@ use serde::{Deserialize, Serialize};
 /// (no auto-reload). `$9005`/`$9006` set the high/low bytes of the reload
 /// latch, `$9004` copies the latch into the live counter (and acks), and
 /// `$9003` bit 7 enables the counter (and acks).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct H3001 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -99,7 +100,7 @@ impl H3001 {
 }
 
 impl Mapper for H3001 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
@@ -166,7 +167,7 @@ impl Mapper for H3001 {
 /// Both `$9003` and `$9004` writes acknowledge (clear) a pending IRQ. When
 /// enabled, the counter decrements every cycle and asserts IRQ when it
 /// underflows past 0 (a count of 0 wrapping to 0xFFFF).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct H3001Irq {
     latch: u16,
     counter: u16,

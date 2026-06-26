@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 /// banking, scanline IRQ on A12, and PRG RAM protect are identical to MMC3.
 /// The $A000 mirroring register does not switch H/V; instead nametable routing
 /// is driven by bit 7 of the active CHR bank register for each 1KB quadrant.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Txsrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -115,7 +116,7 @@ impl Txsrom {
 }
 
 impl Mapper for Txsrom {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

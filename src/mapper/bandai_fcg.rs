@@ -26,8 +26,9 @@ use serde::{Deserialize, Serialize};
 /// the two-wire interface - $xD bit 6 = SDA, bit 5 = SCL - and read back at
 /// $6000 bit 4. The full I2C slave protocol is emulated in [`SerialEeprom`] and
 /// persists to the .sav file. The bare FCG-1/2 has no EEPROM.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BandaiFcg {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -148,7 +149,7 @@ impl BandaiFcg {
 }
 
 impl Mapper for BandaiFcg {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
@@ -222,7 +223,7 @@ impl Mapper for BandaiFcg {
 /// the LZ93D50 writes a *latch* copied into the counter when the IRQ is enabled
 /// via $xA, while the older FCG-1/2 writes the counter directly. `immediate`
 /// selects the FCG-1/2 behavior.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct IrqState {
     enabled: bool,
     immediate: bool,
@@ -293,7 +294,7 @@ impl IrqState {
 /// while the 24C01 has no device byte - its first byte is the 7-bit word
 /// address plus the R/W bit. Everything else (START/STOP detection, MSB-first
 /// byte shifts, master/slave ACK handshakes, address auto-increment) is shared.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SerialEeprom {
     data: Vec<u8>,
     /// 24C02 (true) uses a device-select byte then a word-address byte; the

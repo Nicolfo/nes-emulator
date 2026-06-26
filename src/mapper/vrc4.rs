@@ -28,8 +28,9 @@ use serde::{Deserialize, Serialize};
 /// full superset. We always model the VRC4 superset for 21/23/25 since the
 /// extra registers are harmless for VRC2 titles that happen to use those
 /// numbers, and we set `vrc2 = (mapper == 22)` to gate the quirks.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Vrc4 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -175,7 +176,7 @@ impl Vrc4 {
 }
 
 impl Mapper for Vrc4 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]
@@ -289,7 +290,7 @@ impl Mapper for Vrc4 {
 /// The shared Konami VRC IRQ (identical design to VRC6): an up-counter from a
 /// reloadable latch, in CPU-cycle mode or scanline mode (a 341/3-dot
 /// prescaler). VRC4 splits the latch reload across two nibble writes.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct VrcIrq {
     latch: u8,
     counter: u8,

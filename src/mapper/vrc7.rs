@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 /// Two board pinouts decode the register-select line differently: VRC7a
 /// (submapper 2, Lagrange Point) uses A4 ($x010), VRC7b (submapper 1, Tiny
 /// Toon Adventures 2) uses A3 ($x008). The sound ports add A5.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Vrc7 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -53,7 +54,7 @@ impl Vrc7 {
 }
 
 impl Mapper for Vrc7 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
@@ -173,7 +174,7 @@ impl Mapper for Vrc7 {
 /// The shared Konami VRC IRQ: an up-counter from a reloadable latch, in
 /// CPU-cycle mode or scanline mode (a 341/3-dot prescaler). Identical to the
 /// unit in VRC4/VRC6.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct VrcIrq {
     latch: u8,
     counter: u8,
@@ -401,7 +402,7 @@ impl Channel {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Opll {
     custom: [u8; 8], // programmable instrument (patch 0)
     ch: [Channel; 6],

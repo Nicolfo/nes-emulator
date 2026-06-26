@@ -1,8 +1,9 @@
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Nrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -23,7 +24,7 @@ impl Nrom {
 }
 
 impl Mapper for Nrom {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             // mask handles both 16KB (mirrored) and 32KB PRG

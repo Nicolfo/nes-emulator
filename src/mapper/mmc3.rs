@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 
 /// MMC3 (mapper 4): 8KB PRG banking, 1KB CHR banking, switchable mirroring,
 /// and a scanline IRQ counter clocked by rising edges on PPU A12.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Mmc3 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -113,7 +114,7 @@ impl Mmc3 {
 }
 
 impl Mapper for Mmc3 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

@@ -197,6 +197,32 @@ impl Ppu {
         self.region = region;
     }
 
+    /// Reject a restored PPU whose counters violate the invariants the
+    /// rendering pipeline relies on, so a malformed savestate returns an error
+    /// rather than panicking on an out-of-range slice on the next scanline.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.sprite_count > self.sprites.len() {
+            return Err(format!(
+                "savestate sprite_count {} exceeds {}",
+                self.sprite_count,
+                self.sprites.len()
+            ));
+        }
+        if self.sec_addr as usize >= self.secondary_oam.len() {
+            return Err(format!("savestate sec_addr {} out of range", self.sec_addr));
+        }
+        // -1 = pre-render; visible/vblank scanlines top out at 260 (NTSC) or
+        // 310 (PAL). dot is a 0..=340 column counter. Out-of-range values feed
+        // the per-dot index math that slices secondary OAM and the sprite rows.
+        if !(-1..=310).contains(&self.scanline) {
+            return Err(format!("savestate scanline {} out of range", self.scanline));
+        }
+        if self.dot > 340 {
+            return Err(format!("savestate dot {} out of range", self.dot));
+        }
+        Ok(())
+    }
+
     /// Last vblank scanline before the pre-render line.
     fn last_line(&self) -> i16 {
         match self.region {

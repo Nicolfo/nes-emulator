@@ -33,8 +33,9 @@ use serde::{Deserialize, Serialize};
 /// A12); the one TC0690 quirk is that the value written to $C000 is inverted
 /// (one's-complemented) before use as the reload value (per the nesdev wiki:
 /// "XOR the writes with $FF and it will work just like MMC3").
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TaitoTc0690 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -133,7 +134,7 @@ impl TaitoTc0690 {
 }
 
 impl Mapper for TaitoTc0690 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

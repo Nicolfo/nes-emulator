@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 /// is always PRG bank 0, while $C000-$FFFF selects `prg_bank`. 8KB CHR (RAM).
 /// Real boards rely on bus conflicts (written value ANDed with ROM byte) which
 /// Crazy Climber depends on; not emulated (plain register write).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Unrom180 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -30,7 +31,7 @@ impl Unrom180 {
 }
 
 impl Mapper for Unrom180 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;
         match addr {

@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 /// $F800  [.... PPPP]  PRG Reg (16KB @ $8000)
 /// ```
 /// Games: Fantasy Zone 2, Mito Koumon, Nantettatte!! Baseball.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Sunsoft3 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -70,7 +71,7 @@ impl Sunsoft3 {
 }
 
 impl Mapper for Sunsoft3 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

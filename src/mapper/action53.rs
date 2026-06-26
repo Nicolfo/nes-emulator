@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 /// holy-mapperel M28 test ROM is the source of truth and the exact bank math
 /// is expected to be tuned by the caller. All of the PRG mapping is isolated
 /// in [`Action53::prg_offset`] so it is trivial to adjust.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Action53 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -151,7 +152,7 @@ impl Action53 {
 }
 
 impl Mapper for Action53 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

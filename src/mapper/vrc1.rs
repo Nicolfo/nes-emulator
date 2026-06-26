@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each CHR selector is a 5-bit value: the low nibble from $E000/$F000 plus
 /// the matching high bit from $9000. No IRQ, no PRG RAM.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Vrc1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -73,7 +74,7 @@ impl Vrc1 {
 }
 
 impl Mapper for Vrc1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

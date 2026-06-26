@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// counter, and a multiplexed wavetable sound chip with up to 8 channels.
 #[derive(Serialize, Deserialize)]
 pub struct N163 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(with = "crate::savestate::byte_array")]

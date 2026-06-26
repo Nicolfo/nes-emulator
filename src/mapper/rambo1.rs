@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 ///   by PPU A12 rises, and a CPU-cycle counter clocked (through a /4
 ///   prescaler) every CPU cycle. The mode is latched from bit 0 of the value
 ///   written to $C001.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Rambo1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -167,7 +168,7 @@ impl Rambo1 {
 }
 
 impl Mapper for Rambo1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

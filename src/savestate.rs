@@ -21,7 +21,10 @@ use crate::ppu::Ppu;
 /// File magic: "NSS\0" (Nes Save State), little-endian.
 pub const MAGIC: u32 = 0x0053_5353;
 /// Bump whenever the serialized layout changes incompatibly.
-pub const VERSION: u32 = 1;
+///
+/// v2: PRG/CHR-ROM are no longer embedded in the mapper blob (re-injected from
+/// the loaded cartridge on restore), and both controller ports are snapshotted.
+pub const VERSION: u32 = 2;
 
 /// One complete machine snapshot.
 #[derive(Serialize, Deserialize)]
@@ -33,7 +36,8 @@ pub struct SaveState {
     pub bus: BusSave,
     pub ppu: Ppu,
     pub apu: ApuSave,
-    pub controller: Controller,
+    pub controller1: Controller,
+    pub controller2: Controller,
     /// Mapper-specific state, produced by [`crate::mapper::Mapper::save_state`].
     pub mapper: Vec<u8>,
 }

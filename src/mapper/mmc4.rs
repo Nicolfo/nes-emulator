@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// PPU fetches the magic tiles $FD/$FE - identical to MMC2.
 #[derive(Serialize, Deserialize)]
 pub struct Mmc4 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(with = "crate::savestate::byte_array")]

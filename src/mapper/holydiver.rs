@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// This is submapper 3 (Holy Diver): bit 3 selects Horizontal/Vertical
 /// mirroring. (Submapper 1 / Cosmo Carrier uses single-screen instead.)
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HolyDiver {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -48,7 +49,7 @@ impl HolyDiver {
 }
 
 impl Mapper for HolyDiver {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;

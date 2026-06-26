@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// feeding the register decoder are swapped; everything else is identical.
 #[derive(Serialize, Deserialize)]
 pub struct Vrc6 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(with = "crate::savestate::byte_array")]

@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Submapper 1 (Major League) hardwires single-screen mirroring and ignores
 /// the $9000 mirroring bit.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IremG101 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -82,7 +83,7 @@ impl IremG101 {
 }
 
 impl Mapper for IremG101 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

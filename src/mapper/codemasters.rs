@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 /// PRG bank at $8000-$BFFF, the last 16KB fixed at $C000-$FFFF, and 8KB CHR
 /// RAM. The bank register sits at $C000-$FFFF. A few BF9097 titles (Fire Hawk)
 /// also drive single-screen mirroring from $9000-$9FFF bit 4.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Codemasters {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -29,7 +30,7 @@ impl Codemasters {
 }
 
 impl Mapper for Codemasters {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;
         match addr {

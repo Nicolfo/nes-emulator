@@ -396,8 +396,10 @@ impl Cpu {
         for i in 0..256u16 {
             // OAM read happens on a get cycle; a ripe DMC fetch steals it,
             // then the OAM DMA runs one alignment cycle before resuming.
-            if dmc_pending && dmc_served >= 2 && self.bus.dmc_request.is_some() {
-                let sample_addr = self.bus.dmc_request.take().unwrap();
+            if dmc_pending
+                && dmc_served >= 2
+                && let Some(sample_addr) = self.bus.dmc_request.take()
+            {
                 let v = self.fetch_cycle(sample_addr);
                 self.bus.apu.dmc_supply(v);
                 dmc_pending = false;
@@ -411,8 +413,7 @@ impl Cpu {
         }
         // A DMC DMA still pending when the OAM DMA ends carries over the
         // halt/dummy cycles it was already served.
-        if dmc_pending && self.bus.dmc_request.is_some() {
-            let sample_addr = self.bus.dmc_request.take().unwrap();
+        if dmc_pending && let Some(sample_addr) = self.bus.dmc_request.take() {
             while dmc_served < 2 {
                 self.read_cycle(halt_addr);
                 dmc_served += 1;

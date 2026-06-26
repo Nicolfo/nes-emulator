@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Not emulated: vertical split mode ($5200-$5202).
 #[derive(Serialize, Deserialize)]
 pub struct Mmc5 {
+    #[serde(skip)]
     prg: Vec<u8>,
     prg_ram: Vec<u8>,
     chr: Vec<u8>,

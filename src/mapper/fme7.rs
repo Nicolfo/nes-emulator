@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 /// command/parameter banking, a 16-bit CPU-cycle IRQ counter, and (on the
 /// 5B) a YM2149-derived sound generator. Audio implements the three tone
 /// channels; envelope and noise are omitted (no licensed game uses them).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Fme7 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -86,7 +87,7 @@ impl Fme7 {
 }
 
 impl Mapper for Fme7 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]
@@ -173,7 +174,7 @@ impl Mapper for Fme7 {
 /// Sunsoft 5B sound: three YM2149 square-tone channels. The chip divides
 /// the CPU clock by 16 per tone step (twice the YM2149's /8, at twice the
 /// typical clock - same pitch).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Sunsoft5b {
     reg_select: u8,
     regs: [u8; 16],

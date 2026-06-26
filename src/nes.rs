@@ -70,7 +70,8 @@ impl Nes {
             bus: self.cpu.bus.save_state(),
             ppu: self.cpu.bus.ppu.clone(),
             apu: self.cpu.bus.apu.save_state(),
-            controller: self.cpu.bus.controller1.clone(),
+            controller1: self.cpu.bus.controller1.clone(),
+            controller2: self.cpu.bus.controller2.clone(),
             mapper: self.cpu.bus.cart.save_state(),
         };
         serde_json::to_vec(&state).map_err(|e| format!("failed to serialize savestate: {e}"))
@@ -95,20 +96,35 @@ impl Nes {
         if state.region != self.region {
             return Err("savestate is for a different TV region".into());
         }
+        // Validate untrusted invariants before mutating anything, so a
+        // malformed blob returns Err instead of corrupting the live machine
+        // (or panicking later on an out-of-range index).
+        state.ppu.validate()?;
         self.cpu.bus.cart.load_state(&state.mapper)?;
         self.cpu.load_state(state.cpu);
         self.cpu.bus.load_state(state.bus);
         self.cpu.bus.ppu = state.ppu;
         self.cpu.bus.apu.load_state(state.apu);
-        self.cpu.bus.controller1 = state.controller;
+        self.cpu.bus.controller1 = state.controller1;
+        self.cpu.bus.controller2 = state.controller2;
         Ok(())
     }
 
     /// Run until the PPU enters vblank (one full frame).
+    ///
+    /// A real frame is ~29,781 (NTSC) / ~33,248 (PAL) CPU cycles. The loop is
+    /// bounded well above that so a jammed CPU (a `JAM`/`KIL` opcode in corrupt
+    /// PRG) or any pathological state that never reaches vblank bails out
+    /// instead of spinning forever - the frontend stays responsive.
     pub fn run_frame(&mut self) {
+        const MAX_FRAME_CYCLES: u64 = 100_000;
         self.cpu.bus.ppu.frame_complete = false;
+        let mut budget: u64 = 0;
         while !self.cpu.bus.ppu.frame_complete {
-            self.cpu.step();
+            budget += self.cpu.step();
+            if budget > MAX_FRAME_CYCLES {
+                break;
+            }
         }
     }
 
@@ -218,5 +234,118 @@ mod tests {
         nes.load_battery_ram(&[0xAB; 0x2000]); // ignored
         assert!(nes.battery_ram().is_none());
         assert_eq!(nes.cpu.bus.cart.prg_ram().unwrap()[0], 0);
+    }
+
+    /// A `state.version` from an older format (which embedded the ROM and had a
+    /// single controller) must be rejected, not silently misread.
+    #[test]
+    fn load_state_rejects_old_version() {
+        let mut nes = Nes::new(&rom(0x10)).unwrap();
+        let blob = nes.save_state().unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&blob).unwrap();
+        v["version"] = serde_json::json!(VERSION - 1);
+        let tampered = serde_json::to_vec(&v).unwrap();
+        assert!(nes.load_state(&tampered).is_err());
+    }
+
+    /// The savestate no longer embeds PRG/CHR ROM. nestest is a 24KB ROM whose
+    /// PRG+CHR would balloon to ~80KB as a JSON byte array if embedded; the
+    /// whole state stays well under that.
+    #[test]
+    fn savestate_does_not_embed_rom() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let blob = nes.save_state().unwrap();
+        assert!(
+            blob.len() < 50_000,
+            "savestate is {} bytes - ROM appears to be embedded",
+            blob.len()
+        );
+    }
+
+    /// A malformed savestate that claims more sprites than the fixed 8-entry
+    /// sprite array must return an error, not panic on the next scanline.
+    #[test]
+    fn load_state_rejects_oversized_sprite_count() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        nes.run_frame();
+        let blob = nes.save_state().unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&blob).unwrap();
+        v["ppu"]["sprite_count"] = serde_json::json!(99);
+        let tampered = serde_json::to_vec(&v).unwrap();
+        assert!(nes.load_state(&tampered).is_err());
+        // The rejected restore left the machine runnable (no partial mutation).
+        nes.run_frame();
+    }
+
+    /// A malformed mapper blob with empty CHR (the classic `len()/bank - 1`
+    /// panic source) must be rejected rather than crashing on the first fetch.
+    #[test]
+    fn load_state_rejects_short_mapper_chr() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        nes.run_frame();
+        let blob = nes.save_state().unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&blob).unwrap();
+        // Decode the inner mapper JSON, mark CHR as RAM but leave it empty, and
+        // re-encode: the restore must catch the size mismatch.
+        let inner_bytes: Vec<u8> = serde_json::from_value(v["mapper"].clone()).unwrap();
+        let mut inner: serde_json::Value = serde_json::from_slice(&inner_bytes).unwrap();
+        inner["chr_is_ram"] = serde_json::json!(true);
+        inner["chr"] = serde_json::json!([]);
+        v["mapper"] = serde_json::json!(serde_json::to_vec(&inner).unwrap());
+        let tampered = serde_json::to_vec(&v).unwrap();
+        assert!(nes.load_state(&tampered).is_err());
+        nes.run_frame();
+    }
+
+    /// CHR-RAM contents are genuine state and must round-trip through a
+    /// savestate. Unlike CHR-ROM (re-injected from the cartridge), the RAM
+    /// image is serialized, so a divergent live machine restores the saved
+    /// bytes rather than its current ones.
+    #[test]
+    fn savestate_roundtrips_chr_ram() {
+        // mapper 0, 32KB PRG, no CHR ROM -> 8KB CHR-RAM.
+        let mut data = vec![0u8; 16 + 32 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2; // 32KB PRG
+        data[5] = 0; // no CHR -> CHR-RAM
+        let mut nes = Nes::new(&data).unwrap();
+        nes.cpu.bus.cart.ppu_write(0x0123, 0xAB);
+        assert_eq!(nes.cpu.bus.cart.ppu_read(0x0123), 0xAB);
+        let blob = nes.save_state().unwrap();
+        // Diverge after the snapshot.
+        nes.cpu.bus.cart.ppu_write(0x0123, 0x5C);
+        nes.load_state(&blob).unwrap();
+        assert_eq!(nes.cpu.bus.cart.ppu_read(0x0123), 0xAB);
+    }
+
+    /// Two-player input must survive a savestate round-trip (controller2 was
+    /// previously dropped from the snapshot).
+    #[test]
+    fn savestate_roundtrips_controller2() {
+        use crate::controller::{BTN_A, BTN_START, Controller};
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        nes.cpu.bus.controller2.set_button(BTN_A, true);
+        nes.cpu.bus.controller2.set_button(BTN_START, true);
+        // Strobe to latch the buttons into the shift register, then freeze.
+        nes.cpu.bus.controller2.write(1);
+        nes.cpu.bus.controller2.clock_put_cycle();
+        nes.cpu.bus.controller2.write(0);
+        let blob = nes.save_state().unwrap();
+        // Diverge: a fresh controller forgets the latched buttons.
+        nes.cpu.bus.controller2 = Controller::default();
+        nes.load_state(&blob).unwrap();
+        let p2: Vec<u8> = (0..4).map(|_| nes.cpu.bus.controller2.read() & 1).collect();
+        assert_eq!(p2, vec![1, 0, 0, 1], "A, B, Select, Start for player 2");
     }
 }

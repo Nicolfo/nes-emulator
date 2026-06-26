@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// fetches the magic tiles $FD/$FE.
 #[derive(Serialize, Deserialize)]
 pub struct Mmc2 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     mirroring: Mirroring,

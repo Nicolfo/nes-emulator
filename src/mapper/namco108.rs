@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 /// banking layout as MMC3's mode 0, but drops the PRG/CHR mode bits, the
 /// scanline IRQ, the mirroring register (hardwired by the board) and PRG RAM.
 /// Bank numbers are narrower: CHR registers are 6-bit, PRG registers 4-bit.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Namco108 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -59,7 +60,7 @@ impl Namco108 {
 }
 
 impl Mapper for Namco108 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

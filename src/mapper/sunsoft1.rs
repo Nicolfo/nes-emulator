@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 /// ```
 /// PRG ROM (16KB or 32KB) is fixed; mirroring is hardwired by the header.
 /// Games: Atlantis no Nazo, Kanshakudama Nage Kantarou, Wing of Madoola.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Sunsoft1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -43,7 +44,7 @@ impl Sunsoft1 {
 }
 
 impl Mapper for Sunsoft1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

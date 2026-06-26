@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Not emulated: the consecutive-cycle write-ignore quirk (only matters for
 /// games doing read-modify-write stores to $8000+).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Mmc1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -115,7 +116,7 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(chr_is_ram = chr_is_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]
