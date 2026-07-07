@@ -171,8 +171,6 @@ cargo test
   timing and inhibit, length counter load/countdown, sweep muting, DMC fetch and
   IRQ, audible pulse output).
 
-ROMs are not included except for any you place in the project directory.
-
 ## License
 
 This project is licensed under the GNU General Public License v3. See [LICENSE](LICENSE) for details.
