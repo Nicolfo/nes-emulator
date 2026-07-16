@@ -223,7 +223,13 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;

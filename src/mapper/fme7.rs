@@ -10,8 +10,7 @@ pub struct Fme7 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     mirroring: Mirroring,
     command: u8,
     chr_banks: [u8; 8],
@@ -33,7 +32,7 @@ impl Fme7 {
             prg,
             chr,
             chr_is_ram,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             mirroring,
             command: 0,
             chr_banks: [0; 8],
@@ -86,7 +85,16 @@ impl Fme7 {
 }
 
 impl Mapper for Fme7 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]

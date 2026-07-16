@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct N163 {
     prg: Vec<u8>,
     chr: Vec<u8>,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     prg_banks: [u8; 3],
     // CHR regs for $0000-$1FFF (8) and the four nametables (4). Values
     // $E0-$FF select a CIRAM page instead of CHR ROM.
@@ -33,7 +32,7 @@ impl N163 {
         N163 {
             prg,
             chr,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             prg_banks: [0; 3],
             chr_banks,
             irq_counter: 0,
@@ -50,7 +49,13 @@ impl N163 {
 }
 
 impl Mapper for N163 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;

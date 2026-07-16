@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Sunsoft4 {
     prg: Vec<u8>,
     chr: Vec<u8>,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     // $8000/$9000/$A000/$B000: 2KB CHR bank at $0000/$0800/$1000/$1800.
     chr_banks: [u8; 4],
     // $C000/$D000: 1KB CHR-ROM bank numbers used as nametables (bits 6-0)
@@ -33,7 +32,7 @@ impl Sunsoft4 {
         Sunsoft4 {
             prg,
             chr,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             chr_banks: [0; 4],
             nt_banks: [0; 2],
             mirroring,
@@ -86,7 +85,13 @@ impl Sunsoft4 {
 }
 
 impl Mapper for Sunsoft4 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+    }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

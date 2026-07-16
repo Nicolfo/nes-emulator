@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// WRAM can be disabled by PRG bank register bit 4, or - on SNROM boards
 /// (8KB CHR RAM, <512KB PRG) - by CHR bank register bit 4. Disabled WRAM
-/// reads as open bus and ignores writes.
+/// reads as open bus and ignores writes. Boards with 16/32KB WRAM
+/// (SOROM/SXROM/SZROM) bank it through CHR register bits; see
+/// [`Mmc1::prg_ram_offset`].
 ///
 /// Not emulated: the consecutive-cycle write-ignore quirk (only matters for
 /// games doing read-modify-write stores to $8000+).
@@ -17,8 +19,7 @@ pub struct Mmc1 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     shift: u8,
     shift_count: u8,
     control: u8,
@@ -35,7 +36,7 @@ impl Mmc1 {
             prg,
             chr,
             chr_is_ram,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             shift: 0,
             shift_count: 0,
             // Power-on: PRG mode 3 (fix last bank at $C000) so the reset
@@ -96,6 +97,23 @@ impl Mmc1 {
         snrom && chr_bits & 0x10 != 0
     }
 
+    /// Map a $6000-$7FFF access to a PRG RAM offset. Boards with more than
+    /// the common 8KB bank it through CHR bank register bits: SOROM (16KB,
+    /// CHR RAM) uses bit 3, SXROM (32KB, CHR RAM) bits 2-3, SZROM (16KB
+    /// alongside CHR ROM) bit 4. As with the SUROM half-select, hardware
+    /// honors whichever CHR register the PPU last addressed, but games set
+    /// both alike, so chr_bank0 serves.
+    fn prg_ram_offset(&self, addr: u16) -> usize {
+        let reg = self.chr_bank0 as usize;
+        let bank = match (self.prg_ram.len() / 0x2000, self.chr_is_ram) {
+            (2, true) => (reg >> 3) & 1,
+            (4.., true) => (reg >> 2) & 3,
+            (2.., false) => (reg >> 4) & 1,
+            _ => 0,
+        };
+        bank * 0x2000 + (addr as usize & 0x1FFF)
+    }
+
     /// Map a PPU address ($0000-$1FFF) to a CHR offset (4KB banks).
     fn chr_offset(&self, addr: u16) -> usize {
         let banks = self.chr.len() / 0x1000;
@@ -115,7 +133,7 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]
@@ -128,7 +146,8 @@ impl Mapper for Mmc1 {
         match addr {
             0x6000..=0x7FFF => {
                 if !self.wram_disabled() {
-                    self.prg_ram[(addr & 0x1FFF) as usize] = val;
+                    let off = self.prg_ram_offset(addr);
+                    self.prg_ram[off] = val;
                 }
             }
             0x8000..=0xFFFF => {
@@ -181,7 +200,16 @@ impl Mapper for Mmc1 {
         if self.wram_disabled() {
             return None; // open bus
         }
-        Some(self.prg_ram[(addr & 0x1FFF) as usize])
+        Some(self.prg_ram[self.prg_ram_offset(addr)])
+    }
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
     }
 
     fn prg_ram(&self) -> Option<&[u8]> {
@@ -320,6 +348,87 @@ mod tests {
         m.cpu_write(0x6000, 0xAA);
         serial_write(&mut m, 0xA000, 0x10);
         assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+    }
+
+    #[test]
+    fn sxrom_32k_prg_ram_banking() {
+        // SXROM: 512KB PRG, 8KB CHR RAM, 32KB WRAM banked by CHR register
+        // bits 2-3.
+        let mut m = Mmc1::new(vec![0; 32 * 0x4000], vec![]);
+        m.set_ram_sizes(0x8000, 0);
+        assert_eq!(m.prg_ram().unwrap().len(), 0x8000);
+        m.cpu_write(0x6000, 0x11);
+        serial_write(&mut m, 0xA000, 0x04); // bank 1
+        m.cpu_write(0x6000, 0x22);
+        serial_write(&mut m, 0xA000, 0x0C); // bank 3
+        m.cpu_write(0x6000, 0x33);
+        serial_write(&mut m, 0xA000, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x11));
+        serial_write(&mut m, 0xA000, 0x04);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x22));
+        serial_write(&mut m, 0xA000, 0x0C);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x33));
+    }
+
+    #[test]
+    fn sorom_16k_prg_ram_banking() {
+        // SOROM: 8KB CHR RAM, 16KB WRAM banked by CHR register bit 3 only.
+        let mut m = Mmc1::new(vec![0; 16 * 0x4000], vec![]);
+        m.set_ram_sizes(0x4000, 0);
+        m.cpu_write(0x6000, 0xAA);
+        serial_write(&mut m, 0xA000, 0x08); // bank 1
+        m.cpu_write(0x6000, 0xBB);
+        serial_write(&mut m, 0xA000, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        serial_write(&mut m, 0xA000, 0x08);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xBB));
+    }
+
+    #[test]
+    fn szrom_16k_prg_ram_banking() {
+        // SZROM: CHR ROM alongside 16KB WRAM; CHR register bit 4 picks the
+        // WRAM bank (and is not a WRAM disable on CHR ROM boards).
+        let mut m = Mmc1::new(vec![0; 8 * 0x4000], vec![0; 4 * 0x1000]);
+        m.set_ram_sizes(0x4000, 0);
+        m.cpu_write(0x6000, 0xAA);
+        serial_write(&mut m, 0xA000, 0x10); // bank 1
+        m.cpu_write(0x6000, 0xBB);
+        serial_write(&mut m, 0xA000, 0x00);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xAA));
+        serial_write(&mut m, 0xA000, 0x10);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0xBB));
+    }
+
+    #[test]
+    fn set_ram_sizes_resizes_chr_ram_but_not_chr_rom() {
+        // CHR RAM board: 16KB CHR RAM gives four distinct 4KB banks.
+        let mut m = Mmc1::new(vec![0; 2 * 0x4000], vec![]);
+        m.set_ram_sizes(0, 0x4000);
+        serial_write(&mut m, 0x8000, 0x1C); // 4KB CHR mode
+        serial_write(&mut m, 0xA000, 2);
+        m.ppu_write(0x0000, 0xAB);
+        serial_write(&mut m, 0xA000, 0);
+        assert_eq!(m.ppu_read(0x0000), 0x00);
+        serial_write(&mut m, 0xA000, 2);
+        assert_eq!(m.ppu_read(0x0000), 0xAB);
+        // CHR ROM board: the resize must not clobber the ROM.
+        let chr: Vec<u8> = (0..0x2000).map(|i| (i / 0x1000) as u8).collect();
+        let mut m2 = Mmc1::new(vec![0; 2 * 0x4000], chr);
+        m2.set_ram_sizes(0, 0x4000);
+        assert_eq!(m2.ppu_read(0x1000), 1);
+    }
+
+    #[test]
+    fn load_state_rejects_mismatched_ram_size() {
+        // A state saved with 8KB WRAM must not restore into an instance
+        // sized for 32KB (different ROM header) - the guard rejects it.
+        let state = mmc1().save_state();
+        let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
+        let chr: Vec<u8> = (0..4 * 0x1000).map(|i| (i / 0x1000) as u8).collect();
+        let mut other = Mmc1::new(prg, chr);
+        other.set_ram_sizes(0x8000, 0);
+        assert!(other.load_state(&state).is_err());
+        assert_eq!(mmc1().load_state(&state), Ok(()));
     }
 
     #[test]

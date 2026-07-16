@@ -30,6 +30,24 @@ fn rom_size(lsb: u8, msb: u8, unit: usize) -> usize {
     }
 }
 
+/// Decodes one NES 2.0 RAM-size nibble (a shift count from header byte 10 or
+/// 11): 0 means the board has none, otherwise `64 << n` bytes. The nibble
+/// caps the result at 2MB, so the arithmetic can't overflow.
+fn ram_size(shift: u8) -> usize {
+    if shift == 0 { 0 } else { 64usize << shift }
+}
+
+/// Resolves a NES 2.0 RAM-size byte (volatile low nibble + battery-backed
+/// high nibble) to one allocation. The mappers model a single work-RAM array,
+/// so the two chips are summed (boards with both, e.g. MMC5 ETROM's 8K+8K,
+/// expose them as consecutive banks). Rounded up to a whole 8KB because the
+/// flat `$6000-$7FFF` window indexing and per-mapper bank math assume at
+/// least one full bank; smaller real chips mirror across the window anyway.
+fn ram_alloc(byte: u8) -> usize {
+    let total = ram_size(byte & 0x0F) + ram_size(byte >> 4);
+    total.next_multiple_of(0x2000)
+}
+
 /// `battery` is the iNES flags6 bit 1: the board has battery-backed PRG RAM
 /// that should persist to a .sav file.
 pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> {
@@ -141,6 +159,14 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
 
+    // NES 2.0 bytes 10/11 declare the PRG and CHR RAM sizes; honor them so
+    // boards with more than the 8KB default (SOROM/SXROM work RAM, 32KB CHR
+    // RAM carts) get the memory the game expects. Plain iNES has no such
+    // fields (0 = keep each mapper's board default).
+    if nes2 {
+        mapper.set_ram_sizes(ram_alloc(data[10]), ram_alloc(data[11]));
+    }
+
     // An iNES trainer is 512 bytes that the loader places into PRG RAM at
     // $7000-$71FF (RAM offset 0x1000), where cracked games expect to find it.
     // No-op for boards without PRG RAM.
@@ -247,6 +273,61 @@ mod tests {
         assert!(load_rom(&data).is_err());
         data[9] = 0x00;
         assert!(load_rom(&data).is_ok());
+    }
+
+    /// NES 2.0 header: 32KB PRG, `chr_banks` x 8KB CHR ROM, and the given
+    /// RAM-size bytes 10 (PRG) / 11 (CHR).
+    fn nes2_rom(mapper: u8, ram_byte10: u8, ram_byte11: u8, chr_banks: u8) -> Vec<u8> {
+        let mut data = vec![0u8; 16 + 32 * 1024 + chr_banks as usize * 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2;
+        data[5] = chr_banks;
+        data[6] = (mapper << 4) & 0xF0;
+        data[7] = 0x08 | (mapper & 0xF0);
+        data[10] = ram_byte10;
+        data[11] = ram_byte11;
+        data
+    }
+
+    #[test]
+    fn nes2_prg_ram_size_is_honored() {
+        // Byte 10 high nibble 9 -> 64 << 9 = 32KB battery-backed WRAM.
+        let (mapper, _, _) = load_rom(&nes2_rom(1, 0x90, 0, 1)).unwrap();
+        assert_eq!(mapper.prg_ram().unwrap().len(), 0x8000);
+        // Volatile and battery chips sum: 8KB + 8KB.
+        let (mapper, _, _) = load_rom(&nes2_rom(1, 0x77, 0, 1)).unwrap();
+        assert_eq!(mapper.prg_ram().unwrap().len(), 0x4000);
+        // Sub-8KB declarations round up to one full 8KB window.
+        let (mapper, _, _) = load_rom(&nes2_rom(1, 0x01, 0, 1)).unwrap();
+        assert_eq!(mapper.prg_ram().unwrap().len(), 0x2000);
+        // Unspecified (0) keeps the board default.
+        let (mapper, _, _) = load_rom(&nes2_rom(1, 0x00, 0, 1)).unwrap();
+        assert_eq!(mapper.prg_ram().unwrap().len(), 0x2000);
+    }
+
+    #[test]
+    fn nes2_chr_ram_size_is_honored() {
+        // MMC3 with no CHR ROM and byte 11 declaring 32KB CHR RAM: 2KB bank 8
+        // (offset $2000) must be distinct storage from bank 0, not an alias
+        // as with the old fixed 8KB allocation.
+        let (mut mapper, _, _) = load_rom(&nes2_rom(4, 0, 0x09, 0)).unwrap();
+        mapper.ppu_write(0x0000, 0xAA); // power-on R0 = 0 -> bank 0
+        mapper.cpu_write(0x8000, 0); // select R0
+        mapper.cpu_write(0x8001, 8); // 2KB bank 8 at $0000
+        mapper.ppu_write(0x0000, 0xBB);
+        mapper.cpu_write(0x8000, 0);
+        mapper.cpu_write(0x8001, 0); // back to bank 0
+        assert_eq!(mapper.ppu_read(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn plain_ines_ignores_ram_size_bytes() {
+        // Same header without the NES 2.0 signature: bytes 10/11 are unused
+        // (often garbage in old dumps) and must not change the defaults.
+        let mut data = nes2_rom(1, 0x90, 0x90, 1);
+        data[7] &= !0x0C;
+        let (mapper, _, _) = load_rom(&data).unwrap();
+        assert_eq!(mapper.prg_ram().unwrap().len(), 0x2000);
     }
 
     #[test]

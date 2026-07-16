@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Mmc4 {
     prg: Vec<u8>,
     chr: Vec<u8>,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     mirroring: Mirroring,
     prg_bank: u8,
     // CHR bank registers: [FD $0000, FE $0000, FD $1000, FE $1000].
@@ -24,7 +23,7 @@ impl Mmc4 {
         Mmc4 {
             prg,
             chr,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             mirroring,
             prg_bank: 0,
             chr_regs: [0; 4],
@@ -53,7 +52,13 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;
