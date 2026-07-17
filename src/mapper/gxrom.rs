@@ -2,11 +2,15 @@ use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
 /// GxROM (mapper 66): one register at $8000-$FFFF - bits 4-5 select a 32KB
-/// PRG bank, bits 0-1 select an 8KB CHR bank.
+/// PRG bank, bits 0-1 select an 8KB CHR bank. A header declaring no CHR ROM
+/// gets 8KB of CHR RAM (the iNES convention), keeping such images from
+/// crashing the bank math.
 #[derive(Serialize, Deserialize)]
 pub struct Gxrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     prg_bank: u8,
     chr_bank: u8,
     mirroring: Mirroring,
@@ -14,20 +18,39 @@ pub struct Gxrom {
 
 impl Gxrom {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Gxrom {
             prg,
             chr,
+            chr_is_ram,
             prg_bank: 0,
             chr_bank: 0,
             mirroring,
         }
     }
+
+    fn chr_offset(&self, addr: u16) -> usize {
+        let banks = self.chr.len() / 0x2000;
+        (self.chr_bank as usize % banks) * 0x2000 + (addr as usize & 0x1FFF)
+    }
 }
 
 impl Mapper for Gxrom {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr);
+
+    fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
+            // A 16KB image can't fill this board's 32KB window; mirror it
+            // (the loader guarantees at least one whole 16KB bank).
+            if self.prg.len() < 0x8000 {
+                return self.prg[addr as usize & (self.prg.len() - 1)];
+            }
             let banks = self.prg.len() / 0x8000;
             self.prg[(self.prg_bank as usize % banks) * 0x8000 + (addr as usize & 0x7FFF)]
         } else {
@@ -43,11 +66,15 @@ impl Mapper for Gxrom {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        let banks = self.chr.len() / 0x2000;
-        self.chr[(self.chr_bank as usize % banks) * 0x2000 + (addr as usize & 0x1FFF)]
+        self.chr[self.chr_offset(addr)]
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {}
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        if self.chr_is_ram {
+            let off = self.chr_offset(addr);
+            self.chr[off] = val;
+        }
+    }
 
     fn mirroring(&self) -> Mirroring {
         self.mirroring

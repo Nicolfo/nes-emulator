@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 pub struct Namco175340 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     prg_ram: Vec<u8>,
     prg_banks: [u8; 3],
     chr_banks: [u8; 8],
@@ -59,9 +61,12 @@ impl Namco175340 {
             2 => (true, true),   // Namco 340: register-driven mirroring
             _ => (false, false), // unspecified: heuristic, may flip on a write
         };
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Namco175340 {
             prg,
             chr,
+            chr_is_ram,
             prg_ram: vec![0; 0x2000],
             prg_banks: [0; 3],
             chr_banks: [0; 8],
@@ -75,18 +80,25 @@ impl Namco175340 {
         }
     }
 
+    fn chr_offset(&self, bank: u8, addr: u16) -> usize {
+        let banks = self.chr.len() / 0x400;
+        (bank as usize % banks) * 0x400 + (addr as usize & 0x3FF)
+    }
+
     fn chr_byte(&self, bank: u8, addr: u16) -> u8 {
-        let banks = (self.chr.len() / 0x400).max(1);
-        self.chr[(bank as usize % banks) * 0x400 + (addr as usize & 0x3FF)]
+        self.chr[self.chr_offset(bank, addr)]
     }
 }
 
 impl Mapper for Namco175340 {
     crate::impl_mapper_savestate!(prg, chr, prg_ram);
 
-    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
             self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
         }
     }
 
@@ -156,9 +168,15 @@ impl Mapper for Namco175340 {
         }
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is ROM; nametable writes are routed to CIRAM by the PPU using
-        // mirroring() below.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // Real 175/340 boards are CHR ROM; the RAM path only serves zero-CHR
+        // images (iNES CHR RAM convention). Nametable writes are routed to
+        // CIRAM by the PPU using mirroring() below.
+        if self.chr_is_ram && addr < 0x2000 {
+            let bank = self.chr_banks[(addr >> 10) as usize & 7];
+            let off = self.chr_offset(bank, addr);
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {

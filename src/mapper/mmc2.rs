@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct Mmc2 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     mirroring: Mirroring,
     prg_bank: u8,
     // CHR bank registers: [FD $0000, FE $0000, FD $1000, FE $1000].
@@ -18,9 +20,12 @@ pub struct Mmc2 {
 
 impl Mmc2 {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Mmc2 {
             prg,
             chr,
+            chr_is_ram,
             mirroring,
             prg_bank: 0,
             chr_regs: [0; 4],
@@ -49,10 +54,21 @@ impl Mmc2 {
 }
 
 impl Mapper for Mmc2 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr);
+
+    fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr < 0x8000 {
             return 0;
+        }
+        // The fixed-top-three layout needs at least 32KB; mirror smaller
+        // (degenerate) images instead of underflowing the bank math.
+        if self.prg.len() < 0x8000 {
+            return self.prg[addr as usize & (self.prg.len() - 1)];
         }
         let banks = self.prg.len() / 0x2000;
         let bank = if addr < 0xA000 {
@@ -89,8 +105,13 @@ impl Mapper for Mmc2 {
         v
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is always ROM on MMC2 boards.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // Real MMC2 boards are CHR ROM; the RAM path only serves zero-CHR
+        // images (iNES CHR RAM convention). Writes don't clock the latch.
+        if self.chr_is_ram {
+            let off = self.chr_offset(addr);
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {

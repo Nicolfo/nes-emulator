@@ -125,6 +125,11 @@ impl Mmc5 {
         }
         match self.prg_mode & 3 {
             0 => {
+                // A 16KB image can't fill the 32KB window; mirror it (the
+                // loader guarantees at least one whole 16KB bank).
+                if self.prg.len() < 0x8000 {
+                    return (true, addr as usize & (self.prg.len() - 1));
+                }
                 let banks = self.prg.len() / 0x8000;
                 let bank = (self.prg_banks[4] as usize & 0x7F) >> 2;
                 (true, bank % banks * 0x8000 + (addr as usize & 0x7FFF))
