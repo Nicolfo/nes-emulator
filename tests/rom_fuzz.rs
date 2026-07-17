@@ -9,10 +9,21 @@ use nes_emulator::cartridge::load_rom;
 
 /// Run `load_rom` on `data`; turn a panic into a test failure that names the
 /// header bytes, so a regression points straight at the input that broke.
+/// A loadable image must also survive its first accesses - reset-vector and
+/// PRG reads, RAM pokes, pattern fetches - because that's where degenerate
+/// sizes trip bank math (`% 0` or out-of-bounds indexing), not in the parse.
 fn must_not_panic(data: &[u8]) {
     let header: Vec<u8> = data.iter().take(16).copied().collect();
     let result = catch_unwind(|| {
-        let _ = load_rom(data);
+        if let Ok((mut mapper, _, _)) = load_rom(data) {
+            let _ = mapper.cpu_read(0xFFFC);
+            let _ = mapper.cpu_read(0x8000);
+            mapper.cpu_write(0x6123, 0xAB);
+            let _ = mapper.prg_ram_read(0x6123);
+            let _ = mapper.ppu_read(0x0000);
+            let _ = mapper.ppu_read(0x1FFF);
+            mapper.ppu_write(0x0000, 0xCD);
+        }
     });
     assert!(
         result.is_ok(),

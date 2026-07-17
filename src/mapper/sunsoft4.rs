@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub struct Sunsoft4 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     prg_ram: Vec<u8>,
     // $8000/$9000/$A000/$B000: 2KB CHR bank at $0000/$0800/$1000/$1800.
     chr_banks: [u8; 4],
@@ -29,9 +31,12 @@ pub struct Sunsoft4 {
 
 impl Sunsoft4 {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Sunsoft4 {
             prg,
             chr,
+            chr_is_ram,
             prg_ram: vec![0; 0x2000],
             chr_banks: [0; 4],
             nt_banks: [0; 2],
@@ -57,7 +62,7 @@ impl Sunsoft4 {
 
     /// Map a PPU pattern address ($0000-$1FFF) to a CHR offset (2KB banks).
     fn chr_offset(&self, addr: u16) -> usize {
-        let banks = (self.chr.len() / 0x800).max(1);
+        let banks = self.chr.len() / 0x800;
         let bank = self.chr_banks[((addr >> 11) & 3) as usize] as usize % banks;
         bank * 0x800 + (addr as usize & 0x7FF)
     }
@@ -79,7 +84,7 @@ impl Sunsoft4 {
         // Only D6-D0 are used; D7 is ignored and treated as 1, so a nametable
         // always comes from the last 128KB of CHR ROM.
         let bank = 0x80 | (self.nt_banks[page as usize] & 0x7F) as usize;
-        let banks = (self.chr.len() / 0x400).max(1);
+        let banks = self.chr.len() / 0x400;
         (bank % banks) * 0x400 + (addr as usize & 0x3FF)
     }
 }
@@ -87,9 +92,12 @@ impl Sunsoft4 {
 impl Mapper for Sunsoft4 {
     crate::impl_mapper_savestate!(prg, chr, prg_ram);
 
-    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
             self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
         }
     }
 
@@ -143,9 +151,18 @@ impl Mapper for Sunsoft4 {
         }
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is ROM and the CHR-ROM nametables are ROM too; CIRAM writes
-        // are routed via NtTarget::Ciram instead, so nothing to do here.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // Real Sunsoft-4 boards are CHR ROM (nametables included); the RAM
+        // path only serves zero-CHR images (iNES CHR RAM convention). CIRAM
+        // writes are routed via NtTarget::Ciram instead.
+        if self.chr_is_ram {
+            let off = if addr < 0x2000 {
+                self.chr_offset(addr)
+            } else {
+                self.chr_nt_offset(addr)
+            };
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {

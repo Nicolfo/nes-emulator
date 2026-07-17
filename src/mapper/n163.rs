@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct N163 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     prg_ram: Vec<u8>,
     prg_banks: [u8; 3],
     // CHR regs for $0000-$1FFF (8) and the four nametables (4). Values
@@ -29,9 +31,12 @@ impl N163 {
         // registers at 0 would wrongly fetch nametables from CHR ROM.
         let nt = |i: u16| 0xE0 | ((mirror_nt(mirroring, 0x2000 + i * 0x400) >> 10) & 1) as u8;
         let chr_banks = [0, 0, 0, 0, 0, 0, 0, 0, nt(0), nt(1), nt(2), nt(3)];
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         N163 {
             prg,
             chr,
+            chr_is_ram,
             prg_ram: vec![0; 0x2000],
             prg_banks: [0; 3],
             chr_banks,
@@ -42,18 +47,35 @@ impl N163 {
         }
     }
 
-    fn chr_byte(&self, bank: u8, addr: u16) -> u8 {
+    fn chr_offset(&self, bank: u8, addr: u16) -> usize {
         let banks = self.chr.len() / 0x400;
-        self.chr[(bank as usize % banks) * 0x400 + (addr as usize & 0x3FF)]
+        (bank as usize % banks) * 0x400 + (addr as usize & 0x3FF)
+    }
+
+    fn chr_byte(&self, bank: u8, addr: u16) -> u8 {
+        self.chr[self.chr_offset(bank, addr)]
+    }
+
+    /// CHR bank register backing a PPU address: pattern space uses the
+    /// eight $0000-$1FFF registers, nametable space the four NT registers.
+    fn chr_bank_for(&self, addr: u16) -> u8 {
+        if addr < 0x2000 {
+            self.chr_banks[(addr >> 10) as usize & 7]
+        } else {
+            self.chr_banks[8 + ((addr >> 10) & 3) as usize]
+        }
     }
 }
 
 impl Mapper for N163 {
     crate::impl_mapper_savestate!(prg, chr, prg_ram);
 
-    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
             self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
         }
     }
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -96,20 +118,20 @@ impl Mapper for N163 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        if addr < 0x2000 {
-            // Banks $E0+ can map CIRAM into pattern space (unless disabled
-            // by $E800 bits 6/7); no supported game uses that, serve ROM.
-            let bank = self.chr_banks[(addr >> 10) as usize & 7];
-            self.chr_byte(bank, addr)
-        } else {
-            // Nametable routed here when the NT register selects CHR ROM.
-            let bank = self.chr_banks[8 + ((addr >> 10) & 3) as usize];
-            self.chr_byte(bank, addr)
-        }
+        // Pattern space: banks $E0+ can map CIRAM (unless disabled by $E800
+        // bits 6/7); no supported game uses that, serve ROM. Nametable
+        // space: routed here when the NT register selects CHR ROM.
+        self.chr_byte(self.chr_bank_for(addr), addr)
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is ROM; CIRAM nametable writes go through NtTarget::Ciram.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // Real N163 boards are CHR ROM; the RAM path only serves zero-CHR
+        // images (iNES CHR RAM convention). CIRAM nametable writes go
+        // through NtTarget::Ciram, not here.
+        if self.chr_is_ram {
+            let off = self.chr_offset(self.chr_bank_for(addr), addr);
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {

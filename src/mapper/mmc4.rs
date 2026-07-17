@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub struct Mmc4 {
     prg: Vec<u8>,
     chr: Vec<u8>,
+    #[serde(default)]
+    chr_is_ram: bool,
     prg_ram: Vec<u8>,
     mirroring: Mirroring,
     prg_bank: u8,
@@ -20,9 +22,12 @@ pub struct Mmc4 {
 
 impl Mmc4 {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        let chr_is_ram = chr.is_empty();
+        let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Mmc4 {
             prg,
             chr,
+            chr_is_ram,
             prg_ram: vec![0; 0x2000],
             mirroring,
             prg_bank: 0,
@@ -54,9 +59,12 @@ impl Mmc4 {
 impl Mapper for Mmc4 {
     crate::impl_mapper_savestate!(prg, chr, prg_ram);
 
-    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
             self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
         }
     }
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -99,8 +107,13 @@ impl Mapper for Mmc4 {
         v
     }
 
-    fn ppu_write(&mut self, _addr: u16, _val: u8) {
-        // CHR is always ROM on MMC4 boards.
+    fn ppu_write(&mut self, addr: u16, val: u8) {
+        // Real MMC4 boards are CHR ROM; the RAM path only serves zero-CHR
+        // images (iNES CHR RAM convention). Writes don't clock the latch.
+        if self.chr_is_ram {
+            let off = self.chr_offset(addr);
+            self.chr[off] = val;
+        }
     }
 
     fn mirroring(&self) -> Mirroring {

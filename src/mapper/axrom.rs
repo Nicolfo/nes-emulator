@@ -37,6 +37,11 @@ impl Mapper for Axrom {
     }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
+            // A 16KB image can't fill this board's 32KB window; mirror it
+            // (the loader guarantees at least one whole 16KB bank).
+            if self.prg.len() < 0x8000 {
+                return self.prg[addr as usize & (self.prg.len() - 1)];
+            }
             let banks = self.prg.len() / 0x8000;
             self.prg[(self.prg_bank as usize % banks) * 0x8000 + (addr as usize & 0x7FFF)]
         } else {

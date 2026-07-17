@@ -48,6 +48,26 @@ fn ram_alloc(byte: u8) -> usize {
     total.next_multiple_of(0x2000)
 }
 
+/// Pad a ROM image by cyclic repetition to `unit` alignment, and to at least
+/// `min` bytes. NES 2.0's exponent size form can produce images smaller than
+/// one bank (8KB Galaxian-style PRG dumps) or non-bank multiples; repeating
+/// the image preserves the address mirroring such boards exhibit while
+/// keeping every mapper's bank arithmetic - which assumes at least one whole
+/// bank - in bounds. Images already aligned (every plain bank-count size)
+/// come through untouched, as does empty CHR (the CHR RAM signal).
+fn pad_rom(mut v: Vec<u8>, unit: usize, min: usize) -> Vec<u8> {
+    let target = v.len().max(min).next_multiple_of(unit);
+    if v.is_empty() || v.len() == target {
+        return v;
+    }
+    let src = v.clone();
+    while v.len() < target {
+        let take = src.len().min(target - v.len());
+        v.extend_from_slice(&src[..take]);
+    }
+    v
+}
+
 /// `battery` is the iNES flags6 bit 1: the board has battery-backed PRG RAM
 /// that should persist to a .sav file.
 pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> {
@@ -113,8 +133,16 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         return Err("ROM file truncated".into());
     }
 
-    let prg = data[prg_start..prg_start + prg_size].to_vec();
-    let chr = data[chr_start..chr_start + chr_size].to_vec();
+    let prg = pad_rom(
+        data[prg_start..prg_start + prg_size].to_vec(),
+        0x4000,
+        0x4000,
+    );
+    let chr = pad_rom(
+        data[chr_start..chr_start + chr_size].to_vec(),
+        0x2000,
+        0x2000,
+    );
 
     let mut mapper: Box<dyn Mapper> = match mapper_id {
         0 => Box::new(Nrom::new(prg, chr, mirroring)),
@@ -318,6 +346,26 @@ mod tests {
         mapper.cpu_write(0x8000, 0);
         mapper.cpu_write(0x8001, 0); // back to bank 0
         assert_eq!(mapper.ppu_read(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn sub_bank_rom_images_are_mirror_padded() {
+        // NES 2.0 exponent form: 8KB PRG (E=13, M=0), no CHR. The image must
+        // pad to a whole 16KB bank by repetition, so $8000/$A000/$C000/$E000
+        // all mirror the same 8KB - matching how such tiny boards wire the
+        // address lines - instead of panicking mapper bank math.
+        let mut data = vec![0u8; 16 + 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[7] = 0x08; // NES 2.0, mapper 0
+        data[4] = 13 << 2; // PRG size: exponent form via byte 9 nibble 0xF
+        data[9] = 0x0F;
+        data[16] = 0x42; // first PRG byte
+        data[16 + 8 * 1024 - 4] = 0xAB; // reset vector low byte
+        let (mut mapper, _, _) = load_rom(&data).unwrap();
+        assert_eq!(mapper.cpu_read(0x8000), 0x42);
+        assert_eq!(mapper.cpu_read(0xA000), 0x42); // 8KB mirror within the bank
+        assert_eq!(mapper.cpu_read(0xC000), 0x42); // 16KB NROM-128 mirror
+        assert_eq!(mapper.cpu_read(0xFFFC), 0xAB);
     }
 
     #[test]
