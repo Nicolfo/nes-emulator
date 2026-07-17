@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// 8KB RAM. Header mirroring is ignored; the register controls it.
 #[derive(Serialize, Deserialize)]
 pub struct Axrom {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -28,7 +29,7 @@ impl Axrom {
 }
 
 impl Mapper for Axrom {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

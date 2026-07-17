@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 /// in [`Action53::prg_offset`] so it is trivial to adjust.
 #[derive(Serialize, Deserialize)]
 pub struct Action53 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -151,7 +152,7 @@ impl Action53 {
 }
 
 impl Mapper for Action53 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

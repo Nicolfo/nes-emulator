@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// get 8KB of unbanked CHR RAM.
 #[derive(Serialize, Deserialize)]
 pub struct ColorDreams {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -46,7 +47,7 @@ impl ColorDreams {
 }
 
 impl Mapper for ColorDreams {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// channels; envelope and noise are omitted (no licensed game uses them).
 #[derive(Serialize, Deserialize)]
 pub struct Fme7 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -85,7 +86,7 @@ impl Fme7 {
 }
 
 impl Mapper for Fme7 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

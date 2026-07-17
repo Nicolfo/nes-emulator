@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 ///   written to $C001.
 #[derive(Serialize, Deserialize)]
 pub struct Rambo1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -166,7 +167,7 @@ impl Rambo1 {
 }
 
 impl Mapper for Rambo1 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

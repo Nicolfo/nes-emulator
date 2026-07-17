@@ -4,9 +4,11 @@
 //! The snapshot is serialized with `serde_json`. It deliberately omits host
 //! concerns - the PPU framebuffer (regenerated on the next frame) and the
 //! APU's resampling/filter chain (tied to the host output rate, reapplied by
-//! the caller) - so a state restored on a machine with a different audio
-//! configuration keeps playing cleanly. A state is only valid for the same
-//! ROM it was taken from; [`Nes::load_state`](crate::nes::Nes::load_state)
+//! the caller) - and the PRG ROM, which comes from the loaded cartridge
+//! rather than the state (see [`crate::impl_mapper_savestate!`]), so a state
+//! restored on a machine with a different audio configuration keeps playing
+//! cleanly and stays a few hundred KB at most. A state is only valid for the
+//! same ROM it was taken from; [`Nes::load_state`](crate::nes::Nes::load_state)
 //! checks the magic, version, and TV region before applying it.
 
 use serde::{Deserialize, Serialize};
