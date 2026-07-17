@@ -6,16 +6,31 @@
 use std::panic::catch_unwind;
 
 use nes_emulator::cartridge::load_rom;
+use nes_emulator::mapper::NtTarget;
 
 /// Run `load_rom` on `data`; turn a panic into a test failure that names the
 /// header bytes, so a regression points straight at the input that broke.
 /// A loadable image must also survive its first accesses - reset-vector and
-/// PRG reads, RAM pokes, pattern fetches - because that's where degenerate
-/// sizes trip bank math (`% 0` or out-of-bounds indexing), not in the parse.
+/// PRG reads, RAM pokes, pattern fetches, cart-routed nametable fetches -
+/// because that's where degenerate sizes trip bank math (`% 0` or
+/// out-of-bounds indexing), not in the parse. Everything is poked twice:
+/// once at power-on defaults, and again after scribbling pseudo-random
+/// values over the whole register space, so bank arithmetic also holds up
+/// under arbitrary register states.
 fn must_not_panic(data: &[u8]) {
     let header: Vec<u8> = data.iter().take(16).copied().collect();
     let result = catch_unwind(|| {
-        if let Ok((mut mapper, _, _)) = load_rom(data) {
+        let Ok((mut mapper, _, _)) = load_rom(data) else {
+            return;
+        };
+        for scribble in [false, true] {
+            if scribble {
+                let mut seed = 0x9E37_79B9u32;
+                for a in (0x4020..=0xFFFFu32).step_by(0x81) {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    mapper.cpu_write(a as u16, (seed >> 24) as u8);
+                }
+            }
             let _ = mapper.cpu_read(0xFFFC);
             let _ = mapper.cpu_read(0x8000);
             mapper.cpu_write(0x6123, 0xAB);
@@ -23,6 +38,16 @@ fn must_not_panic(data: &[u8]) {
             let _ = mapper.ppu_read(0x0000);
             let _ = mapper.ppu_read(0x1FFF);
             mapper.ppu_write(0x0000, 0xCD);
+            // Nametable fetches reach the cartridge only when nt_target says
+            // so (N163/Namco 175/340 CHR-as-nametable, Sunsoft-4 CHR-ROM
+            // nametables) - mirroring the bus exercises those paths without
+            // violating the ppu_read contract for CIRAM-routed boards.
+            for nt in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+                if mapper.nt_target(nt) == NtTarget::Cart {
+                    let _ = mapper.ppu_read(nt | 0x03FF);
+                    mapper.ppu_write(nt | 0x03FF, 0xEE);
+                }
+            }
         }
     });
     assert!(
