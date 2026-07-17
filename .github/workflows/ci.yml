@@ -49,6 +49,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # The trace feature is off by default and nothing else builds it, so
+      # without this the instrumentation code can bitrot unnoticed.
+      - name: Run clippy (trace feature)
+        run: cargo clippy --all-targets --features trace -- -D warnings
+
   test-and-build:
     name: Test and Build (${{ matrix.os }})
     needs: lints
