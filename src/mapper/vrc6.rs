@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct Vrc6 {
     prg: Vec<u8>,
     chr: Vec<u8>,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     mirroring: Mirroring,
     prg_16k: u8,
     prg_8k: u8,
@@ -38,7 +37,7 @@ impl Vrc6 {
         Vrc6 {
             prg,
             chr,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             mirroring,
             prg_16k: 0,
             prg_8k: 0,
@@ -60,7 +59,13 @@ impl Vrc6 {
 }
 
 impl Mapper for Vrc6 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xBFFF => {

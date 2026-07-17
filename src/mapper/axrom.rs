@@ -28,7 +28,13 @@ impl Axrom {
 }
 
 impl Mapper for Axrom {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr);
+
+    fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             let banks = self.prg.len() / 0x8000;

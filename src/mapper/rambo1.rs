@@ -17,8 +17,7 @@ pub struct Rambo1 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     mirroring: Mirroring,
     // $8000 even: bits 0-3 command, bit 5 K (1KB CHR), bit 6 PRG mode,
     // bit 7 CHR A12 inversion.
@@ -45,7 +44,7 @@ impl Rambo1 {
             prg,
             chr,
             chr_is_ram,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             mirroring,
             bank_select: 0,
             bank_regs: [0; 16],
@@ -167,7 +166,16 @@ impl Rambo1 {
 }
 
 impl Mapper for Rambo1 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {

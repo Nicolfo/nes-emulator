@@ -82,6 +82,32 @@ fn nes2_exponent_sizes_never_panic() {
 }
 
 #[test]
+fn nes2_ram_size_fields_never_panic() {
+    // Bytes 10/11 carry RAM-size shift counts. Every value must produce a
+    // mapper whose RAM window and CHR still serve accesses cleanly - the
+    // round-up to 8KB in the loader is what keeps degenerate sizes safe.
+    for b in 0u16..=255 {
+        let mut data = vec![0u8; 16 + 32 * 1024 + 8 * 1024];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2;
+        data[5] = 1;
+        data[6] = 0x10; // mapper 1
+        data[7] = 0x08; // NES 2.0
+        data[10] = b as u8;
+        data[11] = b as u8;
+        let result = catch_unwind(|| {
+            if let Ok((mut mapper, _, _)) = load_rom(&data) {
+                mapper.cpu_write(0x6123, 0xAB);
+                let _ = mapper.prg_ram_read(0x6123);
+                mapper.ppu_write(0x1FFF, 0xCD);
+                let _ = mapper.ppu_read(0x1FFF);
+            }
+        });
+        assert!(result.is_ok(), "RAM-size byte {b:02X} panicked");
+    }
+}
+
+#[test]
 fn minimal_valid_nrom_loads() {
     // Sanity floor: a well-formed 16KB NROM still parses cleanly.
     let mut data = vec![0u8; 16 + 16 * 1024];

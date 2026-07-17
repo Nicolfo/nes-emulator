@@ -126,6 +126,13 @@ pub trait Mapper {
     fn prg_ram_mut(&mut self) -> Option<&mut [u8]> {
         None
     }
+    /// Resize the board's work RAM to the NES 2.0 header-declared sizes
+    /// (bytes, already rounded up to whole 8KB by the loader; 0 keeps the
+    /// board default). `chr_ram` applies only when the board has CHR RAM
+    /// rather than CHR ROM. Called once by `load_rom` right after
+    /// construction, before the trainer or a .sav restore touches the RAM.
+    /// The default ignores the sizes - right for boards with no RAM at all.
+    fn set_ram_sizes(&mut self, _prg_ram: usize, _chr_ram: usize) {}
     /// Level of the cartridge's IRQ output.
     fn irq(&self) -> bool {
         false
@@ -166,15 +173,32 @@ pub trait Mapper {
 /// Implements [`Mapper::save_state`]/[`Mapper::load_state`] for a mapper type
 /// by round-tripping the whole struct through `serde_json`. The mapper must
 /// derive `Serialize`/`Deserialize`. Invoke inside the `impl Mapper` block.
+///
+/// Listing field names (`impl_mapper_savestate!(prg, chr, prg_ram)`) makes
+/// `load_state` reject a state whose named buffers differ in length from the
+/// live instance's. `Vec`-sized RAM has no inherent length check on
+/// deserialize (unlike a fixed array), so without the guard a crafted state
+/// could shrink a buffer and panic later bank math; a same-ROM state always
+/// matches because the sizes are derived from the ROM header.
 #[macro_export]
 macro_rules! impl_mapper_savestate {
-    () => {
+    ($($field:ident),* $(,)?) => {
         fn save_state(&self) -> ::std::vec::Vec<u8> {
             ::serde_json::to_vec(self).expect("serialize mapper state")
         }
 
         fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
-            *self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            let new: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            $(
+                if new.$field.len() != self.$field.len() {
+                    return ::std::result::Result::Err(::std::format!(
+                        concat!("savestate ", stringify!($field), " is {} bytes; this ROM uses {}"),
+                        new.$field.len(),
+                        self.$field.len(),
+                    ));
+                }
+            )*
+            *self = new;
             Ok(())
         }
     };

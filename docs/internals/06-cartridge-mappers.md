@@ -55,6 +55,11 @@ optional trainer, and (in the newer NES 2.0 variant) the target **region**.
 - Slices out the PRG and CHR byte ranges.
 - Constructs the right concrete mapper based on the mapper number and returns it
   as a `Box<dyn Mapper>`, along with the region and battery flag.
+- Applies the NES 2.0 RAM-size fields (header bytes 10/11, `64 << n` shift
+  counts, volatile + battery nibbles summed) via `Mapper::set_ram_sizes`, so
+  boards with more than the 8 KB default (SOROM/SXROM work RAM, 32 KB CHR RAM
+  carts) get the allocation the game expects. Sizes round up to a whole 8 KB;
+  0 (and plain iNES, which has no such fields) keeps each board's default.
 - If the header's trainer flag is set, copies the 512-byte trainer into PRG RAM
   at `$7000`-`$71FF` (via `prg_ram_mut`) after the mapper is built - a no-op for
   boards with no PRG RAM.

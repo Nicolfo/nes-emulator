@@ -14,8 +14,7 @@ pub struct Vrc7 {
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
-    #[serde(with = "crate::savestate::byte_array")]
-    prg_ram: [u8; 0x2000],
+    prg_ram: Vec<u8>,
     mirroring: Mirroring,
     prg_banks: [u8; 3], // 8KB banks at $8000/$A000/$C000 ($E000 is fixed)
     chr_banks: [u8; 8], // 1KB banks across $0000-$1FFF
@@ -36,7 +35,7 @@ impl Vrc7 {
             prg,
             chr,
             chr_is_ram,
-            prg_ram: [0; 0x2000],
+            prg_ram: vec![0; 0x2000],
             mirroring,
             prg_banks: [0; 3],
             chr_banks: [0; 8],
@@ -53,7 +52,16 @@ impl Vrc7 {
 }
 
 impl Mapper for Vrc7 {
-    crate::impl_mapper_savestate!();
+    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+
+    fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
+        if prg_ram > 0 {
+            self.prg_ram = vec![0; prg_ram];
+        }
+        if chr_ram > 0 && self.chr_is_ram {
+            self.chr = vec![0; chr_ram];
+        }
+    }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
