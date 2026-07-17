@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 /// games doing read-modify-write stores to $8000+).
 #[derive(Serialize, Deserialize)]
 pub struct Mmc1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -133,7 +134,7 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
     fn cpu_read(&mut self, addr: u16) -> u8 {
         if addr >= 0x8000 {
             self.prg[self.prg_offset(addr)]
@@ -416,6 +417,24 @@ mod tests {
         let mut m2 = Mmc1::new(vec![0; 2 * 0x4000], chr);
         m2.set_ram_sizes(0, 0x4000);
         assert_eq!(m2.ppu_read(0x1000), 1);
+    }
+
+    #[test]
+    fn savestate_omits_prg_rom() {
+        // 128KB of PRG as JSON numbers would dwarf everything else in the
+        // state; it must stay out, and a restore must graft the live ROM
+        // back under the restored banking registers.
+        let mut m = mmc1();
+        serial_write(&mut m, 0xE000, 3);
+        let state = m.save_state();
+        assert!(
+            state.len() < 0x20000,
+            "state is {} bytes - PRG ROM leaked in?",
+            state.len()
+        );
+        let mut fresh = mmc1();
+        fresh.load_state(&state).unwrap();
+        assert_eq!(fresh.cpu_read(0x8000), 3); // banking restored, ROM intact
     }
 
     #[test]

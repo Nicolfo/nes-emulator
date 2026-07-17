@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// counter, and a multiplexed wavetable sound chip with up to 8 channels.
 #[derive(Serialize, Deserialize)]
 pub struct N163 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(default)]
@@ -68,7 +69,7 @@ impl N163 {
 }
 
 impl Mapper for N163 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

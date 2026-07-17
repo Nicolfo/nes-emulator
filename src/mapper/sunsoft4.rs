@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// space in place of the console's CIRAM.
 #[derive(Serialize, Deserialize)]
 pub struct Sunsoft4 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(default)]
@@ -90,7 +91,7 @@ impl Sunsoft4 {
 }
 
 impl Mapper for Sunsoft4 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

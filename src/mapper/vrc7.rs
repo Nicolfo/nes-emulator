@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Toon Adventures 2) uses A3 ($x008). The sound ports add A5.
 #[derive(Serialize, Deserialize)]
 pub struct Vrc7 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -52,7 +53,7 @@ impl Vrc7 {
 }
 
 impl Mapper for Vrc7 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

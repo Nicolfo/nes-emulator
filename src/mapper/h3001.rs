@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 /// `$9003` bit 7 enables the counter (and acks).
 #[derive(Serialize, Deserialize)]
 pub struct H3001 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -99,7 +100,7 @@ impl H3001 {
 }
 
 impl Mapper for H3001 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

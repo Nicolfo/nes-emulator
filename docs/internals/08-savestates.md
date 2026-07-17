@@ -91,10 +91,13 @@ mapper (it knows its concrete type) deserializes the bytes into itself. A blob
 from a different mapper simply fails to deserialize, which is reported as an
 error rather than silently corrupting state.
 
-This means the mapper blob includes the cartridge's PRG/CHR ROM. That's
-redundant (the ROM is immutable and already loaded), but it keeps the per-mapper
-code to a single macro line and makes the blob fully self-describing; the size
-cost is acceptable for a manually triggered feature.
+The PRG ROM is marked `#[serde(skip)]` in every mapper and grafted back from
+the live instance on load - the ROM is immutable and already loaded, and
+serializing up to a megabyte of it as JSON numbers dominated the state size.
+CHR still rides along (it may be RAM, and even as ROM it keeps the blob mostly
+self-describing); the macro also length-guards the resizable buffers (CHR,
+PRG RAM) so a mismatched or hand-edited state is rejected instead of panicking
+later bank math.
 
 ## Validation on load
 

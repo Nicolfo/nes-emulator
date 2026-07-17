@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// PPU fetches the magic tiles $FD/$FE - identical to MMC2.
 #[derive(Serialize, Deserialize)]
 pub struct Mmc4 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(default)]
@@ -57,7 +58,7 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {

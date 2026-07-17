@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 /// "XOR the writes with $FF and it will work just like MMC3").
 #[derive(Serialize, Deserialize)]
 pub struct TaitoTc0690 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -133,7 +134,7 @@ impl TaitoTc0690 {
 }
 
 impl Mapper for TaitoTc0690 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

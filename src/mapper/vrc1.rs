@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 /// the matching high bit from $9000. No IRQ, no PRG RAM.
 #[derive(Serialize, Deserialize)]
 pub struct Vrc1 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -73,7 +74,7 @@ impl Vrc1 {
 }
 
 impl Mapper for Vrc1 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

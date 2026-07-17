@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// also drive single-screen mirroring from $9000-$9FFF bit 4.
 #[derive(Serialize, Deserialize)]
 pub struct Codemasters {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -29,7 +30,7 @@ impl Codemasters {
 }
 
 impl Mapper for Codemasters {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

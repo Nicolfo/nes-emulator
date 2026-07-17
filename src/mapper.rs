@@ -172,9 +172,13 @@ pub trait Mapper {
 
 /// Implements [`Mapper::save_state`]/[`Mapper::load_state`] for a mapper type
 /// by round-tripping the whole struct through `serde_json`. The mapper must
-/// derive `Serialize`/`Deserialize`. Invoke inside the `impl Mapper` block.
+/// derive `Serialize`/`Deserialize` and mark its `prg` ROM `#[serde(skip)]`:
+/// the ROM bytes come from the loaded cartridge, not the state, which keeps
+/// savestates a few hundred KB at most instead of embedding up to a megabyte
+/// of PRG ROM. `load_state` grafts the live `prg` onto the restored state.
+/// Invoke inside the `impl Mapper` block.
 ///
-/// Listing field names (`impl_mapper_savestate!(prg, chr, prg_ram)`) makes
+/// Listing field names (`impl_mapper_savestate!(chr, prg_ram)`) makes
 /// `load_state` reject a state whose named buffers differ in length from the
 /// live instance's. `Vec`-sized RAM has no inherent length check on
 /// deserialize (unlike a fixed array), so without the guard a crafted state
@@ -188,7 +192,7 @@ macro_rules! impl_mapper_savestate {
         }
 
         fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
-            let new: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
+            let mut new: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
             $(
                 if new.$field.len() != self.$field.len() {
                     return ::std::result::Result::Err(::std::format!(
@@ -198,6 +202,7 @@ macro_rules! impl_mapper_savestate {
                     ));
                 }
             )*
+            new.prg = ::std::mem::take(&mut self.prg);
             *self = new;
             Ok(())
         }

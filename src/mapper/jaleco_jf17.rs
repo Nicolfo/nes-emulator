@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 /// Yakyuu, Moero!! Pro Tennis.
 #[derive(Serialize, Deserialize)]
 pub struct JalecoJf17 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -42,7 +43,7 @@ impl JalecoJf17 {
 }
 
 impl Mapper for JalecoJf17 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

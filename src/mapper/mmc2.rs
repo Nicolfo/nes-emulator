@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// fetches the magic tiles $FD/$FE.
 #[derive(Serialize, Deserialize)]
 pub struct Mmc2 {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     #[serde(default)]
@@ -54,7 +55,7 @@ impl Mmc2 {
 }
 
 impl Mapper for Mmc2 {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {

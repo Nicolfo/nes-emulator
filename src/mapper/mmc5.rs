@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Not emulated: vertical split mode ($5200-$5202).
 #[derive(Serialize, Deserialize)]
 pub struct Mmc5 {
+    #[serde(skip)]
     prg: Vec<u8>,
     prg_ram: Vec<u8>,
     chr: Vec<u8>,
@@ -228,7 +229,7 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
-    crate::impl_mapper_savestate!(prg, chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, _chr_ram: usize) {
         if prg_ram > 0 {

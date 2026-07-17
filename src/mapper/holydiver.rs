@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 /// mirroring. (Submapper 1 / Cosmo Carrier uses single-screen instead.)
 #[derive(Serialize, Deserialize)]
 pub struct HolyDiver {
+    #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
@@ -48,7 +49,7 @@ impl HolyDiver {
 }
 
 impl Mapper for HolyDiver {
-    crate::impl_mapper_savestate!(prg, chr);
+    crate::impl_mapper_savestate!(chr);
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
