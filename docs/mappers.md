@@ -47,7 +47,20 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 210 | Namco 175 / 340 | N163 banking without audio/IRQ; 340 adds mapper mirroring, 175 adds battery PRG RAM | Famista '92, Wagyan Land 2/3, Splatterhouse |
 
 Expansion audio is summed into the APU mix (before decimation/filtering) for
-the MMC5, VRC6, VRC7, Namco 163 and Sunsoft 5B.
+the MMC5, VRC6, VRC7, Namco 163, Sunsoft 5B and the Famicom Disk System.
+
+## Famicom Disk System
+
+Disk images (`.fds`, with or without the 16-byte fwNES header) run on the FDS
+RAM adapter core rather than an iNES mapper. It needs the 8KB FDS BIOS
+(`disksys.rom`), which is not bundled. Emulated: 32KB PRG RAM + 8KB CHR RAM,
+the BIOS at $E000, the CPU-cycle timer IRQ, mirroring control, the disk drive
+(gapped bitstream with start marks and CRC-16, byte-transfer IRQ, motor/
+end-of-head status, reads and writes), disk-side swapping with an eject delay,
+and the wavetable + modulation sound channel. Disk writes persist through the
+`.sav` file (the whole disk, in plain `.fds` layout). Notable games: *The
+Legend of Zelda* (Disk), *Metroid* (Disk), *Akumajou Dracula*, *Doki Doki
+Panic*, *Super Mario Bros. 2* (J).
 
 The Bandai FCG/LZ93D50 (16/159) serial EEPROM (24C01/24C02) is emulated as a
 full I2C slave, and its contents persist to the .sav file.
