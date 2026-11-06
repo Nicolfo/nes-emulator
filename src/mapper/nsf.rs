@@ -175,6 +175,7 @@ impl NsfMapper {
         let (cpu_hz, us) = match h.region {
             Region::Ntsc => (1_789_773.0, h.speed_ntsc_us),
             Region::Pal => (1_662_607.0, h.speed_pal_us),
+            Region::Dendy => (1_773_447.0, h.speed_pal_us),
         };
         let period = ((us as f64 * cpu_hz / 1_000_000.0).round() as u32).max(1);
         let mut m = NsfMapper {
@@ -355,7 +356,12 @@ impl Mapper for NsfMapper {
                 self.load_fds_ram();
                 Some(self.song as u8)
             }
-            REG_REGION => Some((self.region == Region::Pal) as u8),
+            // NSF2 region codes for X at init: 0 NTSC, 1 PAL, 2 Dendy.
+            REG_REGION => Some(match self.region {
+                Region::Ntsc => 0,
+                Region::Pal => 1,
+                Region::Dendy => 2,
+            }),
             REG_ACK => {
                 let v = (self.irq_line as u8) << 7;
                 self.irq_line = false;

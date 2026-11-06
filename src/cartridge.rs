@@ -11,6 +11,10 @@ use crate::mapper::{
 pub enum Region {
     Ntsc,
     Pal,
+    /// Dendy and other PAL-clocked Famiclones: PAL's 312-line, 50 Hz frame
+    /// but NTSC's 3 PPU dots per CPU cycle, vblank starting at line 291
+    /// (after 51 idle post-render lines) and NTSC-style APU tables.
+    Dendy,
 }
 
 /// Decodes an iNES/NES 2.0 ROM-area size in bytes. `lsb` is the byte-4 (PRG)
@@ -97,11 +101,12 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         return Err("ROM declares no PRG ROM".into());
     }
     let region = if nes2 {
-        // NES 2.0: timing byte (Dendy and multi-region fall back to NTSC).
-        if data[12] & 3 == 1 {
-            Region::Pal
-        } else {
-            Region::Ntsc
+        // NES 2.0 timing byte: 0 NTSC, 1 PAL, 2 multi-region (played as
+        // NTSC), 3 Dendy.
+        match data[12] & 3 {
+            1 => Region::Pal,
+            3 => Region::Dendy,
+            _ => Region::Ntsc,
         }
     } else if data[9] & 1 != 0 {
         // Legacy iNES TV-system bit; rarely set but free to honor.

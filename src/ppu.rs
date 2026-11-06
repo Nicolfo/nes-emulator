@@ -104,7 +104,7 @@ pub struct Ppu {
     palette: [u8; 32],
     read_buffer: u8,
 
-    pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank (241..310 PAL)
+    pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank (241..310 PAL, 291..310 Dendy)
     pub dot: u16,      // 0..340
     region: Region,
     odd_frame: bool,
@@ -201,7 +201,16 @@ impl Ppu {
     fn last_line(&self) -> i16 {
         match self.region {
             Region::Ntsc => 260,
-            Region::Pal => 310,
+            Region::Pal | Region::Dendy => 310,
+        }
+    }
+
+    /// Scanline whose dot 1 raises the vblank flag. The Dendy idles for 51
+    /// post-render lines first so its vblank is NTSC-length at 50 Hz.
+    fn vblank_line(&self) -> i16 {
+        match self.region {
+            Region::Dendy => 291,
+            _ => 241,
         }
     }
 
@@ -268,7 +277,7 @@ impl Ppu {
                 }
                 // Race: reading one PPU clock before VBlank is set returns
                 // clear and prevents the flag (and thus the NMI) entirely.
-                if self.scanline == 241 && self.dot == 1 {
+                if self.scanline == self.vblank_line() && self.dot == 1 {
                     self.suppress_vbl = true;
                 }
                 self.status &= !0x80; // clear vblank
@@ -943,7 +952,7 @@ impl Ppu {
             self.arm_sprite_counters();
         }
 
-        if self.scanline == 241 && self.dot == 1 {
+        if self.scanline == self.vblank_line() && self.dot == 1 {
             self.frame_complete = true;
             if !std::mem::take(&mut self.suppress_vbl) {
                 self.status |= 0x80;
@@ -1094,6 +1103,38 @@ mod tests {
         assert_eq!(first, 0x00);
         assert_eq!(second, 0xAB);
         assert_eq!(third, 0xCD);
+    }
+
+    /// Run one whole frame from the pre-render line and return (dots in the
+    /// frame, scanline where vblank was raised).
+    fn measure_frame(region: Region) -> (u32, i16) {
+        let mut ppu = Ppu::new();
+        ppu.set_region(region);
+        let mut c = cart();
+        ppu.write_register(1, 0x18, &mut c); // rendering on
+        while !(ppu.scanline == -1 && ppu.dot == 0) {
+            ppu.tick(&mut c);
+        }
+        let (mut dots, mut vbl) = (0u32, -1);
+        loop {
+            ppu.tick(&mut c);
+            dots += 1;
+            if vbl < 0 && ppu.status & 0x80 != 0 {
+                vbl = ppu.scanline;
+            }
+            if ppu.scanline == -1 && ppu.dot == 0 {
+                return (dots, vbl);
+            }
+        }
+    }
+
+    #[test]
+    fn dendy_frame_is_312_lines_with_late_vblank() {
+        let (dots, vbl) = measure_frame(Region::Dendy);
+        assert_eq!(dots, 312 * 341, "no odd-frame skip, 312 lines");
+        assert_eq!(vbl, 291);
+        let (dots, vbl) = measure_frame(Region::Pal);
+        assert_eq!((dots, vbl), (312 * 341, 241));
     }
 
     #[test]

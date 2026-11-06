@@ -60,7 +60,8 @@ const OSD_DURATION: Duration = Duration::from_secs(2);
 fn frame_period(nes: &Nes) -> Duration {
     match nes.region() {
         Region::Ntsc => FRAME_PERIOD,
-        Region::Pal => PAL_FRAME_PERIOD,
+        // Dendy: same 312x341-dot frame on the same master clock as PAL.
+        Region::Pal | Region::Dendy => PAL_FRAME_PERIOD,
     }
 }
 
@@ -431,7 +432,8 @@ impl App {
                 }
             }
         } else {
-            safe_build(|| Nes::new(&rom))
+            let region = self.cfg.region.forced();
+            safe_build(|| Nes::new_with_region(&rom, region))
         };
         match built {
             Ok(nes) => self.install_game(nes, path),
@@ -744,6 +746,12 @@ impl App {
                 self.cfg.input_device = DEVICES[(i + delta).rem_euclid(3) as usize];
                 if let Some(nes) = &mut self.nes {
                     nes.set_input_device(self.cfg.input_device);
+                }
+            }
+            SetRow::Region => {
+                self.cfg.region = self.cfg.region.step(delta);
+                if self.nes.is_some() {
+                    self.flash("REGION APPLIES ON NEXT ROM LOAD");
                 }
             }
             SetRow::Rewind => {

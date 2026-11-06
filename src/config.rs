@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
+use nes_emulator::cartridge::Region;
 use nes_emulator::controller::{
     BTN_A, BTN_B, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_SELECT, BTN_START, BTN_UP, InputDevice,
 };
@@ -140,6 +141,52 @@ pub struct Config {
     /// Keep a rewind history (hold Backspace to rewind).
     #[serde(default = "default_true")]
     pub rewind: bool,
+    /// TV system: follow the ROM header, or force one.
+    #[serde(default)]
+    pub region: RegionPref,
+}
+
+/// Region setting: the ROM header's choice or a forced TV system.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RegionPref {
+    #[default]
+    Auto,
+    Ntsc,
+    Pal,
+    Dendy,
+}
+
+impl RegionPref {
+    const ALL: [RegionPref; 4] = [
+        RegionPref::Auto,
+        RegionPref::Ntsc,
+        RegionPref::Pal,
+        RegionPref::Dendy,
+    ];
+
+    /// The forced region, None for Auto.
+    pub fn forced(self) -> Option<Region> {
+        match self {
+            RegionPref::Auto => None,
+            RegionPref::Ntsc => Some(Region::Ntsc),
+            RegionPref::Pal => Some(Region::Pal),
+            RegionPref::Dendy => Some(Region::Dendy),
+        }
+    }
+
+    pub fn step(self, delta: i32) -> Self {
+        let i = Self::ALL.iter().position(|&r| r == self).unwrap_or(0) as i32;
+        Self::ALL[(i + delta).rem_euclid(Self::ALL.len() as i32) as usize]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RegionPref::Auto => "AUTO",
+            RegionPref::Ntsc => "NTSC",
+            RegionPref::Pal => "PAL",
+            RegionPref::Dendy => "DENDY",
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -199,6 +246,7 @@ impl Default for Config {
             ff_speed: default_ff_speed(),
             input_device: InputDevice::Standard,
             rewind: true,
+            region: RegionPref::Auto,
         }
     }
 }
