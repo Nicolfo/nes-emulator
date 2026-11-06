@@ -182,8 +182,10 @@ number and play time. Left/Right switch tracks, F3 restarts the current one.
 
 ### Region override
 
-Settings > OPTIONS > REGION forces NTSC, PAL or **Dendy** at the next ROM load
-(AUTO follows the header; NES 2.0 timing byte 3 already selects Dendy). The
+Settings > OPTIONS > REGION forces NTSC, PAL or **Dendy** (AUTO follows the
+header; NES 2.0 timing byte 3 already selects Dendy). Changing it restarts a
+running cartridge game from power-on in the new region (battery save flushed
+first); FDS and NSF ignore it. The
 Dendy is a PAL-clocked Famiclone: 312-line 50 Hz frames like PAL, but 3 PPU
 dots per CPU cycle like NTSC, 51 idle post-render lines with vblank starting
 at line 291, and NTSC APU tables at 1.773 MHz.

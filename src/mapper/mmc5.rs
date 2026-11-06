@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 /// MMC5 (mapper 5, Castlevania III, Just Breed, Uncharted Waters):
 /// game-compatible core - all four PRG and CHR banking modes with banked
 /// PRG RAM, per-quadrant nametable mapping (CIRAM/ExRAM/fill), the
-/// scanline IRQ, the 8x16-sprite CHR set switch, the $5205 multiplier and
-/// expansion audio (two APU-style pulses plus raw PCM).
-///
-/// Not emulated: vertical split mode ($5200-$5202).
+/// scanline IRQ, the 8x16-sprite CHR set switch, the $5205 multiplier,
+/// vertical split mode ($5200-$5202) and expansion audio (two APU-style
+/// pulses plus raw PCM).
 #[derive(Serialize, Deserialize)]
 pub struct Mmc5 {
     #[serde(skip)]
@@ -54,6 +53,26 @@ pub struct Mmc5 {
     multiplicand: u8,
     multiplier: u8,
     audio: Mmc5Audio,
+    /// Vertical split: $5200 (enable, side, threshold tile), $5201 (Y
+    /// scroll), $5202 (4KB CHR bank).
+    #[serde(default)]
+    split_ctrl: u8,
+    #[serde(default)]
+    split_scroll: u8,
+    #[serde(default)]
+    split_bank: u8,
+    /// BG tile being fetched on this line: 0 = the first prefetch tile
+    /// (dot 321 of the previous line), 2 = the first tile fetched at dot 1.
+    /// Advanced by each tile's high-plane pattern fetch, so the two dummy
+    /// NT reads at dots 337/339 don't count.
+    #[serde(default)]
+    bg_tile: u8,
+    /// The tile whose fetches are in flight lies in the split region; its
+    /// split row Y (0-239) is latched with it.
+    #[serde(default)]
+    split_tile: bool,
+    #[serde(default)]
+    split_y: u8,
 }
 
 impl Mmc5 {
@@ -92,7 +111,45 @@ impl Mmc5 {
             multiplicand: 0xFF,
             multiplier: 0xFF,
             audio: Mmc5Audio::new(),
+            split_ctrl: 0,
+            split_scroll: 0,
+            split_bank: 0,
+            bg_tile: 0,
+            split_tile: false,
+            split_y: 0,
         }
+    }
+
+    /// At a BG nametable fetch: decide whether this tile is in the split
+    /// region and, if so, latch the split row it shows.
+    fn split_at_nt_fetch(&mut self) {
+        let tile = self.bg_tile;
+        let enabled =
+            self.split_ctrl & 0x80 != 0 && self.exram_mode < 2 && self.in_frame && self.rendering;
+        if !enabled {
+            self.split_tile = false;
+            return;
+        }
+        let threshold = self.split_ctrl & 0x1F;
+        let right = self.split_ctrl & 0x40 != 0;
+        self.split_tile = if right {
+            tile >= threshold
+        } else {
+            tile < threshold
+        };
+        // Tiles 0-1 are prefetched for the *next* line; the line counter
+        // only advances when that line starts.
+        let line = if tile < 2 {
+            self.scanline as u16 + 1
+        } else {
+            self.scanline as u16
+        };
+        self.split_y = ((self.split_scroll as u16 + line) % 240) as u8;
+    }
+
+    /// Column (0-31) of the split tile in flight.
+    fn split_column(&self) -> usize {
+        (self.bg_tile & 31) as usize
     }
 
     /// Resolve a CPU address ($6000-$FFFF) to (is_rom, byte offset).
@@ -211,6 +268,8 @@ impl Mmc5 {
             self.fetch_count
         );
         self.fetch_count = 0;
+        // Detection fires on tile 2's NT fetch (the first at dot 1).
+        self.bg_tile = 2;
         if !self.in_frame {
             self.in_frame = true;
             self.scanline = 0;
@@ -280,6 +339,9 @@ impl Mapper for Mmc5 {
                 self.last_set_bg = true;
             }
             0x5130 => self.chr_upper = ((val as u16) & 3) << 8,
+            0x5200 => self.split_ctrl = val,
+            0x5201 => self.split_scroll = val,
+            0x5202 => self.split_bank = val,
             0x5203 => self.irq_compare = val,
             0x5204 => self.irq_enabled = val & 0x80 != 0,
             0x5205 => self.multiplicand = val,
@@ -317,11 +379,30 @@ impl Mapper for Mmc5 {
             let in_render = self.in_frame && self.rendering;
             let sprite_window = if in_render {
                 self.fetch_count += 1;
+                if self.fetch_count == 65 {
+                    self.split_tile = false;
+                }
+                if self.fetch_count == 80 {
+                    // Sprite fetches done: the next NT fetch (dot 321) is
+                    // the first prefetch tile of the next line.
+                    self.bg_tile = 0;
+                }
                 // Fetches 65-80 of a scanline are the sprite window.
                 (65..=80).contains(&self.fetch_count)
             } else {
                 false
             };
+            if in_render && !sprite_window && addr & 8 != 0 {
+                // High-plane fetch ends this BG tile; its NT/attribute
+                // bytes (and split decision) were already latched.
+                self.bg_tile = self.bg_tile.saturating_add(1);
+            }
+            if in_render && !sprite_window && self.split_tile {
+                // Split region: 4KB bank $5202, fine Y from the split row.
+                let tile_addr = (addr as usize & 0xFF8) | (self.split_y as usize & 7);
+                let banks = (self.chr.len() / 0x1000).max(1);
+                return self.chr[self.split_bank as usize % banks * 0x1000 + tile_addr];
+            }
             if in_render && !sprite_window && self.exram_mode == 1 {
                 // ExGrafix: the BG tile's 4KB bank comes from the ExRAM
                 // byte latched at its NT fetch; $5130 supplies bits 6-7.
@@ -336,6 +417,18 @@ impl Mapper for Mmc5 {
             };
             self.chr[self.chr_offset(addr, bg_set)]
         } else {
+            if self.split_tile && self.in_frame && self.rendering {
+                // Split region: nametable and attributes come from ExRAM at
+                // the split row; the attribute's quadrant is picked here
+                // (the PPU would pick it from its own scroll) and replicated.
+                let (row, col) = (self.split_y as usize / 8, self.split_column());
+                if addr & 0x3FF >= 0x3C0 {
+                    let attr = self.exram[0x3C0 + (row / 4) * 8 + col / 4];
+                    let shift = ((row & 2) << 1) | (col & 2);
+                    return ((attr >> shift) & 3) * 0x55;
+                }
+                return self.exram[row * 32 + col];
+            }
             // ExGrafix attribute fetch: palette bits of the latched ExRAM
             // byte, replicated to every quadrant of the attribute byte.
             if self.exram_mode == 1 && self.in_frame && self.rendering && addr & 0x3FF >= 0x3C0 {
@@ -385,6 +478,13 @@ impl Mapper for Mmc5 {
         } else {
             self.last_nt_addr = addr;
             self.nt_streak = 1;
+        }
+        if addr & 0x3FF < 0x3C0 {
+            self.split_at_nt_fetch();
+        }
+        if self.split_tile {
+            // Split region fetches are served from ExRAM (see ppu_read).
+            return NtTarget::Cart;
         }
         if self.exram_mode == 1 && self.in_frame && self.rendering {
             if addr & 0x3FF >= 0x3C0 {
@@ -886,5 +986,88 @@ mod tests {
             (delta - 0x40 as f32 * 0.002).abs() < 1e-6,
             "PCM delta {delta}"
         );
+    }
+
+    /// Drive one scanline's PPU fetch pattern through the mapper (tiles
+    /// 2-33, the sprite window, then prefetch tiles 0-1 for the next line
+    /// and the two dummy NT reads) and return the first pattern byte read
+    /// for each BG tile, indexed by tile number.
+    fn fetch_line(m: &mut Mmc5) -> [u8; 34] {
+        let mut out = [0u8; 34];
+        let bg = |m: &mut Mmc5, tile: usize, out: &mut [u8; 34]| {
+            let nt = 0x2000 + (tile as u16 % 32);
+            if m.nt_target(nt) == NtTarget::Cart {
+                m.ppu_read(nt);
+            }
+            if m.nt_target(0x23C0) == NtTarget::Cart {
+                m.ppu_read(0x23C0);
+            }
+            out[tile] = m.ppu_read(0x0010);
+            m.ppu_read(0x0018);
+        };
+        for tile in 2..34 {
+            bg(m, tile, &mut out);
+        }
+        for _ in 0..8 {
+            m.nt_target(0x2000);
+            m.nt_target(0x2000);
+            m.ppu_read(0x1000);
+            m.ppu_read(0x1008);
+        }
+        bg(m, 0, &mut out);
+        bg(m, 1, &mut out);
+        m.nt_target(0x2002);
+        m.nt_target(0x2002);
+        out
+    }
+
+    #[test]
+    fn vertical_split_left_region_uses_split_bank() {
+        let mut m = mmc5();
+        m.cpu_write(0x5101, 0); // 8KB CHR mode
+        m.cpu_write(0x5104, 0); // ExRAM as nametable RAM
+        m.cpu_write(0x5200, 0x80 | 6); // split on the left, tiles 0-5
+        m.cpu_write(0x5202, 5); // split CHR bank 5 (4KB) -> 1KB bank 20
+        m.cpu_bus_write(0x2001, 0x18);
+        // Enter the frame: three identical NT fetches.
+        for _ in 0..3 {
+            m.nt_target(0x2002);
+        }
+        let line = fetch_line(&mut m);
+        // Tiles fetched after detection: 2-5 split, 6+ normal (bank 0).
+        assert_eq!(&line[2..6], &[20, 20, 20, 20]);
+        assert!(line[6..34].iter().all(|&b| b == 0));
+        // Prefetch tiles 0-1 for the next line are inside the split too.
+        assert_eq!(&line[0..2], &[20, 20]);
+        // Right-side split flips the region.
+        m.cpu_write(0x5200, 0xC0 | 30);
+        let line = fetch_line(&mut m);
+        assert!(line[2..30].iter().all(|&b| b == 0));
+        assert_eq!(&line[30..34], &[20, 20, 20, 20]);
+    }
+
+    #[test]
+    fn vertical_split_reads_nametable_and_attributes_from_exram() {
+        let mut m = mmc5();
+        m.cpu_write(0x5104, 0);
+        m.cpu_write(0x5200, 0x80 | 31);
+        m.cpu_write(0x5201, 16); // split scroll: start at row 2
+        m.cpu_bus_write(0x2001, 0x18);
+        // Row 2 (line 0 + scroll 16), column 3 = tile 3.
+        m.cpu_write(0x5C00 + 2 * 32 + 3, 0x77);
+        // Attribute byte for rows 0-3 / cols 0-3: quadrant (row 2, col 3)
+        // is bottom-right -> bits 6-7.
+        m.cpu_write(0x5C00 + 0x3C0, 0b10_00_00_00);
+        for _ in 0..3 {
+            m.nt_target(0x2002);
+        }
+        // Tile 2 was the detection fetch; fetch tile 3 next.
+        assert_eq!(m.nt_target(0x23C0), NtTarget::Cart);
+        m.ppu_read(0x0000);
+        m.ppu_read(0x0008);
+        assert_eq!(m.nt_target(0x2003), NtTarget::Cart);
+        assert_eq!(m.ppu_read(0x2003), 0x77);
+        assert_eq!(m.nt_target(0x23C0), NtTarget::Cart);
+        assert_eq!(m.ppu_read(0x23C0), 0b10 * 0x55);
     }
 }

@@ -4,7 +4,8 @@
 //! $5FF8-$5FFF, or loaded linearly at the load address), with 8KB of work RAM
 //! at $6000-$7FFF. A small 6502 driver lives in cartridge register space at
 //! $4100-$41FF, which no expansion chip decodes; the reset/NMI/IRQ vectors
-//! are overridden to point into it. The driver clears RAM, initialises the
+//! are overridden to point into it. The driver clears internal RAM (the board
+//! zeroes $6000-$7FFF itself), initialises the
 //! APU, calls the tune's init routine with the song number in A and the
 //! region in X, then idles. A CPU-cycle timer on this board raises IRQ at the
 //! header's play rate; the driver's IRQ handler acknowledges it and calls the
@@ -52,10 +53,11 @@ const DRIVER: [u8; 0x79] = [
     0x9D, 0x00, 0x00, 0x9D, 0x00, 0x01, 0x9D, 0x00, 0x02, 0x9D, 0x00, 0x03,
     0x9D, 0x00, 0x04, 0x9D, 0x00, 0x05, 0x9D, 0x00, 0x06, 0x9D, 0x00, 0x07,
     0xE8, 0xD0, 0xE5,
-    // $4129: LDY #0 / STY $00 / LDX #$60 / STX $01
-    0xA0, 0x00, 0x84, 0x00, 0xA2, 0x60, 0x86, 0x01,
-    // $4131: STA ($00),Y / INY / BNE -5 / INC $01 / LDX $01 / CPX #$80 / BNE
-    0x91, 0x00, 0xC8, 0xD0, 0xFB, 0xE6, 0x01, 0xA6, 0x01, 0xE0, 0x80, 0xD0, 0xF3,
+    // $4129: JMP $413E. The board zeroes $6000-$7FFF itself on power-on
+    // and track select, so the driver skips the ~6000-cycle clear loop
+    // (kept as dead filler so the offsets below stay put).
+    0x4C, 0x3E, 0x41, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
     // $413E: STA $01 / TAX
     0x85, 0x01, 0xAA,
     // $4141: STA $4000,X / INX / CPX #$14 / BNE
@@ -419,9 +421,11 @@ impl Mapper for NsfMapper {
 
     fn cpu_clock(&mut self) {
         if self.timer_running {
-            self.counter -= 1;
+            // Saturating: a hand-edited savestate may carry a zero counter
+            // or period.
+            self.counter = self.counter.saturating_sub(1);
             if self.counter == 0 {
-                self.counter = self.period;
+                self.counter = self.period.max(1);
                 self.irq_line = true;
             }
         }
@@ -468,7 +472,8 @@ impl Mapper for NsfMapper {
     }
 
     fn nsf_select(&mut self, song: usize) {
-        self.song = song.min(self.total_songs - 1);
+        self.song = song.min(self.total_songs.saturating_sub(1));
+        self.prg_ram.fill(0);
         self.banks = self.bank_init;
         self.timer_running = false;
         self.counter = self.period;

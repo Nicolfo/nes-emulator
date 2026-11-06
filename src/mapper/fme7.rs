@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 
 /// FME-7 / Sunsoft 5B (mapper 69, Gimmick!, Batman: Return of the Joker):
 /// command/parameter banking, a 16-bit CPU-cycle IRQ counter, and (on the
-/// 5B) a YM2149-derived sound generator. Audio implements the three tone
-/// channels; envelope and noise are omitted (no licensed game uses them).
+/// 5B) a YM2149-derived sound generator: three tone channels, the 17-bit
+/// noise generator, the 32-step envelope with all 16 shapes, and the
+/// logarithmic volume curve (3 dB per volume step, 1.5 dB per envelope step).
 #[derive(Serialize, Deserialize)]
 pub struct Fme7 {
     #[serde(skip)]
@@ -189,6 +190,37 @@ pub(crate) struct Sunsoft5b {
     prescaler: u8,
     counters: [u16; 3],
     output: [bool; 3],
+    /// Noise: period counter, /2 phase and the 17-bit LFSR.
+    #[serde(default)]
+    noise_counter: u8,
+    #[serde(default)]
+    noise_phase: bool,
+    #[serde(default = "noise_seed")]
+    lfsr: u32,
+    /// Envelope: period counter, 5-bit step (31 down to 0), direction and
+    /// whether the shape has finished and holds its level.
+    #[serde(default)]
+    env_counter: u16,
+    #[serde(default)]
+    env_step: u8,
+    #[serde(default)]
+    env_attack: bool,
+    #[serde(default)]
+    env_holding: bool,
+}
+
+fn noise_seed() -> u32 {
+    1
+}
+
+/// Output amplitude per 5-bit level: 1.5 dB per step, silent at 0, scaled
+/// so full volume matches the APU-relative level the mixer expects.
+fn level_amplitude(level: u8) -> f32 {
+    if level == 0 {
+        0.0
+    } else {
+        0.15 * 10f32.powf((level as f32 - 31.0) * 1.5 / 20.0)
+    }
 }
 
 impl Sunsoft5b {
@@ -200,16 +232,79 @@ impl Sunsoft5b {
             prescaler: 0,
             counters: [0; 3],
             output: [false; 3],
+            noise_counter: 0,
+            noise_phase: false,
+            lfsr: noise_seed(),
+            env_counter: 0,
+            env_step: 0,
+            env_attack: false,
+            env_holding: true,
         }
     }
 
     pub(crate) fn write_reg(&mut self, val: u8) {
-        self.regs[self.reg_select as usize] = val;
+        let r = (self.reg_select & 0x0F) as usize;
+        self.regs[r] = val;
+        if r == 13 {
+            // Writing the shape restarts the envelope.
+            self.env_step = 31;
+            self.env_attack = val & 0x04 != 0;
+            self.env_holding = false;
+            self.env_counter = 0;
+        }
     }
 
     fn period(&self, ch: usize) -> u16 {
         let p = (self.regs[ch * 2] as u16) | ((self.regs[ch * 2 + 1] as u16 & 0x0F) << 8);
         p.max(1)
+    }
+
+    fn noise_period(&self) -> u8 {
+        (self.regs[6] & 0x1F).max(1)
+    }
+
+    fn env_period(&self) -> u16 {
+        (self.regs[11] as u16 | (self.regs[12] as u16) << 8).max(1)
+    }
+
+    /// Current envelope level, 0-31.
+    fn env_level(&self) -> u8 {
+        if self.env_attack {
+            31 - self.env_step
+        } else {
+            self.env_step
+        }
+    }
+
+    fn clock_envelope(&mut self) {
+        if self.env_holding {
+            return;
+        }
+        if self.env_step > 0 {
+            self.env_step -= 1;
+            return;
+        }
+        // End of a ramp: shape bits C(3) A(2) Alt(1) Hold(0).
+        let shape = self.regs[13];
+        if shape & 0x08 == 0 {
+            // No continue: drop to 0 and stay there.
+            self.env_attack = false;
+            self.env_holding = true;
+        } else if shape & 0x01 != 0 {
+            // Hold: keep the final level, or its opposite when alternating.
+            if shape & 0x02 != 0 {
+                self.env_attack = !self.env_attack;
+            }
+            self.env_attack = !self.env_attack;
+            self.env_step = 31;
+            self.env_holding = true;
+            // Holding at step 31 of the flipped ramp shows the final level.
+        } else {
+            if shape & 0x02 != 0 {
+                self.env_attack = !self.env_attack;
+            }
+            self.env_step = 31;
+        }
     }
 
     pub(crate) fn clock(&mut self) {
@@ -226,20 +321,49 @@ impl Sunsoft5b {
                 self.output[ch] = !self.output[ch];
             }
         }
+        // Noise steps at half the rate of a tone with the same period.
+        if self.noise_counter == 0 {
+            self.noise_counter = self.noise_period();
+        }
+        self.noise_counter -= 1;
+        if self.noise_counter == 0 {
+            self.noise_phase = !self.noise_phase;
+            if self.noise_phase {
+                let bit = (self.lfsr ^ (self.lfsr >> 3)) & 1;
+                self.lfsr = (self.lfsr >> 1) | (bit << 16);
+            }
+        }
+        if self.env_counter == 0 {
+            self.env_counter = self.env_period();
+        }
+        self.env_counter -= 1;
+        if self.env_counter == 0 {
+            self.clock_envelope();
+        }
     }
 
     pub(crate) fn sample(&self) -> f32 {
+        let noise = self.lfsr & 1 != 0;
         let mut s = 0.0;
         for ch in 0..3 {
-            // Mixer reg 7: bit per channel, 0 = tone enabled.
-            if self.regs[7] & (1 << ch) != 0 || !self.output[ch] {
+            // Mixer reg 7: bits 0-2 disable tone, bits 3-5 disable noise. A
+            // channel with both disabled outputs a constant level (used for
+            // volume-register PCM).
+            let tone_off = self.regs[7] & (1 << ch) != 0;
+            let noise_off = self.regs[7] & (8 << ch) != 0;
+            if !((tone_off || self.output[ch]) && (noise_off || noise)) {
                 continue;
             }
-            let vol = self.regs[8 + ch] & 0x0F;
-            if vol > 0 {
-                // ~2 dB per volume step.
-                s += 0.15 * 1.26f32.powi(vol as i32 - 15);
-            }
+            let vol = self.regs[8 + ch];
+            let level = if vol & 0x10 != 0 {
+                self.env_level()
+            } else if vol & 0x0F == 0 {
+                0
+            } else {
+                // 4-bit volume = 3 dB steps = every other envelope level.
+                (vol & 0x0F) * 2 + 1
+            };
+            s += level_amplitude(level);
         }
         s
     }
@@ -354,5 +478,74 @@ mod tests {
             peak = peak.max(m.audio_sample());
         }
         assert!(peak > 0.1, "expected audible 5B output, got {peak}");
+    }
+
+    fn ym(m: &mut Sunsoft5b, r: u8, v: u8) {
+        m.reg_select = r;
+        m.write_reg(v);
+    }
+
+    fn run(m: &mut Sunsoft5b, cycles: usize) -> Vec<f32> {
+        (0..cycles)
+            .map(|_| {
+                m.clock();
+                m.sample()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn noise_only_channel_is_audible_and_irregular() {
+        let mut m = Sunsoft5b::new();
+        ym(&mut m, 6, 1); // fastest noise
+        ym(&mut m, 7, 0b110_111); // ch A: tone off, noise on
+        ym(&mut m, 8, 15);
+        let out = run(&mut m, 16 * 400);
+        let on = out.iter().filter(|&&v| v > 0.0).count();
+        assert!(on > 500 && on < out.len() - 500, "noise toggles: {on}");
+    }
+
+    #[test]
+    fn envelope_decay_then_hold_at_zero() {
+        let mut m = Sunsoft5b::new();
+        ym(&mut m, 7, 0b111_111); // A: constant output, level from volume
+        ym(&mut m, 8, 0x10); // envelope mode
+        ym(&mut m, 11, 1); // fastest envelope
+        ym(&mut m, 12, 0);
+        ym(&mut m, 13, 0x00); // single decay, then hold 0
+        let first = run(&mut m, 16)[15];
+        assert!(first > 0.1, "starts loud: {first}");
+        let out = run(&mut m, 16 * 40);
+        assert_eq!(*out.last().unwrap(), 0.0);
+        // Monotonic decay.
+        assert!(out.windows(2).all(|w| w[1] <= w[0]));
+    }
+
+    #[test]
+    fn envelope_sawtooth_repeats_and_attack_hold_stays_high() {
+        let mut m = Sunsoft5b::new();
+        ym(&mut m, 7, 0b111_111);
+        ym(&mut m, 8, 0x10);
+        ym(&mut m, 11, 1);
+        ym(&mut m, 13, 0x08); // repeating decay (sawtooth)
+        let out = run(&mut m, 16 * 100);
+        let rises = out.windows(2).filter(|w| w[1] > w[0]).count();
+        assert!(rises >= 2, "sawtooth restarts: {rises}");
+
+        ym(&mut m, 13, 0x0D); // attack, then hold at max
+        let out = run(&mut m, 16 * 100);
+        assert!((out.last().unwrap() - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fixed_volume_steps_are_3db() {
+        let mut m = Sunsoft5b::new();
+        ym(&mut m, 7, 0b111_111);
+        ym(&mut m, 8, 15);
+        let hi = run(&mut m, 1)[0];
+        ym(&mut m, 8, 14);
+        let lo = run(&mut m, 1)[0];
+        let db = 20.0 * (hi / lo).log10();
+        assert!((db - 3.0).abs() < 0.01, "{db} dB");
     }
 }

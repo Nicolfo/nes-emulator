@@ -47,15 +47,17 @@ on Windows).
 
 ## Default controls
 
-| NES button | Player 1 | Player 2 |
-|---|---|---|
-| D-Pad | Arrow keys | W A S D |
-| A | Z | L |
-| B | X | K |
-| Start | Enter | M |
-| Select | Right Shift | N |
-| Turbo A | C | O |
-| Turbo B | V | I |
+| NES button | Player 1 | Player 2 | Player 3 | Player 4 |
+|---|---|---|---|---|
+| D-Pad | Arrow keys | W A S D | Numpad 8 4 5 6 | T F G H |
+| A | Z | L | Numpad 3 | Y |
+| B | X | K | Numpad 1 | R |
+| Start | Enter | M | Numpad 9 | 6 |
+| Select | Right Shift | N | Numpad 7 | 5 |
+| Turbo A | C | O | Numpad + | U |
+| Turbo B | V | I | Numpad - | E |
+
+Players 3 and 4 reach the game only with INPUT set to FOUR SCORE.
 
 | Action | Key |
 |---|---|
@@ -127,8 +129,8 @@ tracks.
   MMC1, UxROM, CNROM, MMC3 (with the A12-clocked scanline IRQ counter), MMC5
   (game-compatible core: all banking modes, banked PRG RAM, ExRAM/fill
   nametables, ExGrafix extended attributes, fetch-pattern scanline IRQ,
-  8x16 sprite CHR sets, multiplier and pulse/PCM audio; vertical split is
-  not emulated), AxROM, MMC2 and MMC4 (tile-fetch CHR latches; MMC4 adds 16KB
+  8x16 sprite CHR sets, vertical split, multiplier and pulse/PCM audio),
+  AxROM, MMC2 and MMC4 (tile-fetch CHR latches; MMC4 adds 16KB
   PRG banking and PRG RAM), Color Dreams, N163 (wavetable audio, nametables
   mappable to CHR ROM), VRC6 (pulse/saw audio, scanline and cycle IRQ; both the
   VRC6a and VRC6b pinouts), VRC7 (six-channel OPLL FM expansion audio plus the

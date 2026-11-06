@@ -38,7 +38,10 @@ impl Zapper {
 
     fn light_sensed(&self, ppu: &Ppu) -> bool {
         let (beam_y, beam_x) = (ppu.scanline as i32, ppu.dot as i32 - 1);
-        if !(0..HEIGHT as i32).contains(&beam_y) || !self.on_screen() {
+        // The pre-render line (-1) starts a new frame: nothing lit yet. In
+        // vblank the last visible rows are still within the photodiode's
+        // decay window, so they keep reading as light for a few lines.
+        if beam_y < 0 || !self.on_screen() {
             return false;
         }
         for py in self.y - SENSE_RADIUS..=self.y + SENSE_RADIUS {
@@ -124,8 +127,22 @@ mod tests {
         assert_eq!(z.read(&p) & 0x08, 0x08);
         p.scanline = 100 + LIGHT_LINES as i16 + SENSE_RADIUS as i16 + 1; // decayed
         assert_eq!(z.read(&p) & 0x08, 0x08);
-        p.scanline = 245; // vblank: no beam
+        p.scanline = -1; // pre-render: new frame, nothing lit
         assert_eq!(z.read(&p) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn bottom_rows_stay_lit_into_early_vblank() {
+        let mut p = ppu_at(245, 10);
+        paint(&mut p, 50, 235, 0xFC);
+        let z = Zapper {
+            x: 50,
+            y: 235,
+            trigger: false,
+        };
+        assert_eq!(z.read(&p) & 0x08, 0, "decay window spans into vblank");
+        p.scanline = 270;
+        assert_eq!(z.read(&p) & 0x08, 0x08, "decayed by line 270");
     }
 
     #[test]

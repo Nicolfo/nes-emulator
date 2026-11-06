@@ -59,7 +59,7 @@ Run with `cargo run --release <rom>`.
 | Just Breed | PCM audio + ExGrafix |
 | Laser Invasion | Split status + audio |
 
-Known-broken by design: anything using vertical split ($5200–$5202).
+Vertical split ($5200–$5202) is emulated; check *Uchuu Keibitai SDF* (split region scrolls independently of the main background).
 Known quirk: the first two tiles of the top scanline can glitch in ExGrafix
 games (prefetched on the pre-render line before in-frame is established);
 hidden by TV overscan.
