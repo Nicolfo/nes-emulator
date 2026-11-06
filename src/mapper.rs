@@ -6,6 +6,8 @@ mod bnrom;
 mod cnrom;
 mod codemasters;
 mod colordreams;
+mod fds;
+mod fds_audio;
 mod fme7;
 mod gxrom;
 mod h3001;
@@ -43,6 +45,7 @@ pub use bnrom::Bnrom;
 pub use cnrom::Cnrom;
 pub use codemasters::Codemasters;
 pub use colordreams::ColorDreams;
+pub use fds::{Fds, SIDE_SIZE as FDS_SIDE_SIZE, parse_disk_image as parse_fds_image};
 pub use fme7::Fme7;
 pub use gxrom::Gxrom;
 pub use h3001::H3001;
@@ -157,6 +160,24 @@ pub trait Mapper {
     /// Observe CPU writes to the PPU registers ($2000-$3FFF); the MMC5
     /// snoops $2000/$2001 for sprite size and rendering state.
     fn cpu_bus_write(&mut self, _addr: u16, _val: u8) {}
+
+    /// Called after a .sav blob was copied into [`Mapper::prg_ram_mut`], for
+    /// boards whose persisted bytes feed derived state (the FDS rebuilds its
+    /// drive's gapped disk streams from the restored `.fds` image).
+    fn battery_ram_loaded(&mut self) {}
+
+    /// Famicom Disk System: number of disk sides; None for cartridges.
+    fn fds_side_count(&self) -> Option<usize> {
+        None
+    }
+    /// Famicom Disk System: side currently in the drive (None = ejected,
+    /// mid-swap, or not an FDS).
+    fn fds_current_side(&self) -> Option<usize> {
+        None
+    }
+    /// Famicom Disk System: eject (None) or swap in a side. Insertion lands
+    /// after a short empty-drive delay so the BIOS notices the change.
+    fn fds_insert(&mut self, _side: Option<usize>) {}
 
     /// Serialize the mapper's full state (banking registers, IRQ counters,
     /// PRG/CHR RAM, expansion audio) for a savestate. Implemented per mapper
