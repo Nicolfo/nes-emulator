@@ -91,7 +91,7 @@ pub fn fill_rect(frame: &mut [u8], x: i32, y: i32, w: i32, h: i32, color: [u8; 3
 }
 
 pub fn clear(frame: &mut [u8], color: [u8; 3]) {
-    for px in frame.chunks_exact_mut(4) {
+    for px in frame.as_chunks_mut::<4>().0 {
         px[0] = color[0];
         px[1] = color[1];
         px[2] = color[2];
