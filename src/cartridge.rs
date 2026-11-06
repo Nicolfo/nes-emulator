@@ -1,9 +1,11 @@
 use crate::mapper::{
-    Action53, Axrom, Bandai74161, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom,
-    H3001, HolyDiver, IremG101, IremLrog017, IremTamS1, JalecoJf17, JalecoLatch, JalecoSs88006,
+    Action52, Action53, Axrom, Bandai74161, BandaiFcg, Bnrom, Caltron, Cnrom, CnromProtect,
+    Codemasters, ColorDreams, Fme7, FongShenBang, Gtrom, Gxrom, H3001, HolyDiver, IremG101,
+    IremLrog017, IremTamS1, JalecoJf17, JalecoLatch, JalecoSs88006, K1029, Latch, LatchKind,
     Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc3Board, Mmc4, Mmc5, N163, Namco108, Namco108Board,
-    Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft2, Sunsoft3, Sunsoft4, TaitoTc0690, TaitoX1005,
-    TaitoX1017, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
+    Namco175340, Nrom, Quattro, Rambo1, RumbleStation, Sunsoft1, Sunsoft2, Sunsoft3, Sunsoft4,
+    TaitoTc0690, TaitoX1005, TaitoX1017, Txsrom, Unrom180, Unrom512, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6,
+    Vrc7,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -175,6 +177,8 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
         10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
+        13 => Box::new(Latch::new(LatchKind::Cprom, prg, chr, mirroring)),
+        15 => Box::new(K1029::new(prg, chr)), // mirroring register-controlled
         16 | 159 => Box::new(BandaiFcg::new(mapper_id, submapper, prg, chr, mirroring)),
         18 => Box::new(JalecoSs88006::new(prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
@@ -182,11 +186,15 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
         26 => Box::new(Vrc6::new_vrc6b(prg, chr, mirroring)),
         28 => Box::new(Action53::new(prg, chr, mirroring)),
+        30 => Box::new(Unrom512::new(submapper, flags6 & 0x09, battery, prg, chr)),
         32 => Box::new(IremG101::new(submapper, prg, chr, mirroring)),
         // 33 (TC0190) and 48 (TC0690) share one core; a "mapper 33" ROM that
         // drives the IRQ registers is auto-promoted to TC0690 behaviour.
         33 | 48 => Box::new(TaitoTc0690::new(mapper_id, prg, chr, mirroring)),
         34 => Box::new(Bnrom::new(prg, chr, mirroring)),
+        38 => Box::new(Latch::new(LatchKind::BitCorp38, prg, chr, mirroring)),
+        41 => Box::new(Caltron::new(prg, chr)), // mirroring register-controlled
+        46 => Box::new(RumbleStation::new(prg, chr, mirroring)),
         64 => Box::new(Rambo1::new(prg, chr, mirroring)),
         158 => Box::new(Rambo1::new_tengen800037(prg, chr, mirroring)),
         65 => Box::new(H3001::new(prg, chr, mirroring)),
@@ -201,16 +209,22 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         75 => Box::new(Vrc1::new(prg, chr, mirroring)),
         77 => Box::new(IremLrog017::new(prg, chr)), // always four-screen
         78 => Box::new(HolyDiver::new(prg, chr, mirroring)),
+        79 | 146 => Box::new(Latch::new(LatchKind::Nina79, prg, chr, mirroring)),
         80 | 207 => Box::new(TaitoX1005::new(mapper_id, prg, chr, mirroring)),
         82 => Box::new(TaitoX1017::new(prg, chr, mirroring)),
         85 => Box::new(Vrc7::new(submapper, prg, chr, mirroring)),
         86 | 87 | 140 => Box::new(JalecoLatch::new(mapper_id, prg, chr, mirroring)),
         89 | 93 => Box::new(Sunsoft2::new(mapper_id, prg, chr, mirroring)),
         92 => Box::new(JalecoJf17::new_high_window(prg, chr, mirroring)),
+        94 => Box::new(Latch::new(LatchKind::Un1rom, prg, chr, mirroring)),
         97 => Box::new(IremTamS1::new(prg, chr, mirroring)),
+        107 => Box::new(Latch::new(LatchKind::MagicDragon, prg, chr, mirroring)),
+        111 => Box::new(Gtrom::new(prg, chr)), // four-screen board NT RAM
+        113 => Box::new(Latch::new(LatchKind::Nina113, prg, chr, mirroring)),
         118 => Box::new(Txsrom::new(prg, chr, mirroring)),
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
         184 => Box::new(Sunsoft1::new(prg, chr, mirroring)),
+        185 => Box::new(CnromProtect::new(submapper, prg, chr, mirroring)),
         206 => Box::new(Namco108::new(prg, chr, mirroring)),
         76 | 88 | 95 | 154 => {
             let board = match mapper_id {
@@ -222,6 +236,12 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
             Box::new(Namco108::with_board(board, prg, chr, mirroring))
         }
         210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
+        228 => Box::new(Action52::new(prg, chr)), // mirroring register-controlled
+        232 => Box::new(Quattro::new(submapper, prg, chr, mirroring)),
+        240 => Box::new(Latch::new(LatchKind::M240, prg, chr, mirroring)),
+        241 => Box::new(Latch::new(LatchKind::M241, prg, chr, mirroring)),
+        242 => Box::new(Latch::new(LatchKind::M242, prg, chr, mirroring)),
+        246 => Box::new(FongShenBang::new(prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };
 
