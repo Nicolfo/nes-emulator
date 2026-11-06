@@ -230,7 +230,7 @@ impl FdsAudio {
             self.mod_counter = 0;
             return;
         }
-        let mut c = self.mod_counter as i32 + MOD_DELTA[entry as usize];
+        let mut c = self.mod_counter as i32 + MOD_DELTA[(entry & 7) as usize];
         if c >= 64 {
             c -= 128;
         } else if c < -64 {
@@ -250,7 +250,7 @@ impl FdsAudio {
             self.mod_acc += self.mod_freq as u32;
             if self.mod_acc > 0xFFFF {
                 self.mod_acc &= 0xFFFF;
-                let entry = self.mod_table[self.mod_pos as usize];
+                let entry = self.mod_table[(self.mod_pos & 0x3F) as usize];
                 self.step_mod_counter(entry);
                 self.mod_pos = (self.mod_pos + 1) & 0x3F;
             }
@@ -270,8 +270,8 @@ impl FdsAudio {
         // While wavetable writes are enabled the DAC holds its last level.
         if !self.wave_write {
             let gain = self.volume.gain.min(32) as u32;
-            let level = gain * MASTER_VOLUME[self.master_volume as usize];
-            self.level = ((self.wave[self.wave_pos as usize] as u32 * level) / 1152) as u8;
+            let level = gain * MASTER_VOLUME[(self.master_volume & 3) as usize];
+            self.level = ((self.wave[(self.wave_pos & 0x3F) as usize] as u32 * level) / 1152) as u8;
         }
         self.filtered += (self.level as f32 - self.filtered) * LOWPASS_ALPHA;
     }

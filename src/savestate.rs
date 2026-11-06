@@ -23,7 +23,10 @@ use crate::ppu::Ppu;
 /// File magic: "NSS\0" (Nes Save State), little-endian.
 pub const MAGIC: u32 = 0x0053_5353;
 /// Bump whenever the serialized layout changes incompatibly.
-pub const VERSION: u32 = 1;
+/// v2 embeds the mapper state as JSON instead of a JSON array of its bytes.
+pub const VERSION: u32 = 2;
+/// Oldest version [`crate::nes::Nes::load_state`] still accepts.
+pub const MIN_VERSION: u32 = 1;
 
 /// One complete machine snapshot.
 #[derive(Serialize, Deserialize)]
@@ -40,7 +43,43 @@ pub struct SaveState {
     #[serde(default)]
     pub controller2: Option<Controller>,
     /// Mapper-specific state, produced by [`crate::mapper::Mapper::save_state`].
+    /// Embedded as JSON (see [`mapper_json`]); v1 files stored it as an
+    /// array of byte values, three to four times larger, still accepted.
+    #[serde(with = "mapper_json")]
     pub mapper: Vec<u8>,
+}
+
+/// `serde` helper embedding the mapper's JSON state as a JSON value rather
+/// than as an array of its bytes. Deserializing accepts both forms.
+pub mod mapper_json {
+    use serde::de::Error as _;
+    use serde::ser::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        if bytes.is_empty() {
+            return Value::Null.serialize(serializer);
+        }
+        let v: Value = serde_json::from_slice(bytes).map_err(S::Error::custom)?;
+        v.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        match Value::deserialize(deserializer)? {
+            Value::Null => Ok(Vec::new()),
+            // v1: the mapper JSON's bytes as an array of numbers.
+            Value::Array(items) => items
+                .iter()
+                .map(|b| {
+                    b.as_u64()
+                        .and_then(|n| u8::try_from(n).ok())
+                        .ok_or_else(|| D::Error::custom("bad v1 mapper byte"))
+                })
+                .collect(),
+            v => serde_json::to_vec(&v).map_err(D::Error::custom),
+        }
+    }
 }
 
 /// `serde` helper for fixed `[u8; N]` arrays larger than 32 elements, which

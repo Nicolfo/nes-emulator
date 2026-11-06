@@ -30,7 +30,7 @@ use nes_emulator::nes::Nes;
 use nes_emulator::ppu::{HEIGHT, WIDTH};
 use nes_emulator::rewind::Rewind;
 
-use config::{BUTTON_MASKS, Config, FIRST_TURBO, MAX_FF_SPEED, MIN_FF_SPEED};
+use config::{BUTTON_MASKS, Config, FIRST_TURBO, MAX_FF_SPEED, MIN_FF_SPEED, PLAYERS};
 use gamepad::{MAX_PADS, PadState};
 use menu::{HomeAction, NUM_PAGES, PAGE_CONTROLS, SetRow, home_items, settings_rows};
 
@@ -109,12 +109,14 @@ struct App {
     sav_path: Option<PathBuf>,
     /// Physical gamepads (None if gilrs couldn't start - keyboard only).
     gamepads: Option<gamepad::Gamepads>,
-    /// Per-player button masks from the keyboard (players 1-2) and the
-    /// gamepads (players 1-4), kept apart so one input source never clears
-    /// buttons the other is holding. The controllers see their union.
-    kb_mask: [u8; 2],
+    /// ROM file of the running game (to rebuild it on a region change).
+    rom_path: Option<PathBuf>,
+    /// Per-player button masks from the keyboard and the gamepads (players
+    /// 1-4), kept apart so one input source never clears buttons the other
+    /// is holding. The controllers see their union.
+    kb_mask: [u8; 4],
     /// Keyboard turbo buttons held per player (A/B bits, pulsed).
-    kb_turbo: [u8; 2],
+    kb_turbo: [u8; 4],
     pads: [PadState; MAX_PADS],
     /// Timestamp of the last left-button press, for double-click detection.
     last_click: Option<Instant>,
@@ -223,14 +225,9 @@ impl App {
         let mut masks = [0u8; 4];
         for (p, m) in masks.iter_mut().enumerate() {
             let pad = self.pads[p];
-            let (kb, kb_turbo) = if p < 2 {
-                (self.kb_mask[p], self.kb_turbo[p])
-            } else {
-                (0, 0)
-            };
-            *m = kb | pad.buttons;
+            *m = self.kb_mask[p] | pad.buttons;
             if turbo_on {
-                *m |= kb_turbo | pad.turbo;
+                *m |= self.kb_turbo[p] | pad.turbo;
             }
         }
         masks
@@ -251,8 +248,8 @@ impl App {
     /// Forget keys/buttons held when the game stops receiving input (menu
     /// opened), since their release events will go to the menu instead.
     fn release_held_inputs(&mut self) {
-        self.kb_mask = [0, 0];
-        self.kb_turbo = [0, 0];
+        self.kb_mask = [0; 4];
+        self.kb_turbo = [0; 4];
         self.fast_forward = false;
         self.rewinding = false;
         self.zapper_trigger = false;
@@ -451,6 +448,7 @@ impl App {
         }
         nes.set_input_device(self.cfg.input_device);
         self.sav_path = Some(restore_battery_ram(&mut nes, path));
+        self.rom_path = Some(path.to_path_buf());
         self.nes = Some(nes);
         self.error = None;
         self.frame_count = 0;
@@ -468,6 +466,36 @@ impl App {
             w.set_title(&format!("NES Emulator - {name}"));
         }
         self.start_running();
+    }
+
+    /// Rebuild a running cartridge game so a REGION change takes effect now.
+    /// The battery save is flushed first; the game restarts from power-on.
+    /// FDS and NSF ignore the setting, so they keep running.
+    fn restart_for_region(&mut self) {
+        let Some(path) = self.rom_path.clone() else {
+            return;
+        };
+        let is_cart = self
+            .nes
+            .as_ref()
+            .is_some_and(|n| n.fds_side_count().is_none() && n.nsf_info().is_none());
+        if !is_cart {
+            return;
+        }
+        let view = std::mem::replace(&mut self.view, View::Running);
+        self.open_rom(&path);
+        // Stay on the settings page; the window keeps the new game's size.
+        self.view = view;
+        self.update_cursor();
+        self.clear_audio();
+        if let Some(nes) = &self.nes {
+            let name = match nes.region() {
+                Region::Ntsc => "NTSC",
+                Region::Pal => "PAL",
+                Region::Dendy => "DENDY",
+            };
+            self.flash(format!("RESTARTED AS {name}"));
+        }
     }
 
     fn start_running(&mut self) {
@@ -661,7 +689,10 @@ impl App {
             if code != KeyCode::Escape
                 && let SetRow::Bind(b) = rows[sel]
             {
-                self.cfg.rebind(player, b, code);
+                // Hotkeys (F-keys, Tab, Backspace...) can't be buttons.
+                if !config::is_reserved(code) {
+                    self.cfg.rebind(player, b, code);
+                }
                 self.cfg.save();
             }
             waiting = false;
@@ -685,7 +716,9 @@ impl App {
                         SetRow::Page => {
                             page = (page as i32 + delta).rem_euclid(NUM_PAGES as i32) as usize
                         }
-                        SetRow::Player => player ^= 1,
+                        SetRow::Player => {
+                            player = (player as i32 + delta).rem_euclid(PLAYERS as i32) as usize
+                        }
                         SetRow::Bind(_) if activate => waiting = true,
                         SetRow::Bind(_) => {}
                         SetRow::Back if activate => {
@@ -750,9 +783,9 @@ impl App {
             }
             SetRow::Region => {
                 self.cfg.region = self.cfg.region.step(delta);
-                if self.nes.is_some() {
-                    self.flash("REGION APPLIES ON NEXT ROM LOAD");
-                }
+                self.cfg.save();
+                self.restart_for_region();
+                return;
             }
             SetRow::Rewind => {
                 self.cfg.rewind = !self.cfg.rewind;
@@ -882,7 +915,11 @@ impl App {
             KeyCode::F8 => {
                 if pressed && let Some(nes) = &mut self.nes {
                     if let Some(count) = nes.fds_side_count() {
-                        self.fds_side = (self.fds_side + 1) % count;
+                        // Step from the side actually in the drive (a
+                        // savestate or rewind may have changed it); fall
+                        // back to the last request while a swap is pending.
+                        let cur = nes.fds_current_side().unwrap_or(self.fds_side);
+                        self.fds_side = (cur + 1) % count;
                         nes.fds_insert(Some(self.fds_side));
                         let side = self.fds_side;
                         self.flash(format!(
@@ -942,7 +979,7 @@ impl App {
         }
         // The keyboard owns the keyboard half of each player's button mask;
         // the gamepad half is refreshed every frame in about_to_wait.
-        for player in 0..2 {
+        for player in 0..PLAYERS {
             for (b, &bit) in BUTTON_MASKS.iter().enumerate() {
                 if self.cfg.binding(player, b) == code {
                     let mask = if b < FIRST_TURBO {
@@ -985,7 +1022,15 @@ impl App {
         let inputs = self.frame_inputs();
         let aim = self.zapper_aim();
         let trigger = self.zapper_trigger;
-        let capture = self.cfg.rewind && self.frame_count.is_multiple_of(REWIND_INTERVAL);
+        // Fast-forward spaces snapshots out by its speed, so history still
+        // covers the same wall-clock time and capturing doesn't eat the
+        // frame budget the speed-up needs.
+        let interval = if self.fast_forward {
+            REWIND_INTERVAL * self.cfg.ff_speed as u64
+        } else {
+            REWIND_INTERVAL
+        };
+        let capture = self.cfg.rewind && self.frame_count.is_multiple_of(interval);
         let nes = self.nes.as_mut().expect("emulate_frame needs a game");
         nes.set_buttons(inputs);
         nes.set_zapper(aim, trigger);
@@ -1138,7 +1183,11 @@ impl ApplicationHandler for App {
                     matches!(self.view, View::SlotPicker { .. }).then(|| self.slot_states());
                 let osd = self.osd_text();
                 let nsf = self.nes.as_ref().and_then(|n| n.nsf_info());
-                let nsf_secs = (self.frame_count - self.track_start) / 60;
+                let fps = match self.nes.as_ref().map(|n| n.region()) {
+                    Some(Region::Pal | Region::Dendy) => 50,
+                    _ => 60,
+                };
+                let nsf_secs = (self.frame_count - self.track_start) / fps;
                 let cheat_rows: Vec<(String, bool)> = if matches!(self.view, View::Cheats { .. }) {
                     self.cheats
                         .iter()
@@ -1287,6 +1336,7 @@ impl ApplicationHandler for App {
             eprintln!("emulation panicked, unloading ROM: {msg}");
             self.nes = None;
             self.sav_path = None;
+            self.rom_path = None;
             self.rewind.clear();
             self.release_held_inputs();
             self.error = Some(format!("EMULATION CRASHED: {msg}"));
@@ -1393,8 +1443,9 @@ fn main() {
         audio,
         sav_path: None,
         gamepads,
-        kb_mask: [0, 0],
-        kb_turbo: [0, 0],
+        rom_path: None,
+        kb_mask: [0; 4],
+        kb_turbo: [0; 4],
         pads: [PadState::default(); MAX_PADS],
         last_click: None,
         frame_count: 0,

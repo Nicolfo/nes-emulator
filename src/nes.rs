@@ -5,7 +5,7 @@ use crate::controller::InputDevice;
 use crate::cpu::Cpu;
 use crate::mapper::NsfMapper;
 use crate::nsf::{self, NsfInfo};
-use crate::savestate::{MAGIC, SaveState, VERSION};
+use crate::savestate::{MAGIC, MIN_VERSION, SaveState, VERSION};
 
 pub struct Nes {
     pub cpu: Cpu,
@@ -224,7 +224,7 @@ impl Nes {
         if state.magic != MAGIC {
             return Err("not a savestate (bad magic)".into());
         }
-        if state.version != VERSION {
+        if !(MIN_VERSION..=VERSION).contains(&state.version) {
             return Err(format!(
                 "unsupported savestate version {} (expected {VERSION})",
                 state.version
@@ -356,6 +356,37 @@ mod tests {
         let ram = nes.battery_ram().unwrap();
         assert_eq!(ram.len(), 0x2000);
         assert!(ram.iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn v1_savestates_still_load_and_v2_is_smaller() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let v2 = nes.save_state().unwrap();
+        // Rebuild the same state in the v1 layout: mapper JSON as a byte array.
+        let mut doc: serde_json::Value = serde_json::from_slice(&v2).unwrap();
+        let mapper_bytes = serde_json::to_vec(&doc["mapper"]).unwrap();
+        doc["mapper"] = serde_json::Value::from(mapper_bytes);
+        doc["version"] = 1.into();
+        let v1 = serde_json::to_vec(&doc).unwrap();
+        assert!(v2.len() < v1.len(), "v2 {} vs v1 {}", v2.len(), v1.len());
+
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let reference = nes.framebuffer().to_vec();
+        for blob in [&v1, &v2] {
+            let mut m = Nes::new(&data).unwrap();
+            m.load_state(blob).unwrap();
+            for _ in 0..20 {
+                m.run_frame();
+            }
+            assert_eq!(m.framebuffer(), reference.as_slice());
+        }
     }
 
     #[test]

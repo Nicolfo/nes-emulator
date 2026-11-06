@@ -39,7 +39,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 66 | GxROM | Combined 32KB PRG / 8KB CHR register | Super Mario Bros. + Duck Hunt, Dragon Power |
 | 67 | Sunsoft-3 | 16KB PRG select, four 2KB CHR banks, mirroring, 16-bit cycle IRQ | Fantasy Zone 2, Mito Koumon, Nantettatte!! Baseball |
 | 68 | Sunsoft-4 | 2KB CHR banks + dual CHR-ROM nametables, 16KB PRG select, battery PRG RAM | After Burner, Maharaja |
-| 69 | FME-7 / Sunsoft 5B | 8KB PRG/CHR banking, cycle IRQ, 5B square-wave expansion audio | Gimmick!, Batman: Return of the Joker, Hebereke |
+| 69 | FME-7 / Sunsoft 5B | 8KB PRG/CHR banking, cycle IRQ, 5B expansion audio (tones, noise, envelope) | Gimmick!, Batman: Return of the Joker, Hebereke |
 | 70 | Bandai 74161 | UxROM-like 16KB PRG select + 8KB CHR select, hardwired mirroring | Kamen Rider Club, Family Trainer |
 | 71 | Camerica / Codemasters | UxROM-like 16KB PRG select, optional single-screen mirroring | Micro Machines, Fire Hawk, Bee 52 |
 | 72 | Jaleco JF-17 | 16KB PRG + 8KB CHR select via trigger bits (uPD7756 sound not emulated) | Pinball Quest, Moero!! Pro Tennis |

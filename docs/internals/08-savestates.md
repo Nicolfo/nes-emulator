@@ -99,13 +99,22 @@ self-describing); the macro also length-guards the resizable buffers (CHR,
 PRG RAM) so a mismatched or hand-edited state is rejected instead of panicking
 later bank math.
 
+## Format versions
+
+- **v1** stored the mapper's JSON state as a JSON *array of its bytes*
+  (`"mapper":[123,34,...]`), three to four times its own size.
+- **v2** (current) embeds the mapper state as a JSON value via the
+  `savestate::mapper_json` serde helper. Loading still accepts v1: an array
+  is read back as bytes, anything else is re-serialized to the mapper's JSON.
+
 ## Validation on load
 
 A savestate is only meaningful for the ROM it came from. `load_state` guards
 against obvious mismatches before applying anything:
 
 - a 32-bit **magic** number and a format **version** (bump `VERSION` in
-  `savestate.rs` on any incompatible layout change), and
+  `savestate.rs` on any incompatible layout change; `MIN_VERSION` is the
+  oldest still accepted), and
 - the **TV region** must match the loaded ROM.
 
 A state from the wrong game still usually fails at the mapper-deserialize step
