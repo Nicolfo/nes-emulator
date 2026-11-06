@@ -3,7 +3,8 @@
 # NES Emulator
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
-input, NTSC and PAL machines (auto-detected from the ROM header), and 43 mappers
+input, NTSC and PAL machines (auto-detected from the ROM header), the
+Famicom Disk System (with its wavetable audio), NSF music playback, and 43 mappers
 - with expansion audio for the MMC5, VRC6, VRC7, N163 and Sunsoft 5B - covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
 Akumajou Densetsu, Lagrange Point and Castlevania III. See [docs/mappers.md](docs/mappers.md)
@@ -32,11 +33,14 @@ cargo run --release                  # opens the home menu
 cargo run --release -- path\to\rom.nes   # skips the menu, boots the ROM directly
 ```
 
-The home menu offers **Load ROM** (native file picker), **Settings**, **Resume**
-(when a game is loaded) and **Quit**. Settings lets you rebind every controller
-button for either player (toggle the EDIT PLAYER row, select a button, press
-Enter, then press the new key), change the window scale, toggle NTSC overscan
-cropping and reset defaults; everything is persisted to a `config.json` in the
+The home menu offers **Load ROM** (native file picker for `.nes`, `.fds` and
+`.nsf`), **Cheats** and **Resume** (when a game is loaded), **Settings** and
+**Quit**. Settings has two pages: CONTROLS rebinds every controller button,
+including turbo A/B, for either player (toggle the EDIT PLAYER row, select a
+button, press Enter, then press the new key); OPTIONS sets window scale, NTSC
+overscan cropping, volume, fast-forward speed, the input device (2 pads, Four
+Score or Zapper) and rewind, and
+resets defaults. Everything is persisted to a `config.json` in the
 platform's per-user config directory (`~/.config/nes-emulator` on Linux,
 `~/Library/Application Support/nes-emulator` on macOS, `%APPDATA%\nes-emulator`
 on Windows).
@@ -50,13 +54,19 @@ on Windows).
 | B | X | K |
 | Start | Enter | M |
 | Select | Right Shift | N |
+| Turbo A | C | O |
+| Turbo B | V | I |
 
 | Action | Key |
 |---|---|
 | Back to menu | Escape |
-| Reset console | F3 |
+| Reset console (NSF: restart track) | F3 |
 | Save state | F5 |
+| Mute / unmute | F6 |
 | Load state | F7 |
+| Flip FDS disk side | F8 |
+| Fast-forward (hold) | Tab |
+| Rewind (hold) | Backspace |
 | Fullscreen | F11 / double-click |
 
 Per-player button bindings (except Escape, the **F3** reset key and the F5/F7
@@ -67,10 +77,23 @@ intact, just like the hardware. **F5** pauses the game and opens a 4-slot save p
 Escape to cancel). Each slot is written to `<rom>.stateN` next to the ROM, and a
 restore resumes exactly where you left off - mid-frame.
 
-**Gamepads** are auto-detected (via `gilrs`): plug one in and it drives player 1,
-a second drives player 2. The bottom and right face buttons are A and B, Start
-and Select map straight across, and directions come from either the D-pad or the
-left analog stick. No setup needed - the keyboard stays active alongside.
+**Gamepads** are auto-detected (via `gilrs`): pads drive players 1-4 in plug
+order (players 3 and 4 need INPUT set to FOUR SCORE). The bottom and right face
+buttons are A and B, the top and left ones turbo A and turbo B, Start and Select
+map straight across, and directions come from either the D-pad or the left
+analog stick. No setup needed - the keyboard stays active alongside.
+
+**Zapper**: set INPUT to ZAPPER, then aim with the mouse and left-click to
+fire (right-click fires off screen). **Cheats**: the Cheats screen takes Game
+Genie codes (`SXIOPO`, `YEUZUGAA`) or raw `AAAA:VV` / `AAAA?CC:VV` patches;
+RAM addresses are held at the value every frame. Codes are saved per game as
+`<rom>.cht`. **Rewind** keeps the last 20 seconds; hold Backspace to go back.
+
+**Famicom Disk System** games need the FDS BIOS, which is not included: put
+`disksys.rom` (8 KB) next to the `.fds` file, in the config directory, or next
+to the executable. F8 flips to the next disk side; disk writes are saved to
+`<image>.sav`. **NSF** music files open a player screen: Left/Right change
+tracks.
 
 ## Architecture
 
@@ -124,18 +147,32 @@ left analog stick. No setup needed - the keyboard stays active alongside.
   (CPU/PPU/APU/bus/controller/mapper) excluding host-only state (the framebuffer
   and the APU resampling/filter chain). See
   [docs/internals/08-savestates.md](docs/internals/08-savestates.md).
-- `src/controller.rs` - standard joypad strobe/shift register.
-- `src/gamepad.rs` - optional physical-gamepad input via `gilrs`; maps the first
-  two connected pads to players 1 and 2, merged with the keyboard each frame.
-- `src/main.rs` - winit 0.30 + pixels frontend, home/settings/running state machine,
-  paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL) while a game runs. Dynamic audio rate
+- `src/controller.rs` - standard joypad strobe/shift register, plus the Four
+  Score's 24-bit two-pads-and-signature mode.
+- `src/zapper.rs` - Zapper light gun: trigger plus a light sensor that checks
+  the pixels the PPU drew near the aim point in the last few scanlines.
+- `src/cheats.rs` - Game Genie and raw-address cheat decoding; ROM patches are
+  applied on cartridge reads, RAM codes are forced every frame.
+- `src/rewind.rs` - rewind history: a snapshot ring with content-defined chunk
+  deduplication (20 s of history in a few MB).
+- `src/nsf.rs` + `src/mapper/nsf.rs` - NSF header parsing and a synthetic board
+  with a built-in 6502 driver that calls the tune's init/play routines.
+- `src/mapper/fds.rs`, `src/mapper/fds_audio.rs` - Famicom Disk System: RAM
+  adapter, disk drive (gapped bitstream with CRCs), timer IRQ and FDS audio.
+- `src/gamepad.rs` - optional physical-gamepad input via `gilrs`; maps up to
+  four connected pads to players 1-4, merged with the keyboard each frame.
+- `src/main.rs` - winit 0.30 + pixels frontend, home/settings/cheats/running
+  state machine, paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL) while a
+  game runs, with fast-forward, rewind, turbo, mouse-driven Zapper and an NSF
+  player screen. Dynamic audio rate
   control nudges the resampling ratio (±0.3 %) so the audio queue hovers around
   50 ms instead of drifting into under/overflow.
 - `src/audio.rs` - cpal output stream (f32/i16/u16 device formats) fed from a
   shared sample queue; underruns decay to silence to avoid clicks.
 - `src/menu.rs`, `src/font.rs` - NES-style menu UI rendered into the same 256x240
   framebuffer (embedded 8x8 bitmap font, pixel-art icons).
-- `src/config.rs` - persisted settings (key bindings, window scale).
+- `src/config.rs` - persisted settings (key bindings, window scale, volume,
+  fast-forward speed, input device, region, rewind) and the FDS BIOS lookup.
 
 Timing: 1 CPU cycle = 3 PPU dots (NTSC) or 3.2 PPU dots (PAL) = 1 APU step,
 interleaved at bus-access granularity. NTSC frames are 89,342 dots (89,341 on

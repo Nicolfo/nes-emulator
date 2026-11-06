@@ -15,6 +15,7 @@ macro_rules! trace_log {
 pub mod apu;
 pub mod bus;
 pub mod cartridge;
+pub mod cheats;
 pub mod controller;
 pub mod cpu;
 pub mod mapper;
@@ -22,4 +23,6 @@ pub mod nes;
 pub mod nsf;
 pub mod palette;
 pub mod ppu;
+pub mod rewind;
 pub mod savestate;
+pub mod zapper;
