@@ -156,6 +156,27 @@ persist `$6000`–`$7FFF` to a `.sav` file beside the ROM (see
 [chapter 6](07-frontend.md)). This is why those two raw-access methods exist
 separately from `prg_ram_read` - they bypass any enable/banking logic.
 
+### Famicom Disk System
+
+The FDS is not an iNES board: [`Nes::new_fds`](../../src/nes.rs) takes a disk
+image (fwNES `FDS` header or headerless, 65500 bytes per side) plus the
+8 KB `disksys.rom` BIOS and builds an [`Fds`](../../src/mapper/fds.rs) mapper
+directly, bypassing `load_rom`. The RAM adapter maps 32 KB of PRG RAM at
+`$6000`–`$DFFF`, the BIOS at `$E000`, 8 KB of CHR RAM, a CPU-cycle timer IRQ
+(`$4020`–`$4022`), mirroring via `$4025` bit 3, and the wavetable/FM
+expansion sound (`FdsAudio` in `fds_audio.rs`, `$4040`–`$4092`).
+
+The drive reads a per-side *gapped stream* rebuilt from the `.fds` data: a
+28300-bit leading gap, then per block a `$80` start mark, the block, its
+CRC-16 (poly `$8408`) and a 976-bit gap - the sequence the BIOS synchronises
+on. The head advances one byte every 149 CPU cycles while the motor runs and
+raises the byte-transfer IRQ/flag; writes land two bytes behind the read
+position and fold back into the `.fds` layout when the write session ends.
+That layout is what `prg_ram` exposes, so disk saves persist through the same
+`.sav` path as battery RAM (`battery_ram_loaded` rebuilds the streams after a
+restore). Side changes go through `Nes::fds_insert`, which leaves the drive
+empty for about a second so the BIOS notices the swap.
+
 ### Where to look
 
 | You want to understand… | Look at |
@@ -165,3 +186,4 @@ separately from `prg_ram_read` - they bypass any enable/banking logic.
 | Nametable routing | `NtTarget`, `nt_target`, `mirror_nt` |
 | The simplest concrete mapper | `src/mapper/nrom.rs` |
 | The full mapper list | [docs/mappers.md](../mappers.md) |
+| Famicom Disk System (drive, timer, audio) | `src/mapper/fds.rs`, `src/mapper/fds_audio.rs` |

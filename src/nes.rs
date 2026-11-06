@@ -21,6 +21,46 @@ impl Nes {
         })
     }
 
+    /// Boot a Famicom Disk System image. `disk` is a fwNES (`FDS`) or
+    /// headerless `.fds` image; `bios` is the 8KB `disksys.rom`. Side A of
+    /// the first disk starts inserted. The disk counts as battery RAM: its
+    /// `.fds`-layout bytes (sides x 65500, no header) round-trip through
+    /// [`Nes::battery_ram`] / [`Nes::load_battery_ram`], so disk saves persist
+    /// through the usual `.sav` file.
+    pub fn new_fds(disk: &[u8], bios: &[u8]) -> Result<Self, String> {
+        if bios.len() != 0x2000 {
+            return Err(format!("FDS BIOS must be 8192 bytes, got {}", bios.len()));
+        }
+        let sides = crate::mapper::parse_fds_image(disk)?;
+        let cart = Box::new(crate::mapper::Fds::new(bios.to_vec(), sides));
+        let region = Region::Ntsc;
+        let mut cpu = Cpu::new(Bus::with_region(cart, region));
+        cpu.reset();
+        Ok(Nes {
+            cpu,
+            region,
+            battery: true,
+        })
+    }
+
+    /// Number of disk sides when an FDS image is loaded; None for cartridges.
+    pub fn fds_side_count(&self) -> Option<usize> {
+        self.cpu.bus.cart.fds_side_count()
+    }
+
+    /// Disk side currently in the drive; None when ejected, mid-swap, or not
+    /// running an FDS image.
+    pub fn fds_current_side(&self) -> Option<usize> {
+        self.cpu.bus.cart.fds_current_side()
+    }
+
+    /// Eject the disk (None) or insert a side (0 = disk 1 side A, 1 = side B,
+    /// ...). The new side appears after a ~1 s empty-drive delay so the BIOS
+    /// sees the disk change. No-op for cartridges.
+    pub fn fds_insert(&mut self, side: Option<usize>) {
+        self.cpu.bus.cart.fds_insert(side);
+    }
+
     pub fn region(&self) -> Region {
         self.region
     }
@@ -57,6 +97,7 @@ impl Nes {
             let n = ram.len().min(data.len());
             ram[..n].copy_from_slice(&data[..n]);
         }
+        self.cpu.bus.cart.battery_ram_loaded();
     }
 
     /// Serialize the full machine state to a savestate blob. The state is
@@ -218,5 +259,64 @@ mod tests {
         nes.load_battery_ram(&[0xAB; 0x2000]); // ignored
         assert!(nes.battery_ram().is_none());
         assert_eq!(nes.cpu.bus.cart.prg_ram().unwrap()[0], 0);
+    }
+
+    /// Synthetic BIOS: an endless `JMP $E000` with every vector at $E000.
+    fn tiny_bios() -> Vec<u8> {
+        let mut b = vec![0xEA; 0x2000];
+        b[0..3].copy_from_slice(&[0x4C, 0x00, 0xE0]);
+        for v in [0x1FFA, 0x1FFC, 0x1FFE] {
+            b[v] = 0x00;
+            b[v + 1] = 0xE0;
+        }
+        b
+    }
+
+    fn tiny_disk() -> Vec<u8> {
+        let mut d = b"FDS".to_vec();
+        d.resize(16, 0);
+        d.push(0x01);
+        d.extend_from_slice(b"*NINTENDO-HVC*");
+        d.resize(16 + crate::mapper::FDS_SIDE_SIZE, 0);
+        d
+    }
+
+    #[test]
+    fn fds_rejects_bad_bios_size() {
+        assert!(Nes::new_fds(&tiny_disk(), &[0; 0x1000]).is_err());
+        assert!(Nes::new_fds(b"not a disk", &tiny_bios()).is_err());
+    }
+
+    #[test]
+    fn fds_boots_and_runs_frames() {
+        let mut nes = Nes::new_fds(&tiny_disk(), &tiny_bios()).unwrap();
+        assert_eq!(nes.region(), Region::Ntsc);
+        assert_eq!(nes.fds_side_count(), Some(1));
+        assert_eq!(nes.fds_current_side(), Some(0));
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let disk = nes.battery_ram().unwrap().to_vec();
+        assert_eq!(disk.len(), crate::mapper::FDS_SIDE_SIZE);
+        assert_eq!(&disk[1..15], b"*NINTENDO-HVC*");
+
+        // Savestates carry the disk; the restore lands on the same frame.
+        let blob = nes.save_state().unwrap();
+        nes.run_frame();
+        let reference = nes.framebuffer().to_vec();
+        let mut restored = Nes::new_fds(&tiny_disk(), &tiny_bios()).unwrap();
+        restored.load_state(&blob).unwrap();
+        restored.run_frame();
+        assert_eq!(restored.framebuffer(), reference.as_slice());
+
+        nes.fds_insert(None);
+        assert_eq!(nes.fds_current_side(), None);
+    }
+
+    #[test]
+    fn cartridges_report_no_fds() {
+        let nes = Nes::new(&rom(0x10)).unwrap();
+        assert_eq!(nes.fds_side_count(), None);
+        assert_eq!(nes.fds_current_side(), None);
     }
 }
