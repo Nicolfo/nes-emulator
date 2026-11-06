@@ -4,7 +4,7 @@
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
 input, NTSC, PAL and Dendy machines (auto-detected from the ROM header), the
-Famicom Disk System (with its wavetable audio), NSF music playback, and 43 mappers
+Famicom Disk System (with its wavetable audio), NSF music playback, and 57 mappers
 - with expansion audio for the MMC5, VRC6, VRC7, N163 and Sunsoft 5B - covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
 Akumajou Densetsu, Lagrange Point and Castlevania III. See [docs/mappers.md](docs/mappers.md)
@@ -136,7 +136,10 @@ tracks.
   plus Sunsoft 5B audio), Camerica/Codemasters, Namco 108/DxROM (the
   pre-IRQ MMC3 ancestor), the Taito TC0190/TC0690 (one core; a mapper-33 dump
   of a TC0690 game auto-promotes to the IRQ-capable variant) and the Sunsoft-1/3,
-  Irem G101, Jaleco JF-17 and Bandai 74161 boards. The full table lives in
+  Irem G101, Jaleco JF-17 and Bandai 74161 boards. Board variants share these
+  cores: MMC3 multicarts and CHR-RAM mixers (37, 47, 74, 119 TQROM, 191-195),
+  the rewired Namco 108 boards (76, 88, 95, 154), MMC1A (155) and Tengen's
+  RAMBO-1 with CHR-driven nametables (158). The full table lives in
   [docs/mappers.md](docs/mappers.md).
   Expansion audio is summed into the APU mix before decimation/filtering.
 - `src/cartridge.rs` - iNES/NES 2.0 header parsing, mapper construction and

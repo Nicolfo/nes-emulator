@@ -27,6 +27,10 @@ pub struct Mmc1 {
     chr_bank0: u8,
     chr_bank1: u8,
     prg_bank: u8,
+    /// Mapper 155, MMC1A: PRG bank bit 4 is not a WRAM disable, so work RAM
+    /// stays enabled.
+    #[serde(default)]
+    mmc1a: bool,
 }
 
 impl Mmc1 {
@@ -46,6 +50,15 @@ impl Mmc1 {
             chr_bank0: 0,
             chr_bank1: 0,
             prg_bank: 0,
+            mmc1a: false,
+        }
+    }
+
+    /// Mapper 155: the MMC1A revision (no PRG-bank WRAM disable bit).
+    pub fn new_mmc1a(prg: Vec<u8>, chr: Vec<u8>) -> Self {
+        Mmc1 {
+            mmc1a: true,
+            ..Self::new(prg, chr)
         }
     }
 
@@ -86,7 +99,7 @@ impl Mmc1 {
     /// (8KB CHR RAM, <512KB PRG - bit 4 isn't a CHR bank or SUROM half
     /// select there) the CHR bank registers' bit 4 too.
     fn wram_disabled(&self) -> bool {
-        if self.prg_bank & 0x10 != 0 {
+        if self.prg_bank & 0x10 != 0 && !self.mmc1a {
             return true;
         }
         let snrom = self.chr_is_ram && self.chr.len() == 0x2000 && self.prg.len() < 0x80000;
@@ -232,6 +245,16 @@ mod tests {
         let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
         let chr: Vec<u8> = (0..4 * 0x1000).map(|i| (i / 0x1000) as u8).collect();
         Mmc1::new(prg, chr)
+    }
+
+    #[test]
+    fn mmc1a_ignores_prg_wram_disable_bit() {
+        let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
+        let chr: Vec<u8> = (0..4 * 0x1000).map(|i| (i / 0x1000) as u8).collect();
+        let mut m = Mmc1::new_mmc1a(prg, chr);
+        serial_write(&mut m, 0xE000, 0x10);
+        m.cpu_write(0x6000, 0x42);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x42));
     }
 
     /// Write one value through the 5-bit serial interface (LSB first).

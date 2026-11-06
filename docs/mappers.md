@@ -24,6 +24,8 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 32 | Irem G101 | Two switchable 8KB PRG banks (swap mode), 1KB CHR banks, mirroring; submapper 1 fixed single-screen | Image Fight, Major League, Kaiketsu Yanchamaru |
 | 33 | Taito TC0190 | Two 8KB PRG banks + two fixed, 2KB/1KB CHR banks, mirroring bit (no IRQ); auto-promotes to TC0690 if the ROM drives the IRQ registers | Don Doko Don, Insector X, Power Blazer |
 | 34 | BNROM / NINA-001 | 32KB PRG select (BNROM) or PRG/CHR banks + PRG RAM (NINA-001) | Deadly Towers, Impossible Mission II |
+| 37 | PAL-ZZ (MMC3 multicart) | MMC3 plus a $6000 block register picking 64/128KB PRG blocks and a 128KB CHR half | Super Mario Bros. + Tetris + Nintendo World Cup (E) |
+| 47 | NES-QJ (MMC3 multicart) | MMC3 plus a $6000 bit selecting the 128KB PRG / CHR half | Super Spike V'Ball + Nintendo World Cup |
 | 48 | Taito TC0690 | TC0190 banking plus an MMC3-style A12 scanline IRQ; mirroring at $E000 | Flintstones 2, Bubble Bobble 2, Don Doko Don 2 |
 | 64 | RAMBO-1 (Tengen) | MMC3-like banking with 1KB CHR mode and a scanline/cycle IRQ | Skull & Crossbones, Klax, Rolling Thunder (Tengen) |
 | 65 | Irem H3001 | 8KB PRG / 1KB CHR banking, 16-bit cycle IRQ | Daiku no Gen-san, Spartan X 2, Kaiketsu Yanchamaru 3 |
@@ -35,14 +37,23 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 71 | Camerica / Codemasters | UxROM-like 16KB PRG select, optional single-screen mirroring | Micro Machines, Fire Hawk, Bee 52 |
 | 72 | Jaleco JF-17/19 | 16KB PRG + 8KB CHR select via trigger bits (uPD7756 sound not emulated) | Pinball Quest, Moero!! Pro Yakyuu |
 | 73 | VRC3 | 16KB PRG select, CHR RAM, 16-bit cycle IRQ, PRG RAM | Salamander |
+| 74 | MMC3 + CHR RAM (Waixing) | MMC3 with CHR banks 8-9 mapped to 2KB of CHR RAM | Chinese translations of Famicom RPGs |
 | 75 | VRC1 | 8KB PRG banks, 4KB CHR banks with a high bit in $9000 | Tetsuwan Atom, Ganbare Goemon!, Exciting Boxing |
+| 76 | Namco 3446 | Namco 108 with four 2KB CHR banks (R2-R5), up to 128KB CHR | Digital Devil Story: Megami Tensei |
 | 78 | Holy Diver / Cosmo Carrier | 16KB PRG + 8KB CHR select, submapper-selected mirroring | Holy Diver, Uchuusen: Cosmo Carrier |
 | 85 | VRC7 | 8KB PRG / 1KB CHR banking, battery PRG RAM, VRC scanline/cycle IRQ, OPLL FM expansion audio (6 two-operator channels) | Lagrange Point, Tiny Toon Adventures 2 (J) |
+| 88 | Namco 3433 | Namco 108 with CHR A16 tied to PPU A12 (128KB CHR) | Quinty, Dragon Spirit (J), Namco Classic |
+| 95 | Namco 3425 | Namco 108 whose CHR bit 5 drives the nametable select | Dragon Buster |
 | 118 | TxSROM (MMC3) | MMC3 with CHR-bank-driven nametable select (TLSROM/TSROM) | NES Play Action Football, Armadillo |
-| 159 | Bandai LZ93D50 (24C01) | Mapper 16 with a 128-byte serial EEPROM | Dragon Ball Z, Datach titles |
+| 119 | TQROM (MMC3) | MMC3 with 8KB CHR RAM selected by CHR bank bit 6 alongside CHR ROM | High Speed, Pin-Bot |
 | 152 | Bandai 74161 | Mapper 70 banking with bit 7 one-screen mirroring select | Arkanoid II, Saint Seiya, Pocket Zaurus |
+| 154 | Namco 3453 | Mapper 88 banking plus one-screen mirroring select (bit 6 of any $8000+ write) | Devil Man |
+| 155 | MMC1A | MMC1 without the PRG-bank WRAM disable bit | Tatakae!! Ramen Man, Money Game |
+| 158 | Tengen 800037 | RAMBO-1 with CHR-register-driven nametable select (like TxSROM) | Alien Syndrome (Tengen) |
+| 159 | Bandai LZ93D50 (24C01) | Mapper 16 with a 128-byte serial EEPROM | Dragon Ball Z, Datach titles |
 | 180 | UNROM (180) | UxROM variant switching only the first 16KB bank ($8000), fixed last bank | Crazy Climber |
 | 184 | Sunsoft-1 | Fixed PRG, two switchable 4KB CHR banks | Atlantis no Nazo, Kanshakudama Nage Kantarou, Wing of Madoola |
+| 191, 192, 194, 195 | MMC3 + CHR RAM (unlicensed) | MMC3 with 2-4KB of CHR RAM at specific bank numbers (bit 7 / 8-11 / 0-1 / 0-3) | Chinese translations, Sugoro Quest (C) |
 | 206 | Namco 108 / DxROM | MMC3's predecessor: fixed-mode banking, no IRQ/mirroring control | Gauntlet, Pac-Mania, Dragon Buster |
 | 210 | Namco 175 / 340 | N163 banking without audio/IRQ; 340 adds mapper mirroring, 175 adds battery PRG RAM | Famista '92, Wagyan Land 2/3, Splatterhouse |
 
