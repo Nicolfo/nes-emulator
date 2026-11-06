@@ -1,8 +1,8 @@
 use crate::mapper::{
     Action53, Axrom, Bandai74161, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom,
-    H3001, HolyDiver, IremG101, JalecoJf17, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc4, Mmc5, N163,
-    Namco108, Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft3, Sunsoft4, TaitoTc0690, Txsrom,
-    Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
+    H3001, HolyDiver, IremG101, JalecoJf17, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc3Board, Mmc4,
+    Mmc5, N163, Namco108, Namco108Board, Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft3, Sunsoft4,
+    TaitoTc0690, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -152,9 +152,23 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
     let mut mapper: Box<dyn Mapper> = match mapper_id {
         0 => Box::new(Nrom::new(prg, chr, mirroring)),
         1 => Box::new(Mmc1::new(prg, chr)), // mirroring register-controlled
+        155 => Box::new(Mmc1::new_mmc1a(prg, chr)),
         2 => Box::new(Uxrom::new(prg, chr, mirroring)),
         3 => Box::new(Cnrom::new(prg, chr, mirroring)),
         4 => Box::new(Mmc3::new(prg, chr, mirroring)),
+        37 | 47 | 74 | 119 | 191 | 192 | 194 | 195 => {
+            let board = match mapper_id {
+                37 => Mmc3Board::PalZz,
+                47 => Mmc3Board::Qj,
+                74 => Mmc3Board::ChrRam74,
+                119 => Mmc3Board::Tqrom,
+                191 => Mmc3Board::ChrRam191,
+                192 => Mmc3Board::ChrRam192,
+                194 => Mmc3Board::ChrRam194,
+                _ => Mmc3Board::ChrRam195,
+            };
+            Box::new(Mmc3::with_board(board, prg, chr, mirroring))
+        }
         5 => Box::new(Mmc5::new(prg, chr, mirroring)),
         7 => Box::new(Axrom::new(prg, chr)), // single-screen, register-controlled
         9 => Box::new(Mmc2::new(prg, chr, mirroring)),
@@ -172,6 +186,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         33 | 48 => Box::new(TaitoTc0690::new(mapper_id, prg, chr, mirroring)),
         34 => Box::new(Bnrom::new(prg, chr, mirroring)),
         64 => Box::new(Rambo1::new(prg, chr, mirroring)),
+        158 => Box::new(Rambo1::new_tengen800037(prg, chr, mirroring)),
         65 => Box::new(H3001::new(prg, chr, mirroring)),
         66 => Box::new(Gxrom::new(prg, chr, mirroring)),
         67 => Box::new(Sunsoft3::new(prg, chr, mirroring)),
@@ -188,6 +203,15 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
         184 => Box::new(Sunsoft1::new(prg, chr, mirroring)),
         206 => Box::new(Namco108::new(prg, chr, mirroring)),
+        76 | 88 | 95 | 154 => {
+            let board = match mapper_id {
+                76 => Namco108Board::Namco3446,
+                88 => Namco108Board::Namco3433,
+                95 => Namco108Board::Namco3425,
+                _ => Namco108Board::Namco3453,
+            };
+            Box::new(Namco108::with_board(board, prg, chr, mirroring))
+        }
         210 => Box::new(Namco175340::new(submapper, prg, chr, mirroring)),
         _ => return Err(format!("mapper {mapper_id} is not supported")),
     };

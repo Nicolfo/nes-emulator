@@ -1,4 +1,4 @@
-use super::{Mapper, Mirroring};
+use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
 /// Namco 108 / DxROM (mapper 206): the bank-switching ancestor of the MMC3.
@@ -6,25 +6,65 @@ use serde::{Deserialize, Serialize};
 /// banking layout as MMC3's mode 0, but drops the PRG/CHR mode bits, the
 /// scanline IRQ, the mirroring register (hardwired by the board) and PRG RAM.
 /// Bank numbers are narrower: CHR registers are 6-bit, PRG registers 4-bit.
+///
+/// [`Namco108Board`] variants cover the boards that rewire its CHR lines.
 #[derive(Serialize, Deserialize)]
 pub struct Namco108 {
     #[serde(skip)]
     prg: Vec<u8>,
     chr: Vec<u8>,
     chr_is_ram: bool,
+    #[serde(default)]
+    board: Namco108Board,
     mirroring: Mirroring,
     bank_select: u8,
     bank_regs: [u8; 8],
 }
 
+/// Namco 108 boards with rewired CHR address lines.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Namco108Board {
+    /// Mapper 206: DxROM / Namco 108 as-is.
+    #[default]
+    Standard,
+    /// Mapper 76, Namco 3446 (Megami Tensei): R2-R5 select four 2KB CHR
+    /// banks; R0/R1 do nothing. Up to 128KB CHR.
+    Namco3446,
+    /// Mapper 88, Namco 3433: CHR A16 is tied to PPU A12, so $0000-$0FFF
+    /// sees the low 64KB of CHR and $1000-$1FFF the high 64KB.
+    Namco3433,
+    /// Mapper 154, Namco 3453 (Devil Man): mapper 88 plus a one-screen
+    /// mirroring select in bit 6 of every $8000-$FFFF write.
+    Namco3453,
+    /// Mapper 95, Namco 3425 (Dragon Buster): bit 5 of R0 / R1 drives
+    /// CIRAM A10 for the $2000-$27FF / $2800-$2FFF nametables.
+    Namco3425,
+}
+
 impl Namco108 {
     pub fn new(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        Self::with_board(Namco108Board::Standard, prg, chr, mirroring)
+    }
+
+    pub fn with_board(
+        board: Namco108Board,
+        prg: Vec<u8>,
+        chr: Vec<u8>,
+        mirroring: Mirroring,
+    ) -> Self {
         let chr_is_ram = chr.is_empty();
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
+        // Devil Man powers on showing nametable page 0.
+        let mirroring = if board == Namco108Board::Namco3453 {
+            Mirroring::SingleScreenLo
+        } else {
+            mirroring
+        };
         Namco108 {
             prg,
             chr,
             chr_is_ram,
+            board,
             mirroring,
             bank_select: 0,
             bank_regs: [0; 8],
@@ -48,12 +88,27 @@ impl Namco108 {
     /// 2KB banks at $0000/$0800; R2-R5 are 1KB banks at $1000-$1C00.
     fn chr_offset(&self, addr: u16) -> usize {
         let banks = self.chr.len() / 0x400;
+        if self.board == Namco108Board::Namco3446 {
+            // Four 2KB banks from R2-R5.
+            let reg = self.bank_regs[2 + (addr as usize >> 11)] as usize;
+            let bank = (reg * 2 + ((addr as usize >> 10) & 1)) % banks;
+            return bank * 0x400 + (addr as usize & 0x3FF);
+        }
         let bank = match addr >> 10 {
             0 => self.bank_regs[0] as usize & !1,
             1 => self.bank_regs[0] as usize | 1,
             2 => self.bank_regs[1] as usize & !1,
             3 => self.bank_regs[1] as usize | 1,
             k => self.bank_regs[k as usize - 2] as usize,
+        };
+        let bank = match self.board {
+            // CHR A16 follows PPU A12.
+            Namco108Board::Namco3433 | Namco108Board::Namco3453 => {
+                (bank & 0x3F) | ((addr as usize & 0x1000) >> 6)
+            }
+            // Bit 5 of the 2KB registers goes to CIRAM A10, not CHR.
+            Namco108Board::Namco3425 => bank & 0x1F,
+            _ => bank,
         } % banks;
         bank * 0x400 + (addr as usize & 0x3FF)
     }
@@ -77,6 +132,13 @@ impl Mapper for Namco108 {
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
         if addr >= 0x8000 {
+            if self.board == Namco108Board::Namco3453 {
+                self.mirroring = if val & 0x40 != 0 {
+                    Mirroring::SingleScreenHi
+                } else {
+                    Mirroring::SingleScreenLo
+                };
+            }
             if addr & 1 == 0 {
                 self.bank_select = val & 7;
             } else {
@@ -104,6 +166,15 @@ impl Mapper for Namco108 {
 
     fn mirroring(&self) -> Mirroring {
         self.mirroring
+    }
+
+    fn nt_target(&mut self, addr: u16) -> NtTarget {
+        if self.board != Namco108Board::Namco3425 || self.mirroring == Mirroring::FourScreen {
+            return NtTarget::Ciram(mirror_nt(self.mirroring, addr));
+        }
+        let reg = self.bank_regs[((addr >> 11) & 1) as usize];
+        let a10 = ((reg >> 5) & 1) as u16;
+        NtTarget::Ciram((a10 << 10) | (addr & 0x3FF))
     }
 }
 
@@ -145,6 +216,66 @@ mod tests {
         // No CHR mode bit: bit 7 of the select register is masked away.
         m.cpu_write(0x8000, 0x80);
         assert_eq!(m.ppu_read(0x0000), 4);
+    }
+
+    /// 8 PRG banks, 128KB CHR; bytes = their 1KB CHR page index.
+    fn board(b: Namco108Board) -> Namco108 {
+        let prg: Vec<u8> = (0..8 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
+        let chr: Vec<u8> = (0..128 * 0x400).map(|i| (i / 0x400) as u8).collect();
+        Namco108::with_board(b, prg, chr, Mirroring::Vertical)
+    }
+
+    fn set_reg(m: &mut Namco108, r: u8, v: u8) {
+        m.cpu_write(0x8000, r);
+        m.cpu_write(0x8001, v);
+    }
+
+    #[test]
+    fn namco3446_uses_four_2kb_banks() {
+        let mut m = board(Namco108Board::Namco3446);
+        for (r, v) in [(2, 3), (3, 10), (4, 0x20), (5, 0x3F)] {
+            set_reg(&mut m, r, v);
+        }
+        set_reg(&mut m, 0, 7); // R0 is unused on this board
+        assert_eq!(m.ppu_read(0x0000), 6);
+        assert_eq!(m.ppu_read(0x0400), 7);
+        assert_eq!(m.ppu_read(0x0800), 20);
+        assert_eq!(m.ppu_read(0x1000), 64);
+        assert_eq!(m.ppu_read(0x1C00), 127);
+    }
+
+    #[test]
+    fn namco3433_ties_chr_a16_to_a12() {
+        let mut m = board(Namco108Board::Namco3433);
+        set_reg(&mut m, 0, 4);
+        set_reg(&mut m, 2, 4);
+        assert_eq!(m.ppu_read(0x0000), 4, "low 64KB below $1000");
+        assert_eq!(m.ppu_read(0x1000), 0x44, "high 64KB from $1000");
+    }
+
+    #[test]
+    fn namco3453_one_screen_select() {
+        let mut m = board(Namco108Board::Namco3453);
+        assert_eq!(m.mirroring(), Mirroring::SingleScreenLo);
+        m.cpu_write(0xC000, 0x40);
+        assert_eq!(m.mirroring(), Mirroring::SingleScreenHi);
+        m.cpu_write(0x8000, 0x00);
+        assert_eq!(m.mirroring(), Mirroring::SingleScreenLo);
+        set_reg(&mut m, 5, 1);
+        assert_eq!(m.ppu_read(0x1C00), 0x41);
+    }
+
+    #[test]
+    fn namco3425_nametables_follow_chr_bit5() {
+        let mut m = board(Namco108Board::Namco3425);
+        set_reg(&mut m, 0, 0x20 | 2);
+        set_reg(&mut m, 1, 4);
+        assert_eq!(m.nt_target(0x2000), NtTarget::Ciram(0x400));
+        assert_eq!(m.nt_target(0x2400), NtTarget::Ciram(0x400));
+        assert_eq!(m.nt_target(0x2800), NtTarget::Ciram(0x000));
+        assert_eq!(m.nt_target(0x2C05), NtTarget::Ciram(0x005));
+        // Bit 5 never reaches the CHR address lines.
+        assert_eq!(m.ppu_read(0x0000), 2);
     }
 
     #[test]

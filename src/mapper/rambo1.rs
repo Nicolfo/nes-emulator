@@ -1,4 +1,4 @@
-use super::{Mapper, Mirroring};
+use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
 /// RAMBO-1 (mapper 64, Tengen 800032): an MMC3-like board with 8KB PRG and
@@ -35,6 +35,11 @@ pub struct Rambo1 {
     irq_cpu_mode: bool,
     irq_prescaler: u8,
     last_a12: bool,
+    /// Mapper 158 (Tengen 800037, Alien Syndrome): bit 7 of the CHR
+    /// register that would serve a nametable fetch drives CIRAM A10, like
+    /// TxSROM; the $A000 mirroring register is unused.
+    #[serde(default)]
+    nt_from_chr: bool,
 }
 
 impl Rambo1 {
@@ -57,6 +62,37 @@ impl Rambo1 {
             irq_cpu_mode: false,
             irq_prescaler: 0,
             last_a12: false,
+            nt_from_chr: false,
+        }
+    }
+
+    /// Mapper 158: RAMBO-1 with CHR-register-driven nametable selection.
+    pub fn new_tengen800037(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        Rambo1 {
+            nt_from_chr: true,
+            ..Self::new(prg, chr, mirroring)
+        }
+    }
+
+    /// CHR bank register value serving 1KB pattern slot `slot` (0-7, after
+    /// the A12 inversion), honoring the full-1KB `K` mode.
+    fn chr_reg(&self, slot: u16) -> usize {
+        if self.bank_select & 0x20 != 0 {
+            match slot {
+                0 => self.bank_regs[0] as usize,
+                1 => self.bank_regs[8] as usize,
+                2 => self.bank_regs[1] as usize,
+                3 => self.bank_regs[9] as usize,
+                s => self.bank_regs[s as usize - 2] as usize,
+            }
+        } else {
+            match slot {
+                0 => self.bank_regs[0] as usize & !1,
+                1 => self.bank_regs[0] as usize | 1,
+                2 => self.bank_regs[1] as usize & !1,
+                3 => self.bank_regs[1] as usize | 1,
+                s => self.bank_regs[s as usize - 2] as usize,
+            }
         }
     }
 
@@ -108,33 +144,18 @@ impl Rambo1 {
     /// 2KB region with the 1KB region (here, $0000-$0FFF vs $1000-$1FFF).
     fn chr_offset(&self, addr: u16) -> usize {
         let banks = self.chr.len() / 0x400;
-        let k = self.bank_select & 0x20 != 0;
         // Bit 7 swaps the "2KB" and "1KB" halves of pattern space.
         let a = if self.bank_select & 0x80 != 0 {
             addr ^ 0x1000
         } else {
             addr
         };
-        let slot = a >> 10; // 0..=7, 1KB granularity
-        let bank = if k {
-            // Full 1KB mode: every slot is its own register.
-            match slot {
-                0 => self.bank_regs[0] as usize,
-                1 => self.bank_regs[8] as usize,
-                2 => self.bank_regs[1] as usize,
-                3 => self.bank_regs[9] as usize,
-                s => self.bank_regs[s as usize - 2] as usize,
-            }
-        } else {
-            // 2KB mode (MMC3-like): R0/R1 are 2KB pairs, low bit ignored.
-            match slot {
-                0 => self.bank_regs[0] as usize & !1,
-                1 => self.bank_regs[0] as usize | 1,
-                2 => self.bank_regs[1] as usize & !1,
-                3 => self.bank_regs[1] as usize | 1,
-                s => self.bank_regs[s as usize - 2] as usize,
-            }
-        } % banks;
+        let mut bank = self.chr_reg(a >> 10);
+        if self.nt_from_chr {
+            // Bit 7 is the nametable select, not a CHR address line.
+            bank &= 0x7F;
+        }
+        let bank = bank % banks;
         bank * 0x400 + (addr as usize & 0x3FF)
     }
 
@@ -203,7 +224,7 @@ impl Mapper for Rambo1 {
                 }
             }
             0xA000..=0xBFFF => {
-                if addr & 1 == 0 {
+                if addr & 1 == 0 && !self.nt_from_chr {
                     // A four-screen board ignores the mirroring register.
                     if self.mirroring != Mirroring::FourScreen {
                         self.mirroring = if val & 1 != 0 {
@@ -259,6 +280,20 @@ impl Mapper for Rambo1 {
         self.mirroring
     }
 
+    fn nt_target(&mut self, addr: u16) -> NtTarget {
+        if !self.nt_from_chr || self.mirroring == Mirroring::FourScreen {
+            return NtTarget::Ciram(mirror_nt(self.mirroring, addr));
+        }
+        // A nametable fetch has PPU A12 = 0: route it through the same CHR
+        // slot decode a $0000-$0FFF pattern fetch would use.
+        let mut slot = (addr >> 10) & 3;
+        if self.bank_select & 0x80 != 0 {
+            slot += 4;
+        }
+        let a10 = ((self.chr_reg(slot) >> 7) & 1) as u16;
+        NtTarget::Ciram((a10 << 10) | (addr & 0x3FF))
+    }
+
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
         Some(self.prg_ram[(addr & 0x1FFF) as usize])
     }
@@ -296,6 +331,31 @@ mod tests {
         let prg: Vec<u8> = (0..8 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
         let chr: Vec<u8> = (0..16 * 0x400).map(|i| (i / 0x400) as u8).collect();
         Rambo1::new(prg, chr, Mirroring::Horizontal)
+    }
+
+    #[test]
+    fn tengen800037_nametables_from_chr_bit7() {
+        let prg: Vec<u8> = (0..8 * 0x2000).map(|i| (i / 0x2000) as u8).collect();
+        let chr: Vec<u8> = (0..16 * 0x400).map(|i| (i / 0x400) as u8).collect();
+        let mut m = Rambo1::new_tengen800037(prg, chr, Mirroring::Vertical);
+        set_reg(&mut m, 0, 0x80 | 2); // R0: 2KB at $0000, NT select 1
+        set_reg(&mut m, 1, 4); // R1: NT select 0
+        assert_eq!(m.nt_target(0x2000), NtTarget::Ciram(0x400));
+        assert_eq!(m.nt_target(0x2400), NtTarget::Ciram(0x400));
+        assert_eq!(m.nt_target(0x2800), NtTarget::Ciram(0x000));
+        // Bit 7 is stripped from the CHR address.
+        assert_eq!(m.ppu_read(0x0000), 2);
+        // $A000 doesn't override it.
+        m.cpu_write(0xA000, 1);
+        assert_eq!(m.nt_target(0x2000), NtTarget::Ciram(0x400));
+        // K mode: R8 serves the second quadrant.
+        m.cpu_write(0x8000, 0x20 | 8);
+        m.cpu_write(0x8001, 0x00);
+        assert_eq!(m.nt_target(0x2400), NtTarget::Ciram(0x000));
+        // Inverted A12: quadrants come from R2-R5.
+        m.cpu_write(0x8000, 0x80 | 2);
+        m.cpu_write(0x8001, 0x80);
+        assert_eq!(m.nt_target(0x2000), NtTarget::Ciram(0x400));
     }
 
     /// Helper: select command `cmd` then write `val` to that register.
