@@ -616,7 +616,16 @@ impl Ppu {
             if self.eval_copying > 0 {
                 self.secondary_oam[self.sec_addr as usize] = self.eval_latch;
                 self.sec_addr += 1;
-                self.eval_ptr = self.eval_ptr.wrapping_add(1);
+                // The X byte (last of the copy) goes through the same
+                // in-range comparator as Y; out of range, the address
+                // increment also masks the low bits, re-aligning a
+                // misaligned OAMADDR (aligned OAM can't tell the difference).
+                self.eval_ptr =
+                    if self.eval_copying == 1 && !self.in_range(self.scanline, self.eval_latch) {
+                        self.eval_ptr.wrapping_add(1) & 0xFC
+                    } else {
+                        self.eval_ptr.wrapping_add(1)
+                    };
                 self.eval_copying -= 1;
                 if self.eval_copying == 0 {
                     self.eval_candidates += 1;
@@ -642,7 +651,9 @@ impl Ppu {
                     self.sec_addr += 1;
                     self.eval_ptr = self.eval_ptr.wrapping_add(1);
                 } else {
-                    self.eval_ptr = self.eval_ptr.wrapping_add(4);
+                    // Out-of-range Y skips the object and re-aligns: +4,
+                    // then the low two address bits are cleared.
+                    self.eval_ptr = self.eval_ptr.wrapping_add(4) & 0xFC;
                     self.eval_candidates += 1;
                     if self.eval_candidates >= 64 {
                         self.eval_done = true;
