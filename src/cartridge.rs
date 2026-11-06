@@ -1,8 +1,9 @@
 use crate::mapper::{
     Action53, Axrom, Bandai74161, BandaiFcg, Bnrom, Cnrom, Codemasters, ColorDreams, Fme7, Gxrom,
-    H3001, HolyDiver, IremG101, JalecoJf17, Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc3Board, Mmc4,
-    Mmc5, N163, Namco108, Namco108Board, Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft3, Sunsoft4,
-    TaitoTc0690, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
+    H3001, HolyDiver, IremG101, IremLrog017, IremTamS1, JalecoJf17, JalecoLatch, JalecoSs88006,
+    Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc3Board, Mmc4, Mmc5, N163, Namco108, Namco108Board,
+    Namco175340, Nrom, Rambo1, Sunsoft1, Sunsoft2, Sunsoft3, Sunsoft4, TaitoTc0690, TaitoX1005,
+    TaitoX1017, Txsrom, Unrom180, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6, Vrc7,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -175,6 +176,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         10 => Box::new(Mmc4::new(prg, chr, mirroring)),
         11 => Box::new(ColorDreams::new(prg, chr, mirroring)),
         16 | 159 => Box::new(BandaiFcg::new(mapper_id, submapper, prg, chr, mirroring)),
+        18 => Box::new(JalecoSs88006::new(prg, chr, mirroring)),
         19 => Box::new(N163::new(prg, chr, mirroring)),
         21 | 22 | 23 | 25 => Box::new(Vrc4::new(mapper_id, prg, chr, mirroring)),
         24 => Box::new(Vrc6::new(prg, chr, mirroring)),
@@ -197,8 +199,15 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         72 => Box::new(JalecoJf17::new(prg, chr, mirroring)),
         73 => Box::new(Vrc3::new(prg, chr, mirroring)),
         75 => Box::new(Vrc1::new(prg, chr, mirroring)),
+        77 => Box::new(IremLrog017::new(prg, chr)), // always four-screen
         78 => Box::new(HolyDiver::new(prg, chr, mirroring)),
+        80 | 207 => Box::new(TaitoX1005::new(mapper_id, prg, chr, mirroring)),
+        82 => Box::new(TaitoX1017::new(prg, chr, mirroring)),
         85 => Box::new(Vrc7::new(submapper, prg, chr, mirroring)),
+        86 | 87 | 140 => Box::new(JalecoLatch::new(mapper_id, prg, chr, mirroring)),
+        89 | 93 => Box::new(Sunsoft2::new(mapper_id, prg, chr, mirroring)),
+        92 => Box::new(JalecoJf17::new_high_window(prg, chr, mirroring)),
+        97 => Box::new(IremTamS1::new(prg, chr, mirroring)),
         118 => Box::new(Txsrom::new(prg, chr, mirroring)),
         180 => Box::new(Unrom180::new(prg, chr, mirroring)),
         184 => Box::new(Sunsoft1::new(prg, chr, mirroring)),
