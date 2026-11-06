@@ -53,3 +53,9 @@ fn uncharted_waters_boots() {
     // color bar is lower than for the other games.
     boot_and_check("Uncharted Waters (USA).nes", 1200, 4);
 }
+
+#[test]
+fn moero_pro_yakyuu_boots() {
+    // Mapper 86 (Jaleco JF-13): $6000 PRG/CHR latch.
+    boot_and_check("Moero!! Pro Yakyuu (Japan) (Rev 1).nes", 600, 4);
+}

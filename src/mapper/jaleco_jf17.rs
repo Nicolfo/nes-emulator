@@ -13,7 +13,11 @@ use serde::{Deserialize, Serialize};
 /// +---------- bit 7: when set, load PRG bank (16KB @ $8000)
 /// ```
 /// PRG: $8000-$BFFF switchable, $C000-$FFFF fixed to the last 16KB. Mirroring
-/// is hardwired. The JF-19 adds a uPD7756C sample player, which is not emulated
+/// is hardwired.
+///
+/// Mapper 92 (JF-19 / JF-21) is the same latch with the PRG window flipped:
+/// $8000-$BFFF fixed to the *first* 16KB and $C000-$FFFF switchable. Games:
+/// Moero!! Pro Soccer, Moero!! Pro Yakyuu '88. The JF-19 adds a uPD7756C sample player, which is not emulated
 /// (no game depends on it for gameplay). Games: Pinball Quest, Moero!! Pro
 /// Yakyuu, Moero!! Pro Tennis.
 #[derive(Serialize, Deserialize)]
@@ -25,6 +29,9 @@ pub struct JalecoJf17 {
     prg_bank: u8,
     chr_bank: u8,
     mirroring: Mirroring,
+    /// Mapper 92: switchable bank at $C000, first bank fixed at $8000.
+    #[serde(default)]
+    high_window: bool,
 }
 
 impl JalecoJf17 {
@@ -38,6 +45,16 @@ impl JalecoJf17 {
             prg_bank: 0,
             chr_bank: 0,
             mirroring,
+            high_window: false,
+        }
+    }
+
+    /// Mapper 92 (JF-19/JF-21): switchable 16KB at $C000, $8000 fixed to
+    /// the first bank.
+    pub fn new_high_window(prg: Vec<u8>, chr: Vec<u8>, mirroring: Mirroring) -> Self {
+        JalecoJf17 {
+            high_window: true,
+            ..Self::new(prg, chr, mirroring)
         }
     }
 }
@@ -53,13 +70,15 @@ impl Mapper for JalecoJf17 {
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let banks = self.prg.len() / 0x4000;
-        match addr {
-            0x8000..=0xBFFF => {
-                self.prg[(self.prg_bank as usize % banks) * 0x4000 + (addr as usize & 0x3FFF)]
-            }
-            0xC000..=0xFFFF => self.prg[(banks - 1) * 0x4000 + (addr as usize & 0x3FFF)],
-            _ => 0,
-        }
+        let switched = self.prg_bank as usize % banks;
+        let bank = match (addr, self.high_window) {
+            (0x8000..=0xBFFF, false) => switched,
+            (0xC000..=0xFFFF, false) => banks - 1,
+            (0x8000..=0xBFFF, true) => 0,
+            (0xC000..=0xFFFF, true) => switched,
+            _ => return 0,
+        };
+        self.prg[bank * 0x4000 + (addr as usize & 0x3FFF)]
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
@@ -122,6 +141,15 @@ mod tests {
         m.cpu_write(0x8000, 0x83); // PRG bank 3
         m.cpu_write(0x8000, 0x05); // no trigger bits set
         assert_eq!(m.cpu_read(0x8000), 3); // unchanged
+    }
+
+    #[test]
+    fn jf19_switches_the_upper_window() {
+        let prg: Vec<u8> = (0..8 * 0x4000).map(|i| (i / 0x4000) as u8).collect();
+        let mut m = JalecoJf17::new_high_window(prg, vec![], Mirroring::Vertical);
+        m.cpu_write(0x8000, 0x85);
+        assert_eq!(m.cpu_read(0x8000), 0);
+        assert_eq!(m.cpu_read(0xC000), 5);
     }
 
     #[test]
