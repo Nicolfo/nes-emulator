@@ -12,6 +12,8 @@ use crate::cartridge::Region;
 
 const CPU_HZ: f64 = 1_789_772.727;
 const PAL_CPU_HZ: f64 = 1_662_607.03;
+/// Dendy: PAL master clock (26.601712 MHz) divided by 15.
+const DENDY_CPU_HZ: f64 = 1_773_447.47;
 
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, //
@@ -567,6 +569,7 @@ impl Apu {
         match self.region {
             Region::Ntsc => CPU_HZ,
             Region::Pal => PAL_CPU_HZ,
+            Region::Dendy => DENDY_CPU_HZ,
         }
     }
 
@@ -744,7 +747,7 @@ impl Apu {
             0x400E => {
                 self.noise.mode = v & 0x80 != 0;
                 let table = match self.region {
-                    Region::Ntsc => &NOISE_PERIOD,
+                    Region::Ntsc | Region::Dendy => &NOISE_PERIOD,
                     Region::Pal => &PAL_NOISE_PERIOD,
                 };
                 self.noise.timer_period = table[(v & 0x0F) as usize];
@@ -762,7 +765,7 @@ impl Apu {
                 }
                 self.dmc.loop_flag = v & 0x40 != 0;
                 let table = match self.region {
-                    Region::Ntsc => &DMC_RATE,
+                    Region::Ntsc | Region::Dendy => &DMC_RATE,
                     Region::Pal => &PAL_DMC_RATE,
                 };
                 self.dmc.period = table[(v & 0x0F) as usize];

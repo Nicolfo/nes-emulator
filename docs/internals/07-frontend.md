@@ -23,6 +23,7 @@ everything else) and exposes a small, frontend-agnostic API:
 | `battery_ram` / `load_battery_ram` | Save-game persistence |
 | `save_state` / `load_state` | Whole-machine snapshots (see [chapter 7](08-savestates.md)) |
 | `snapshot` / `restore_snapshot` | In-memory snapshots for rewind (mapper JSON appended raw, not re-encoded) |
+| `new_with_region` | Build with a forced TV system (NTSC / PAL / Dendy) |
 | `new_fds` / `fds_insert` / `fds_side_count` | Famicom Disk System boot and disk swapping |
 | `new_nsf` / `nsf_info` / `nsf_play` | NSF music playback ([chapter 8](09-nsf.md)) |
 | `set_buttons` / `set_input_device` / `set_zapper` | Controller ports: up to 4 pads, Four Score, Zapper |
@@ -110,7 +111,7 @@ enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Cheats { .. }, Runn
   Settings has two pages. CONTROLS rebinds keys per player (an EDIT PLAYER
   toggle switches between player 1 and player 2), including the turbo
   buttons. OPTIONS holds window scale, NTSC overscan cropping, volume,
-  fast-forward speed, input device and rewind on/off - all
+  fast-forward speed, input device, region override and rewind on/off - all
   persisted via `src/config.rs` (older config files load with defaults for
   the new fields).
 - **Cheats** lists the loaded game's codes (Enter toggles, Delete removes,
@@ -178,6 +179,14 @@ image itself is the "battery RAM": writes the game makes are saved to
 NSF files (`NESM\x1A`) load through `Nes::new` and show a player screen
 (`menu::render_nsf`) instead of the framebuffer: title, artist, track
 number and play time. Left/Right switch tracks, F3 restarts the current one.
+
+### Region override
+
+Settings > OPTIONS > REGION forces NTSC, PAL or **Dendy** at the next ROM load
+(AUTO follows the header; NES 2.0 timing byte 3 already selects Dendy). The
+Dendy is a PAL-clocked Famiclone: 312-line 50 Hz frames like PAL, but 3 PPU
+dots per CPU cycle like NTSC, 51 idle post-render lines with vblank starting
+at line 291, and NTSC APU tables at 1.773 MHz.
 
 ### Audio output and dynamic rate control
 

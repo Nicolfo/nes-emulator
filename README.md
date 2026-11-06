@@ -3,7 +3,7 @@
 # NES Emulator
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
-input, NTSC and PAL machines (auto-detected from the ROM header), the
+input, NTSC, PAL and Dendy machines (auto-detected from the ROM header), the
 Famicom Disk System (with its wavetable audio), NSF music playback, and 43 mappers
 - with expansion audio for the MMC5, VRC6, VRC7, N163 and Sunsoft 5B - covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
@@ -39,7 +39,7 @@ The home menu offers **Load ROM** (native file picker for `.nes`, `.fds` and
 including turbo A/B, for either player (toggle the EDIT PLAYER row, select a
 button, press Enter, then press the new key); OPTIONS sets window scale, NTSC
 overscan cropping, volume, fast-forward speed, the input device (2 pads, Four
-Score or Zapper) and rewind, and
+Score or Zapper), a region override (auto, NTSC, PAL or Dendy) and rewind, and
 resets defaults. Everything is persisted to a `config.json` in the
 platform's per-user config directory (`~/.config/nes-emulator` on Linux,
 `~/Library/Application Support/nes-emulator` on macOS, `%APPDATA%\nes-emulator`
@@ -162,7 +162,7 @@ tracks.
 - `src/gamepad.rs` - optional physical-gamepad input via `gilrs`; maps up to
   four connected pads to players 1-4, merged with the keyboard each frame.
 - `src/main.rs` - winit 0.30 + pixels frontend, home/settings/cheats/running
-  state machine, paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL) while a
+  state machine, paced at 60.0988 FPS (NTSC) or 50.0070 FPS (PAL/Dendy) while a
   game runs, with fast-forward, rewind, turbo, mouse-driven Zapper and an NSF
   player screen. Dynamic audio rate
   control nudges the resampling ratio (±0.3 %) so the audio queue hovers around
@@ -177,7 +177,9 @@ tracks.
 Timing: 1 CPU cycle = 3 PPU dots (NTSC) or 3.2 PPU dots (PAL) = 1 APU step,
 interleaved at bus-access granularity. NTSC frames are 89,342 dots (89,341 on
 odd rendered frames); PAL frames are 312 scanlines (106,392 dots) with the
-longer vblank and no odd-frame dot skip.
+longer vblank and no odd-frame dot skip. Dendy frames are also 312 scanlines
+but at 3 dots per CPU cycle, with 51 idle post-render lines before an
+NTSC-length vblank starting at line 291.
 
 ## Tests
 

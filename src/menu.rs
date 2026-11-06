@@ -214,6 +214,7 @@ pub enum SetRow {
     Volume,
     FastForward,
     Input,
+    Region,
     Rewind,
     Reset,
     Back,
@@ -232,6 +233,7 @@ pub fn settings_rows(page: usize) -> Vec<SetRow> {
             SetRow::Volume,
             SetRow::FastForward,
             SetRow::Input,
+            SetRow::Region,
             SetRow::Rewind,
             SetRow::Reset,
         ]);
@@ -310,6 +312,7 @@ pub fn render_settings(
                 "INPUT",
                 Some(format!("< {} >", input_device_name(cfg.input_device))),
             ),
+            SetRow::Region => ("REGION", Some(format!("< {} >", cfg.region.label()))),
             SetRow::Rewind => ("REWIND", Some(on_off(cfg.rewind).to_string())),
             SetRow::Reset => ("RESET DEFAULTS", None),
             SetRow::Back => ("BACK", None),

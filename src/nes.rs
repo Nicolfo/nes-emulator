@@ -19,10 +19,18 @@ impl Nes {
     /// Build a machine from an iNES/NES 2.0 ROM image, or from an NSF music
     /// file (detected by its magic; see [`Nes::new_nsf`]).
     pub fn new(rom: &[u8]) -> Result<Self, String> {
+        Self::new_with_region(rom, None)
+    }
+
+    /// Like [`Nes::new`], but `region` (when Some) overrides the TV system
+    /// the ROM header declares - for Dendy-targeted games whose iNES headers
+    /// can't say so, or PAL games dumped with an NTSC header.
+    pub fn new_with_region(rom: &[u8], region: Option<Region>) -> Result<Self, String> {
         if nsf::is_nsf(rom) {
             return Self::new_nsf(rom);
         }
-        let (cart, region, battery) = load_rom(rom)?;
+        let (cart, header_region, battery) = load_rom(rom)?;
+        let region = region.unwrap_or(header_region);
         let mut cpu = Cpu::new(Bus::with_region(cart, region));
         cpu.reset();
         Ok(Nes {
@@ -408,6 +416,24 @@ mod tests {
         data[16 + 0x7FFC] = 0x00;
         data[16 + 0x7FFD] = 0x80;
         data
+    }
+
+    #[test]
+    fn region_override_and_dendy_timing() {
+        let data = nrom_filled(0xEA);
+        let mut nes = Nes::new_with_region(&data, Some(Region::Dendy)).unwrap();
+        assert_eq!(nes.region(), Region::Dendy);
+        // A Dendy frame is 312 lines of 341 dots at 3 dots per CPU cycle.
+        nes.run_frame();
+        let c0 = nes.cpu.bus.cycles;
+        nes.run_frame();
+        let cycles = nes.cpu.bus.cycles - c0;
+        assert!((35_460..=35_470).contains(&cycles), "{cycles} CPU cycles");
+        // NES 2.0 timing byte 3 selects Dendy on its own.
+        let mut nes2 = data.clone();
+        nes2[7] = 0x08;
+        nes2[12] = 3;
+        assert_eq!(Nes::new(&nes2).unwrap().region(), Region::Dendy);
     }
 
     #[test]
