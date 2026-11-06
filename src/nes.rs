@@ -1,6 +1,8 @@
 use crate::bus::Bus;
 use crate::cartridge::{Region, load_rom};
 use crate::cpu::Cpu;
+use crate::mapper::NsfMapper;
+use crate::nsf::{self, NsfInfo};
 use crate::savestate::{MAGIC, SaveState, VERSION};
 
 pub struct Nes {
@@ -10,7 +12,12 @@ pub struct Nes {
 }
 
 impl Nes {
+    /// Build a machine from an iNES/NES 2.0 ROM image, or from an NSF music
+    /// file (detected by its magic; see [`Nes::new_nsf`]).
     pub fn new(rom: &[u8]) -> Result<Self, String> {
+        if nsf::is_nsf(rom) {
+            return Self::new_nsf(rom);
+        }
         let (cart, region, battery) = load_rom(rom)?;
         let mut cpu = Cpu::new(Bus::with_region(cart, region));
         cpu.reset();
@@ -59,6 +66,41 @@ impl Nes {
     /// sees the disk change. No-op for cartridges.
     pub fn fds_insert(&mut self, side: Option<usize>) {
         self.cpu.bus.cart.fds_insert(side);
+    }
+
+    /// Build a machine that plays an NSF music file. The NSF board's driver
+    /// starts the header's default song at power-on; switch tracks with
+    /// [`Nes::nsf_play`].
+    pub fn new_nsf(data: &[u8]) -> Result<Self, String> {
+        let (header, body) = nsf::parse(data)?;
+        let region = header.region;
+        let cart = Box::new(NsfMapper::new(&header, body));
+        let mut cpu = Cpu::new(Bus::with_region(cart, region));
+        cpu.reset();
+        Ok(Nes {
+            cpu,
+            region,
+            battery: false,
+        })
+    }
+
+    /// NSF metadata (title, song count, current song) when an NSF is loaded.
+    pub fn nsf_info(&self) -> Option<NsfInfo> {
+        self.cpu.bus.cart.nsf_info()
+    }
+
+    /// Restart an NSF machine into song `song` (0-based, clamped to the
+    /// song count): the board rewinds its banking and the CPU/PPU/APU are
+    /// reset, so the driver clears RAM and runs the tune's init again.
+    /// No-op when the loaded image isn't an NSF.
+    pub fn nsf_play(&mut self, song: usize) {
+        if self.nsf_info().is_none() {
+            return;
+        }
+        self.cpu.bus.cart.nsf_select(song);
+        self.cpu.bus.ppu.reset();
+        self.cpu.bus.apu.reset();
+        self.cpu.reset();
     }
 
     pub fn region(&self) -> Region {
@@ -318,5 +360,161 @@ mod tests {
         let nes = Nes::new(&rom(0x10)).unwrap();
         assert_eq!(nes.fds_side_count(), None);
         assert_eq!(nes.fds_current_side(), None);
+    }
+
+    // --- NSF -----------------------------------------------------------------
+
+    /// NSF header: 3 songs (start at song 2), load/init at $8000, play at
+    /// $8020. `banks` are the $70-$77 bankswitch-init bytes.
+    fn nsf_header(banks: [u8; 8], speed_us: u16) -> Vec<u8> {
+        let mut h = vec![0u8; crate::nsf::HEADER_LEN];
+        h[0..5].copy_from_slice(b"NESM");
+        h[5] = 1;
+        h[6] = 3;
+        h[7] = 2;
+        h[0x08..0x0A].copy_from_slice(&0x8000u16.to_le_bytes());
+        h[0x0A..0x0C].copy_from_slice(&0x8000u16.to_le_bytes());
+        h[0x0C..0x0E].copy_from_slice(&0x8020u16.to_le_bytes());
+        h[0x0E..0x14].copy_from_slice(b"TONE 1");
+        h[0x6E..0x70].copy_from_slice(&speed_us.to_le_bytes());
+        h[0x70..0x78].copy_from_slice(&banks);
+        h
+    }
+
+    /// Unbanked NSF whose init stores A/X to $11/$12 and starts a constant
+    /// pulse-1 tone; play increments $10.
+    fn tone_nsf(speed_us: u16) -> Vec<u8> {
+        let mut data = nsf_header([0; 8], speed_us);
+        let mut prg = vec![0u8; 0x30];
+        let init = [
+            0x85, 0x11, // STA $11 (song)
+            0x86, 0x12, // STX $12 (region)
+            0xA9, 0xBF, 0x8D, 0x00, 0x40, // duty 2, halt, constant volume 15
+            0xA9, 0x40, 0x8D, 0x02, 0x40, // period lo
+            0xA9, 0x00, 0x8D, 0x03, 0x40, // period hi + length load
+            0x60, // RTS
+        ];
+        prg[..init.len()].copy_from_slice(&init);
+        prg[0x20..0x23].copy_from_slice(&[0xE6, 0x10, 0x60]); // INC $10 / RTS
+        data.extend_from_slice(&prg);
+        data
+    }
+
+    #[test]
+    fn nsf_plays_at_header_rate_with_sound() {
+        let mut nes = Nes::new(&tone_nsf(0)).unwrap(); // auto-detected NSF
+        nes.set_sample_rate(48_000.0);
+        let info = nes.nsf_info().unwrap();
+        assert_eq!(info.title, "TONE 1");
+        assert_eq!(info.total_songs, 3);
+        assert_eq!(info.current_song, 1);
+        // The driver's RAM clear takes a few frames before init runs, so
+        // measure the play rate over a steady-state window.
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let start = nes.cpu.bus.ram[0x10];
+        for _ in 0..60 {
+            nes.run_frame();
+        }
+        let ram = &nes.cpu.bus.ram;
+        assert_eq!(ram[0x11], 1, "init got the 0-based song in A");
+        assert_eq!(ram[0x12], 0, "init got NTSC in X");
+        // Default 16639 us period ~= one call per frame.
+        let calls = ram[0x10].wrapping_sub(start);
+        assert!((59..=61).contains(&calls), "play calls: {calls}");
+        let audio = nes.take_audio();
+        let peak = audio.iter().fold(0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.05, "tone should be audible, peak {peak}");
+
+        // A custom 8320 us speed doubles the play rate.
+        let mut fast = Nes::new_nsf(&tone_nsf(8320)).unwrap();
+        for _ in 0..10 {
+            fast.run_frame();
+        }
+        let start = fast.cpu.bus.ram[0x10];
+        for _ in 0..60 {
+            fast.run_frame();
+        }
+        let n = fast.cpu.bus.ram[0x10].wrapping_sub(start);
+        assert!((119..=121).contains(&n), "fast play calls: {n}");
+    }
+
+    #[test]
+    fn nsf_play_switches_song_and_reinits() {
+        let mut nes = Nes::new_nsf(&tone_nsf(0)).unwrap();
+        for _ in 0..30 {
+            nes.run_frame();
+        }
+        nes.nsf_play(2);
+        assert_eq!(nes.nsf_info().unwrap().current_song, 2);
+        for _ in 0..6 {
+            nes.run_frame();
+        }
+        let ram = &nes.cpu.bus.ram;
+        assert_eq!(ram[0x11], 2, "init re-run with the new song");
+        assert!(ram[0x10] <= 6, "driver cleared RAM, counter {}", ram[0x10]);
+        nes.nsf_play(99);
+        assert_eq!(nes.nsf_info().unwrap().current_song, 2, "clamped");
+    }
+
+    #[test]
+    fn nsf_bankswitching_maps_requested_banks() {
+        // Three 4KB banks, each filled with $B0 + bank number; bank 0 holds
+        // the code. Init maps bank 2 at $9000 and copies its marker to $13.
+        let mut data = nsf_header([0, 1, 0, 0, 0, 0, 0, 2], 0);
+        let mut prg: Vec<u8> = (0..3 * 0x1000).map(|i| 0xB0 + (i / 0x1000) as u8).collect();
+        let init = [
+            0x85, 0x11, // STA $11
+            0xA9, 0x02, 0x8D, 0xF9, 0x5F, // LDA #2 / STA $5FF9
+            0xAD, 0x00, 0x90, 0x85, 0x13, // LDA $9000 / STA $13
+            0x60,
+        ];
+        prg[..init.len()].copy_from_slice(&init);
+        prg[0x20..0x23].copy_from_slice(&[0xE6, 0x10, 0x60]);
+        data.extend_from_slice(&prg);
+        let mut nes = Nes::new_nsf(&data).unwrap();
+        // Power-on banking from the header ($F000 = bank 2, vectors aside).
+        assert_eq!(nes.cpu.bus.cart.cpu_read(0x9000), 0xB1);
+        assert_eq!(nes.cpu.bus.cart.cpu_read(0xF000), 0xB2);
+        for _ in 0..6 {
+            nes.run_frame();
+        }
+        assert_eq!(nes.cpu.bus.ram[0x13], 0xB2, "init saw bank 2 at $9000");
+        assert!(nes.cpu.bus.ram[0x10] >= 1, "play ran from bank 0");
+        // Re-selecting a song restores the header banking.
+        nes.nsf_play(0);
+        assert_eq!(nes.cpu.bus.cart.cpu_read(0x9000), 0xB1);
+    }
+
+    #[test]
+    fn nsf_savestate_roundtrip() {
+        let data = tone_nsf(0);
+        let mut nes = Nes::new_nsf(&data).unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let blob = nes.save_state().unwrap();
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let reference = nes.cpu.bus.ram;
+
+        let mut restored = Nes::new_nsf(&data).unwrap();
+        restored.load_state(&blob).unwrap();
+        for _ in 0..20 {
+            restored.run_frame();
+        }
+        assert_eq!(restored.cpu.bus.ram, reference);
+        assert!(reference[0x10] >= 20, "play kept running");
+    }
+
+    #[test]
+    fn nsf_play_is_noop_for_cartridges() {
+        let mut nes = Nes::new(&rom(0x10)).unwrap();
+        assert!(nes.nsf_info().is_none());
+        let pc = nes.cpu.pc;
+        nes.nsf_play(1);
+        assert_eq!(nes.cpu.pc, pc);
     }
 }

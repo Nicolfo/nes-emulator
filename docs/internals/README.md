@@ -22,6 +22,7 @@ Every chapter has the same two-part shape:
 | 5 | [Cartridges & the Mapper trait](06-cartridge-mappers.md) | iNES parsing, region detection, and what the `Mapper` trait is for |
 | 6 | [The frontend](07-frontend.md) | The `Nes` facade, the windowing/audio/input host, frame pacing |
 | 7 | [Savestates](08-savestates.md) | Serializing a full machine snapshot, what's captured, the mapper boundary |
+| 8 | [NSF music playback](09-nsf.md) | The NSF format, the synthetic board and built-in driver, expansion audio |
 
 ## The one-paragraph summary
 

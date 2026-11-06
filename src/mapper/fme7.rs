@@ -183,8 +183,8 @@ impl Mapper for Fme7 {
 /// the CPU clock by 16 per tone step (twice the YM2149's /8, at twice the
 /// typical clock - same pitch).
 #[derive(Serialize, Deserialize)]
-struct Sunsoft5b {
-    reg_select: u8,
+pub(crate) struct Sunsoft5b {
+    pub(crate) reg_select: u8,
     regs: [u8; 16],
     prescaler: u8,
     counters: [u16; 3],
@@ -192,7 +192,7 @@ struct Sunsoft5b {
 }
 
 impl Sunsoft5b {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Sunsoft5b {
             reg_select: 0,
             regs: [0; 16],
@@ -203,7 +203,7 @@ impl Sunsoft5b {
         }
     }
 
-    fn write_reg(&mut self, val: u8) {
+    pub(crate) fn write_reg(&mut self, val: u8) {
         self.regs[self.reg_select as usize] = val;
     }
 
@@ -212,7 +212,7 @@ impl Sunsoft5b {
         p.max(1)
     }
 
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.prescaler = (self.prescaler + 1) & 0x0F;
         if self.prescaler != 0 {
             return;
@@ -228,7 +228,7 @@ impl Sunsoft5b {
         }
     }
 
-    fn sample(&self) -> f32 {
+    pub(crate) fn sample(&self) -> f32 {
         let mut s = 0.0;
         for ch in 0..3 {
             // Mixer reg 7: bit per channel, 0 = tone enabled.

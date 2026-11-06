@@ -411,7 +411,7 @@ impl Channel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Opll {
+pub(crate) struct Opll {
     custom: [u8; 8], // programmable instrument (patch 0)
     ch: [Channel; 6],
     modu: [Op; 6], // modulators
@@ -425,7 +425,7 @@ struct Opll {
 }
 
 impl Opll {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Opll {
             custom: [0; 8],
             ch: [Channel::new(); 6],
@@ -440,11 +440,11 @@ impl Opll {
         }
     }
 
-    fn write_addr(&mut self, val: u8) {
+    pub(crate) fn write_addr(&mut self, val: u8) {
         self.addr = val;
     }
 
-    fn write_data(&mut self, val: u8) {
+    pub(crate) fn write_data(&mut self, val: u8) {
         match self.addr {
             0x00..=0x07 => self.custom[self.addr as usize] = val,
             0x10..=0x15 => {
@@ -475,7 +475,7 @@ impl Opll {
         }
     }
 
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.timer += 1;
         if self.timer >= CYCLES_PER_SAMPLE {
             self.timer -= CYCLES_PER_SAMPLE;
@@ -483,7 +483,7 @@ impl Opll {
         }
     }
 
-    fn output(&self) -> f32 {
+    pub(crate) fn output(&self) -> f32 {
         self.out
     }
 

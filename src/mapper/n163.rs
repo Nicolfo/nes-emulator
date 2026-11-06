@@ -193,7 +193,7 @@ impl Mapper for N163 {
 /// and, in the top bytes, the channel registers. The hardware updates one
 /// enabled channel every 15 CPU cycles, round-robin from channel 7 down.
 #[derive(Serialize, Deserialize)]
-struct N163Audio {
+pub(crate) struct N163Audio {
     #[serde(with = "crate::savestate::byte_array")]
     ram: [u8; 0x80],
     addr: u8,
@@ -205,7 +205,7 @@ struct N163Audio {
 }
 
 impl N163Audio {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         N163Audio {
             ram: [0; 0x80],
             addr: 0,
@@ -216,19 +216,19 @@ impl N163Audio {
         }
     }
 
-    fn addr_write(&mut self, val: u8) {
+    pub(crate) fn addr_write(&mut self, val: u8) {
         self.addr = val & 0x7F;
         self.auto_inc = val & 0x80 != 0;
     }
 
-    fn data_write(&mut self, val: u8) {
+    pub(crate) fn data_write(&mut self, val: u8) {
         self.ram[self.addr as usize] = val;
         if self.auto_inc {
             self.addr = (self.addr + 1) & 0x7F;
         }
     }
 
-    fn data_read(&mut self) -> u8 {
+    pub(crate) fn data_read(&mut self) -> u8 {
         let v = self.ram[self.addr as usize];
         if self.auto_inc {
             self.addr = (self.addr + 1) & 0x7F;
@@ -265,7 +265,7 @@ impl N163Audio {
         self.outputs[ch] = (sample as f32 - 8.0) / 8.0 * (vol as f32 / 15.0);
     }
 
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.divider += 1;
         if self.divider < 15 {
             return;
@@ -277,7 +277,7 @@ impl N163Audio {
         self.update_channel(ch);
     }
 
-    fn sample(&self) -> f32 {
+    pub(crate) fn sample(&self) -> f32 {
         let n = self.enabled_channels();
         let s: f32 = self.outputs[8 - n..].iter().sum();
         // The chip time-multiplexes its DAC, so loudness stays roughly

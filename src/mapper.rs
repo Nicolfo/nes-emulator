@@ -23,6 +23,7 @@ mod n163;
 mod namco108;
 mod namco175_340;
 mod nrom;
+mod nsf;
 mod rambo1;
 mod sunsoft1;
 mod sunsoft3;
@@ -61,6 +62,7 @@ pub use n163::N163;
 pub use namco108::Namco108;
 pub use namco175_340::Namco175340;
 pub use nrom::Nrom;
+pub use nsf::NsfMapper;
 pub use rambo1::Rambo1;
 pub use sunsoft1::Sunsoft1;
 pub use sunsoft3::Sunsoft3;
@@ -178,6 +180,16 @@ pub trait Mapper {
     /// Famicom Disk System: eject (None) or swap in a side. Insertion lands
     /// after a short empty-drive delay so the BIOS notices the change.
     fn fds_insert(&mut self, _side: Option<usize>) {}
+
+    /// NSF metadata when this "cartridge" is an NSF music rip; None for
+    /// real boards.
+    fn nsf_info(&self) -> Option<crate::nsf::NsfInfo> {
+        None
+    }
+    /// Select NSF song `song` (0-based, clamped) and rewind the board to its
+    /// power-on banking so a following CPU reset re-runs the driver into
+    /// that track. No-op for real boards.
+    fn nsf_select(&mut self, _song: usize) {}
 
     /// Serialize the mapper's full state (banking registers, IRQ counters,
     /// PRG/CHR RAM, expansion audio) for a savestate. Implemented per mapper
