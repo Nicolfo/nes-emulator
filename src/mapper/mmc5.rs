@@ -490,7 +490,7 @@ impl Mapper for Mmc5 {
 /// MMC5 audio: two APU-style pulse channels (envelope and length counter,
 /// no sweep) sequenced by an internal ~240 Hz divider, plus raw PCM.
 #[derive(Serialize, Deserialize)]
-struct Mmc5Audio {
+pub(crate) struct Mmc5Audio {
     pulses: [Pulse; 2],
     pcm_level: u8,
     cycle: u32,
@@ -587,7 +587,7 @@ impl Pulse {
 }
 
 impl Mmc5Audio {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Mmc5Audio {
             pulses: [Pulse::default(), Pulse::default()],
             pcm_level: 0,
@@ -596,7 +596,7 @@ impl Mmc5Audio {
         }
     }
 
-    fn write(&mut self, addr: u16, val: u8) {
+    pub(crate) fn write(&mut self, addr: u16, val: u8) {
         match addr {
             0x5000..=0x5003 => self.pulses[0].write(addr & 3, val),
             0x5004..=0x5007 => self.pulses[1].write(addr & 3, val),
@@ -619,11 +619,11 @@ impl Mmc5Audio {
         }
     }
 
-    fn status(&self) -> u8 {
+    pub(crate) fn status(&self) -> u8 {
         (self.pulses[0].length > 0) as u8 | ((self.pulses[1].length > 0) as u8) << 1
     }
 
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         self.cycle += 1;
         if self.cycle & 1 == 0 {
             self.pulses[0].clock_timer();
@@ -641,7 +641,7 @@ impl Mmc5Audio {
         }
     }
 
-    fn sample(&self) -> f32 {
+    pub(crate) fn sample(&self) -> f32 {
         let p = (self.pulses[0].output() + self.pulses[1].output()) as f32;
         let pulse_out = if p > 0.0 {
             95.52 / (8128.0 / p + 100.0)

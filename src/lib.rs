@@ -19,6 +19,7 @@ pub mod controller;
 pub mod cpu;
 pub mod mapper;
 pub mod nes;
+pub mod nsf;
 pub mod palette;
 pub mod ppu;
 pub mod savestate;

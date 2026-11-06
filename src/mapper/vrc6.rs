@@ -263,7 +263,7 @@ impl Vrc6Pulse {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Vrc6Audio {
+pub(crate) struct Vrc6Audio {
     pulses: [Vrc6Pulse; 2],
     saw_rate: u8,
     saw_period: u16,
@@ -276,7 +276,7 @@ struct Vrc6Audio {
 }
 
 impl Vrc6Audio {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Vrc6Audio {
             pulses: [
                 Vrc6Pulse {
@@ -301,6 +301,19 @@ impl Vrc6Audio {
             saw_step: 0,
             saw_acc: 0,
             freq_ctrl: 0,
+        }
+    }
+
+    /// Register write by VRC6a address ($9000-$9003, $A000-$A002,
+    /// $B000-$B002) - the layout NSF files use. Other addresses are ignored.
+    pub(crate) fn write(&mut self, addr: u16, val: u8) {
+        let r = addr & 3;
+        match (addr & 0xF000, r) {
+            (0x9000, 0..=2) => self.pulse_write(0, r, val),
+            (0x9000, _) => self.freq_ctrl = val,
+            (0xA000, 0..=2) => self.pulse_write(1, r, val),
+            (0xB000, 0..=2) => self.saw_write(r, val),
+            _ => {}
         }
     }
 
@@ -344,7 +357,7 @@ impl Vrc6Audio {
         }
     }
 
-    fn clock(&mut self) {
+    pub(crate) fn clock(&mut self) {
         if self.freq_ctrl & 1 != 0 {
             return; // halted
         }
@@ -379,7 +392,7 @@ impl Vrc6Audio {
         }
     }
 
-    fn sample(&self) -> f32 {
+    pub(crate) fn sample(&self) -> f32 {
         let p = self.pulses[0].output() + self.pulses[1].output();
         let saw = self.saw_acc >> 3; // top 5 bits
         (p + saw) as f32 * 0.00752
