@@ -1,6 +1,7 @@
-//! Optional physical-gamepad input via `gilrs`. The first connected pad drives
-//! player 1 and the second drives player 2; directions come from either the
-//! D-pad or the left analog stick. If gilrs can't initialise (no input backend
+//! Optional physical-gamepad input via `gilrs`. Pads drive players 1-4 in
+//! plug order (players 3 and 4 reach the game through a Four Score);
+//! directions come from either the D-pad or the left analog stick, and the
+//! top/left face buttons are turbo A / turbo B. If gilrs can't initialise (no input backend
 //! on the host) the frontend silently stays keyboard-only.
 
 use gilrs::{Axis, Button, EventType, Gamepad, GamepadId, Gilrs};
@@ -9,11 +10,21 @@ use nes_emulator::controller::{
     BTN_A, BTN_B, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_SELECT, BTN_START, BTN_UP,
 };
 
-/// Tracks connected pads in plug order and maps their live state to the two
+/// Players a gamepad can drive.
+pub const MAX_PADS: usize = 4;
+
+/// One pad's live state: held NES buttons plus turbo (auto-fire) buttons.
+#[derive(Clone, Copy, Default)]
+pub struct PadState {
+    pub buttons: u8,
+    pub turbo: u8,
+}
+
+/// Tracks connected pads in plug order and maps their live state to the
 /// NES controller button masks.
 pub struct Gamepads {
     gilrs: Gilrs,
-    /// Connected pad ids in the order they appeared; slot 0 = P1, slot 1 = P2.
+    /// Connected pad ids in the order they appeared; slot N = player N+1.
     pads: Vec<GamepadId>,
 }
 
@@ -30,9 +41,9 @@ impl Gamepads {
     }
 
     /// Drain pending events (refreshing button state and tracking hot-plug),
-    /// then return the current button masks for player 1 and player 2. A slot
-    /// with no connected pad reads as 0 (nothing pressed).
-    pub fn poll(&mut self) -> [u8; 2] {
+    /// then return the current state for players 1-4. A slot with no
+    /// connected pad reads as nothing pressed.
+    pub fn poll(&mut self) -> [PadState; MAX_PADS] {
         while let Some(ev) = self.gilrs.next_event() {
             match ev.event {
                 EventType::Connected => {
@@ -44,13 +55,15 @@ impl Gamepads {
                 _ => {}
             }
         }
-        let mut masks = [0u8; 2];
-        for (slot, mask) in masks.iter_mut().enumerate() {
+        let mut out = [PadState::default(); MAX_PADS];
+        for (slot, state) in out.iter_mut().enumerate() {
             if let Some(&id) = self.pads.get(slot) {
-                *mask = buttons(&self.gilrs.gamepad(id));
+                let gp = self.gilrs.gamepad(id);
+                state.buttons = buttons(&gp);
+                state.turbo = turbo(&gp);
             }
         }
-        masks
+        out
     }
 }
 
@@ -85,6 +98,18 @@ fn buttons(gp: &Gamepad) -> u8 {
     }
     if gp.is_pressed(Button::DPadRight) || x > THRESHOLD {
         m |= BTN_RIGHT;
+    }
+    m
+}
+
+/// Turbo buttons: North (top face) auto-fires A, West (left face) B.
+fn turbo(gp: &Gamepad) -> u8 {
+    let mut m = 0u8;
+    if gp.is_pressed(Button::North) {
+        m |= BTN_A;
+    }
+    if gp.is_pressed(Button::West) {
+        m |= BTN_B;
     }
     m
 }

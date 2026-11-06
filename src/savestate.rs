@@ -36,6 +36,9 @@ pub struct SaveState {
     pub ppu: Ppu,
     pub apu: ApuSave,
     pub controller: Controller,
+    /// Port 2 pad. Optional so states written before it was captured load.
+    #[serde(default)]
+    pub controller2: Option<Controller>,
     /// Mapper-specific state, produced by [`crate::mapper::Mapper::save_state`].
     pub mapper: Vec<u8>,
 }

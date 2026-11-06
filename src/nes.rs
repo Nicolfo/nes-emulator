@@ -1,5 +1,7 @@
 use crate::bus::Bus;
 use crate::cartridge::{Region, load_rom};
+use crate::cheats::{Cheat, RomPatch};
+use crate::controller::InputDevice;
 use crate::cpu::Cpu;
 use crate::mapper::NsfMapper;
 use crate::nsf::{self, NsfInfo};
@@ -9,6 +11,8 @@ pub struct Nes {
     pub cpu: Cpu,
     region: Region,
     battery: bool,
+    /// RAM cheats forced at the start of every frame.
+    ram_cheats: Vec<(u16, u8)>,
 }
 
 impl Nes {
@@ -25,6 +29,7 @@ impl Nes {
             cpu,
             region,
             battery,
+            ram_cheats: Vec::new(),
         })
     }
 
@@ -47,7 +52,15 @@ impl Nes {
             cpu,
             region,
             battery: true,
+            ram_cheats: Vec::new(),
         })
+    }
+
+    /// Whether `data` looks like a Famicom Disk System image (fwNES header
+    /// or a headerless dump starting with the disk info block).
+    pub fn is_fds_image(data: &[u8]) -> bool {
+        data.starts_with(b"FDS\x1A")
+            || (data.len() >= 15 && data[0] == 0x01 && &data[1..15] == b"*NINTENDO-HVC*")
     }
 
     /// Number of disk sides when an FDS image is loaded; None for cartridges.
@@ -81,6 +94,7 @@ impl Nes {
             cpu,
             region,
             battery: false,
+            ram_cheats: Vec::new(),
         })
     }
 
@@ -145,7 +159,12 @@ impl Nes {
     /// Serialize the full machine state to a savestate blob. The state is
     /// only meaningful for the currently loaded ROM.
     pub fn save_state(&self) -> Result<Vec<u8>, String> {
-        let state = SaveState {
+        let state = self.capture(self.cpu.bus.cart.save_state());
+        serde_json::to_vec(&state).map_err(|e| format!("failed to serialize savestate: {e}"))
+    }
+
+    fn capture(&self, mapper: Vec<u8>) -> SaveState {
+        SaveState {
             magic: MAGIC,
             version: VERSION,
             region: self.region,
@@ -154,9 +173,9 @@ impl Nes {
             ppu: self.cpu.bus.ppu.clone(),
             apu: self.cpu.bus.apu.save_state(),
             controller: self.cpu.bus.controller1.clone(),
-            mapper: self.cpu.bus.cart.save_state(),
-        };
-        serde_json::to_vec(&state).map_err(|e| format!("failed to serialize savestate: {e}"))
+            controller2: Some(self.cpu.bus.controller2.clone()),
+            mapper,
+        }
     }
 
     /// Restore a savestate blob produced by [`Nes::save_state`]. Rejects blobs
@@ -166,6 +185,34 @@ impl Nes {
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
         let state: SaveState =
             serde_json::from_slice(data).map_err(|e| format!("not a valid savestate: {e}"))?;
+        let mapper = state.mapper.clone();
+        self.apply(state, &mapper)
+    }
+
+    /// In-memory snapshot for rewind: like [`Nes::save_state`] but with the
+    /// mapper JSON appended raw instead of re-encoded as a JSON byte array
+    /// (a third of the size, and text that dedups well between frames).
+    /// Layout: u32 LE length of the core JSON, core JSON, mapper JSON.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let core = serde_json::to_vec(&self.capture(Vec::new())).expect("serialize snapshot");
+        let mapper = self.cpu.bus.cart.save_state();
+        let mut out = Vec::with_capacity(4 + core.len() + mapper.len());
+        out.extend_from_slice(&(core.len() as u32).to_le_bytes());
+        out.extend_from_slice(&core);
+        out.extend_from_slice(&mapper);
+        out
+    }
+
+    /// Restore a blob produced by [`Nes::snapshot`].
+    pub fn restore_snapshot(&mut self, data: &[u8]) -> Result<(), String> {
+        let bad = || "corrupt snapshot".to_string();
+        let len = u32::from_le_bytes(data.get(..4).ok_or_else(bad)?.try_into().unwrap()) as usize;
+        let core = data.get(4..4 + len).ok_or_else(bad)?;
+        let state: SaveState = serde_json::from_slice(core).map_err(|e| e.to_string())?;
+        self.apply(state, &data[4 + len..])
+    }
+
+    fn apply(&mut self, state: SaveState, mapper: &[u8]) -> Result<(), String> {
         if state.magic != MAGIC {
             return Err("not a savestate (bad magic)".into());
         }
@@ -178,17 +225,35 @@ impl Nes {
         if state.region != self.region {
             return Err("savestate is for a different TV region".into());
         }
-        self.cpu.bus.cart.load_state(&state.mapper)?;
+        self.cpu.bus.cart.load_state(mapper)?;
         self.cpu.load_state(state.cpu);
         self.cpu.bus.load_state(state.bus);
         self.cpu.bus.ppu = state.ppu;
         self.cpu.bus.apu.load_state(state.apu);
+        // Port wiring (Four Score) is host configuration: keep the live one.
+        let wiring = (
+            self.cpu.bus.controller1.wiring(),
+            self.cpu.bus.controller2.wiring(),
+        );
         self.cpu.bus.controller1 = state.controller;
+        if let Some(c2) = state.controller2 {
+            self.cpu.bus.controller2 = c2;
+        }
+        self.cpu.bus.controller1.set_four_score(wiring.0);
+        self.cpu.bus.controller2.set_four_score(wiring.1);
         Ok(())
     }
 
     /// Run until the PPU enters vblank (one full frame).
     pub fn run_frame(&mut self) {
+        // Poke directly rather than through Bus::write so cheats never
+        // disturb open bus or the watch logs.
+        for &(addr, value) in &self.ram_cheats {
+            match addr {
+                0x0000..=0x1FFF => self.cpu.bus.ram[(addr & 0x7FF) as usize] = value,
+                _ => self.cpu.bus.cart.cpu_write(addr, value),
+            }
+        }
         self.cpu.bus.ppu.frame_complete = false;
         while !self.cpu.bus.ppu.frame_complete {
             self.cpu.step();
@@ -212,6 +277,51 @@ impl Nes {
     /// Drain audio samples generated since the last call.
     pub fn take_audio(&mut self) -> Vec<f32> {
         self.cpu.bus.apu.take_samples()
+    }
+
+    /// Choose what is plugged into the controller ports.
+    pub fn set_input_device(&mut self, device: InputDevice) {
+        self.cpu.bus.set_input_device(device);
+    }
+
+    /// Button masks for players 1-4. Players 3 and 4 are only visible to
+    /// the game through a Four Score.
+    pub fn set_buttons(&mut self, masks: [u8; 4]) {
+        let bus = &mut self.cpu.bus;
+        bus.controller1.state = masks[0];
+        bus.controller2.state = masks[1];
+        bus.controller1.state_hi = masks[2];
+        bus.controller2.state_hi = masks[3];
+    }
+
+    /// Aim and trigger of the Zapper (ignored unless it is plugged in).
+    /// Coordinates are NES pixels; `None` aims off screen.
+    pub fn set_zapper(&mut self, aim: Option<(i32, i32)>, trigger: bool) {
+        if let Some(z) = &mut self.cpu.bus.zapper {
+            (z.x, z.y) = aim.unwrap_or((-1, -1));
+            z.trigger = trigger;
+        }
+    }
+
+    /// Replace the active cheats. ROM patches take effect on the next read;
+    /// RAM values are forced at the start of every frame.
+    pub fn set_cheats(&mut self, cheats: &[Cheat]) {
+        self.cpu.bus.rom_patches.clear();
+        self.ram_cheats.clear();
+        for &c in cheats {
+            match c {
+                Cheat::Rom {
+                    addr,
+                    value,
+                    compare,
+                } => self.cpu.bus.rom_patches.push(RomPatch {
+                    addr,
+                    value,
+                    compare,
+                }),
+                Cheat::Ram { addr, value } => self.ram_cheats.push((addr, value)),
+            }
+        }
     }
 }
 
@@ -266,6 +376,91 @@ mod tests {
             restored.run_frame();
         }
         assert_eq!(restored.framebuffer(), reference.as_slice());
+    }
+
+    #[test]
+    fn snapshot_roundtrip_matches_savestate() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let snap = nes.snapshot();
+        for _ in 0..30 {
+            nes.run_frame();
+        }
+        let reference = nes.framebuffer().to_vec();
+        let mut restored = Nes::new(&data).unwrap();
+        restored.restore_snapshot(&snap).unwrap();
+        for _ in 0..30 {
+            restored.run_frame();
+        }
+        assert_eq!(restored.framebuffer(), reference.as_slice());
+        assert!(restored.restore_snapshot(&snap[..3]).is_err());
+    }
+
+    /// NROM image whose PRG is filled with `fill` and whose reset vector
+    /// points at $8000.
+    fn nrom_filled(fill: u8) -> Vec<u8> {
+        let mut data = rom(0x00);
+        data[16..16 + 0x8000].fill(fill);
+        data[16 + 0x7FFC] = 0x00;
+        data[16 + 0x7FFD] = 0x80;
+        data
+    }
+
+    #[test]
+    fn rom_cheats_patch_reads() {
+        let mut nes = Nes::new(&nrom_filled(0xEA)).unwrap();
+        nes.set_cheats(&[
+            crate::cheats::parse("8123:42").unwrap(),
+            crate::cheats::parse("8124?EA:43").unwrap(),
+            crate::cheats::parse("8125?00:44").unwrap(), // compare fails
+        ]);
+        assert_eq!(nes.cpu.bus.read(0x8123), 0x42);
+        assert_eq!(nes.cpu.bus.read(0x8124), 0x43);
+        assert_eq!(nes.cpu.bus.read(0x8125), 0xEA);
+        nes.set_cheats(&[]);
+        assert_eq!(nes.cpu.bus.read(0x8123), 0xEA);
+    }
+
+    #[test]
+    fn ram_cheats_are_forced_each_frame() {
+        // PRG of NOPs: the CPU never touches $0300 itself.
+        let mut nes = Nes::new(&nrom_filled(0xEA)).unwrap();
+        nes.set_cheats(&[crate::cheats::parse("0300:99").unwrap()]);
+        nes.run_frame();
+        assert_eq!(nes.cpu.bus.ram[0x300], 0x99);
+        nes.cpu.bus.ram[0x300] = 0;
+        nes.run_frame();
+        assert_eq!(nes.cpu.bus.ram[0x300], 0x99);
+    }
+
+    #[test]
+    fn four_score_wiring_survives_state_load() {
+        let mut nes = Nes::new(&nrom_filled(0xEA)).unwrap();
+        let blob = nes.save_state().unwrap();
+        nes.set_input_device(InputDevice::FourScore);
+        nes.set_buttons([0, 0, crate::controller::BTN_A, 0]);
+        nes.load_state(&blob).unwrap();
+        nes.set_buttons([0, 0, crate::controller::BTN_A, 0]);
+        let bus = &mut nes.cpu.bus;
+        bus.write(0x4016, 1);
+        bus.controller1.clock_put_cycle();
+        bus.write(0x4016, 0);
+        let bits: Vec<u8> = (0..9).map(|_| bus.read(0x4016) & 1).collect();
+        assert_eq!(bits[8], 1, "P3 A must follow P1's 8 bits");
+    }
+
+    #[test]
+    fn zapper_answers_port_two() {
+        let mut nes = Nes::new(&nrom_filled(0xEA)).unwrap();
+        nes.set_input_device(InputDevice::Zapper);
+        nes.set_zapper(Some((10, 10)), true);
+        assert_eq!(nes.cpu.bus.read(0x4017) & 0x18, 0x18); // trigger, dark
+        nes.set_input_device(InputDevice::Standard);
+        assert_eq!(nes.cpu.bus.read(0x4017) & 0x18, 0x00);
     }
 
     #[test]

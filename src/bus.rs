@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::apu::Apu;
 use crate::cartridge::Region;
-use crate::controller::Controller;
+use crate::cheats::RomPatch;
+use crate::controller::{Controller, FOUR_SCORE_SIG_4016, FOUR_SCORE_SIG_4017, InputDevice};
 use crate::mapper::Mapper;
 use crate::ppu::Ppu;
+use crate::zapper::Zapper;
 
 /// RDY assertion delay (CPU cycles) for a DMC "load" DMA after a $4015 write.
 /// Matches this emulator's CPU/PPU alignment against AccuracyCoin's answer keys.
@@ -20,6 +22,11 @@ pub struct Bus {
     pub cart: Box<dyn Mapper>,
     pub controller1: Controller,
     pub controller2: Controller,
+    /// Light gun in port 2; when present it answers $4017 instead of
+    /// `controller2`. Host input, not machine state (never savestated).
+    pub zapper: Option<Zapper>,
+    /// Active Game Genie / raw ROM patches applied to $8000-$FFFF reads.
+    pub rom_patches: Vec<RomPatch>,
     pub cycles: u64,
     region: Region,
     /// PAL runs 3.2 PPU dots per CPU cycle: phase counter for the extra dot
@@ -68,6 +75,8 @@ impl Bus {
             cart,
             controller1: Controller::default(),
             controller2: Controller::default(),
+            zapper: None,
+            rom_patches: Vec::new(),
             cycles: 0,
             region,
             pal_phase: 0,
@@ -114,7 +123,10 @@ impl Bus {
                 r
             }
             0x4017 => {
-                let ctrl_val = self.controller2.read();
+                let ctrl_val = match &self.zapper {
+                    Some(z) => z.read(&self.ppu),
+                    None => self.controller2.read(),
+                };
                 let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
                 self.open_bus = r;
                 r
@@ -135,11 +147,38 @@ impl Bus {
                 None => self.open_bus,
             },
             _ => {
-                let r = self.cart.cpu_read(addr);
+                let mut r = self.cart.cpu_read(addr);
+                if !self.rom_patches.is_empty() {
+                    r = self.patch_rom_read(addr, r);
+                }
                 self.open_bus = r;
                 r
             }
         }
+    }
+
+    /// Apply the first matching cheat patch to a cartridge ROM read.
+    #[cold]
+    fn patch_rom_read(&self, addr: u16, orig: u8) -> u8 {
+        self.rom_patches
+            .iter()
+            .find_map(|p| p.apply(addr, orig))
+            .unwrap_or(orig)
+    }
+
+    /// Plug `device` into the controller ports. Button state is kept; the
+    /// Zapper starts aimed off screen with the trigger released.
+    pub fn set_input_device(&mut self, device: InputDevice) {
+        let four = device == InputDevice::FourScore;
+        self.controller1
+            .set_four_score(four.then_some(FOUR_SCORE_SIG_4016));
+        self.controller2
+            .set_four_score(four.then_some(FOUR_SCORE_SIG_4017));
+        self.zapper = (device == InputDevice::Zapper).then_some(Zapper {
+            x: -1,
+            y: -1,
+            trigger: false,
+        });
     }
 
     pub fn write(&mut self, addr: u16, val: u8) {

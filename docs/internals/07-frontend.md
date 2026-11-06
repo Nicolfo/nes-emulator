@@ -22,6 +22,11 @@ everything else) and exposes a small, frontend-agnostic API:
 | `set_sample_rate` / `tune_audio` / `take_audio` | Audio plumbing |
 | `battery_ram` / `load_battery_ram` | Save-game persistence |
 | `save_state` / `load_state` | Whole-machine snapshots (see [chapter 7](08-savestates.md)) |
+| `snapshot` / `restore_snapshot` | In-memory snapshots for rewind (mapper JSON appended raw, not re-encoded) |
+| `new_fds` / `fds_insert` / `fds_side_count` | Famicom Disk System boot and disk swapping |
+| `new_nsf` / `nsf_info` / `nsf_play` | NSF music playback ([chapter 8](09-nsf.md)) |
+| `set_buttons` / `set_input_device` / `set_zapper` | Controller ports: up to 4 pads, Four Score, Zapper |
+| `set_cheats` | Game Genie / raw cheat codes |
 
 This is the *only* surface the GUI and the test harnesses need; both drive the
 emulator purely through it. `run_frame` is the loop described in
@@ -47,19 +52,46 @@ both ports from two input sources merged per player: the keyboard
 (`cfg.keys` / `cfg.keys_p2`) and an optional physical gamepad (see below).
 
 The host doesn't call the shift register directly during gameplay - it just sets
-the merged button state (`App::apply_inputs`), and the *bus* clocks the
+the merged button state (`Nes::set_buttons`, once per emulated frame), and the *bus* clocks the
 strobe/shift at the right cycle parity (`clock_put_cycle`, called from
 `tick_cycle_post`; see [chapter 4](05-bus-timing-dma.md)). The
 reload-on-put-cycle detail is what makes the shifting cycle-accurate.
 
+### Four Score and Zapper
+
+`InputDevice` (in `controller.rs`) picks what is plugged into the ports, chosen
+in Settings > OPTIONS > INPUT:
+
+- **2 PADS** - the standard joypads above.
+- **FOUR SCORE** - each port carries two pads followed by an 8-bit signature,
+  so each `Controller` switches to a 24-bit shift register: P1, P3 and `$10`
+  on `$4016`; P2, P4 and `$20` on `$4017` (read MSB-first, as games do). The
+  wiring is host configuration, not machine state: savestates restore the
+  button latches but keep the live wiring.
+- **ZAPPER** - [`src/zapper.rs`](../../src/zapper.rs) answers `$4017` instead
+  of pad 2: D4 is the trigger, D3 the light sensor (0 = light). The sensor
+  looks at the pixels around the aim point that the PPU drew in the last ~20
+  scanlines of the *current* frame, mimicking the photodiode's short
+  persistence; that is exactly what Duck Hunt's "flash a white box over the
+  target" detection relies on. The mouse aims (window coordinates mapped back
+  through `pixels::window_pos_to_pixel` plus the overscan crop), left click
+  pulls the trigger, right click fires off screen.
+
+### Turbo buttons
+
+Each player has TURBO A / TURBO B bindings (and gamepad North/West). While
+held they toggle the button every 2 emulated frames (15 presses a second),
+driven by `App::frame_count` so fast-forward and rewind stay in step.
+
 ### Physical gamepads
 
 [`src/gamepad.rs`](../../src/gamepad.rs) adds optional gamepad input via
-[gilrs](https://docs.rs/gilrs). The first connected pad maps to player 1 and the
-second to player 2 (hot-plug tracked in plug order); South/East are A/B,
+[gilrs](https://docs.rs/gilrs). Pads map to players 1-4 in plug order
+(hot-plug tracked; players 3-4 reach the game through a Four Score); South/East are A/B,
+North/West are turbo A/B,
 Start/Select map across, and directions come from the D-pad or the left analog
 stick. Each player's keyboard and gamepad inputs are tracked as **separate
-bitmasks** and OR-ed together by `App::apply_inputs` before being written to the
+bitmasks** and OR-ed together by `App::frame_inputs` before being written to the
 controller, so neither source clears the other's held buttons. `about_to_wait`
 polls the pads once per frame; key events update the keyboard mask. If gilrs
 can't initialise (no input backend), the frontend silently stays keyboard-only.
@@ -70,14 +102,19 @@ The frontend is a [winit](https://docs.rs/winit) 0.30 + [pixels](https://docs.rs
 application - a small state machine with four views:
 
 ```rust
-enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Running }
+enum View { Home { .. }, Settings { .. }, SlotPicker { .. }, Cheats { .. }, Running }
 ```
 
 - **Home / Settings** render the NES-style menu UI (drawn into the same 256×240
   framebuffer by `src/menu.rs` using the embedded bitmap font in `src/font.rs`).
-  Settings let you rebind keys per player (an EDIT PLAYER toggle switches the
-  button rows between player 1 and player 2), change window scale, toggle NTSC
-  overscan cropping and reset defaults - all persisted via `src/config.rs`.
+  Settings has two pages. CONTROLS rebinds keys per player (an EDIT PLAYER
+  toggle switches between player 1 and player 2), including the turbo
+  buttons. OPTIONS holds window scale, NTSC overscan cropping, volume,
+  fast-forward speed, input device and rewind on/off - all
+  persisted via `src/config.rs` (older config files load with defaults for
+  the new fields).
+- **Cheats** lists the loaded game's codes (Enter toggles, Delete removes,
+  ADD CODE types a new one). See Cheats below.
 - **SlotPicker** is the savestate overlay shown over the paused game; its
   `saving` flag picks F5 (save) vs F7 (load) behaviour (see Savestates below).
 - **Running** is where the emulation actually pumps.
@@ -97,11 +134,57 @@ redraw. Redraw ([`WindowEvent::RedrawRequested`](../../src/main.rs)) copies the
 emulator's framebuffer into the pixels surface, optionally cropping NTSC overscan
 (`OVERSCAN_TOP`/`OVERSCAN_BOTTOM`).
 
+### Fast-forward and rewind
+
+Holding **Tab** runs `cfg.ff_speed` (2-8) frames per displayed frame. The
+audio keeps every Nth sample, so it plays sped-up and higher-pitched in real
+time instead of piling up latency.
+
+With rewind enabled, `emulate_frame` takes a `Nes::snapshot` every 2 frames
+into a [`Rewind`](../../src/rewind.rs) ring of 600 (20 seconds). Snapshots are
+JSON text, so consecutive ones are near-identical but shift around whenever a
+value changes digit count. The ring splits each one with content-defined
+chunking (a gear rolling hash picks cut points from the bytes themselves, so
+cuts re-synchronise right after an edit) and stores each distinct ~1 KB chunk
+once, refcounted. 20 seconds of SMB3 costs about 4 MB instead of ~260 MB.
+Holding **Backspace** pops one snapshot per displayed frame, restores it and
+runs one frame to redraw - rewinding at 2x speed, muted.
+
+### Status overlay
+
+`App::flash` shows a short message (state saved/loaded, reset, mute, disk
+side) for two seconds in the top-left corner via `menu::draw_osd`; fast-forward
+and rewind show their own indicator while held.
+
+### Cheats
+
+[`src/cheats.rs`](../../src/cheats.rs) decodes Game Genie codes (6 letters,
+or 8 with a compare byte) and raw `AAAA:VV` / `AAAA?CC:VV` codes. ROM-range
+codes become `RomPatch`es checked on cartridge reads in `Bus::read` (one
+`is_empty` test on the hot path when none are active); RAM-range codes are
+poked into RAM at the start of every frame. The list lives next to the ROM as
+`<rom>.cht`, one code per line, `-` prefix for disabled ones.
+
+### Famicom Disk System and NSF
+
+`App::open_rom` sniffs the file: FDS images (`FDS\x1A` header or a raw
+`*NINTENDO-HVC*` dump, or a `.fds` extension) boot through `Nes::new_fds`
+with the BIOS, which users must supply as `disksys.rom` next to the image, in
+the config directory or next to the executable. **F8** flips to the next disk
+side (the drive stays empty ~1 s so the BIOS sees the change). The disk
+image itself is the "battery RAM": writes the game makes are saved to
+`<image>.sav` in plain `.fds` layout.
+
+NSF files (`NESM\x1A`) load through `Nes::new` and show a player screen
+(`menu::render_nsf`) instead of the framebuffer: title, artist, track
+number and play time. Left/Right switch tracks, F3 restarts the current one.
+
 ### Audio output and dynamic rate control
 
 [`src/audio.rs`](../../src/audio.rs) opens a [cpal](https://docs.rs/cpal) output
 stream and feeds it from a shared sample queue; underruns decay to silence to
-avoid clicks. The interesting bit is in `about_to_wait`: the emulator generates
+avoid clicks. The callback multiplies by a gain shared through an atomic,
+so the VOLUME setting and **F6** mute apply instantly. The interesting bit is in `about_to_wait`: the emulator generates
 audio at a rate tied to *emulated* time, but the sound card consumes at its own
 real rate, and the two drift. So the frontend measures how full the audio queue
 is and nudges the resampling ratio by up to ±0.3 % via `nes.tune_audio` to keep
@@ -167,6 +250,9 @@ in 1985, just cycle by cycle in software.
 | The console API | `src/nes.rs` |
 | The joypad | `src/controller.rs` |
 | Physical gamepad input | `src/gamepad.rs` |
+| Zapper light sensing | `src/zapper.rs` |
+| Cheat code decoding | `src/cheats.rs` |
+| Rewind history | `src/rewind.rs`, `Nes::snapshot` |
 | Window / input / view state machine | `src/main.rs` |
 | Frame pacing + audio rate control | `about_to_wait` (main.rs) |
 | Audio device output | `src/audio.rs` |
