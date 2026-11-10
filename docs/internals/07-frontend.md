@@ -185,6 +185,15 @@ NSF files (`NESM\x1A`) load through `Nes::new` and show a player screen
 (`menu::render_nsf`) instead of the framebuffer: title, artist, track
 number and play time. Left/Right switch tracks, F3 restarts the current one.
 
+### Vs. System inputs
+
+For Vs. System games (`Nes::is_vs_system`), F1/F2 pulse the coin slots for
+`COIN_PULSE_FRAMES` frames and F4 holds the service button, all passed to
+`Nes::set_vs_inputs` every emulated frame. OPTIONS > VS DIP 1-8 edits the
+8 DIP switches (`Config::vs_dip`, shown switch 1 first) and applies them live
+via `Nes::set_vs_dip`. F1, F2 and F4 are reserved hotkeys, never button
+bindings.
+
 ### Speech samples (Jaleco mappers 18 and 86)
 
 The uPD7755/uPD7756 speech chips on some Jaleco boards (Moero!! Pro Yakyuu,

@@ -113,8 +113,11 @@ pub const PLAYERS: usize = 4;
 
 /// Fixed hotkeys handled before button bindings while a game runs; binding
 /// a button to one of them would never fire.
-pub const RESERVED_KEYS: [KeyCode; 9] = [
+pub const RESERVED_KEYS: [KeyCode; 12] = [
     KeyCode::Escape,
+    KeyCode::F1, // Vs. System coin 1
+    KeyCode::F2, // Vs. System coin 2
+    KeyCode::F4, // Vs. System service button
     KeyCode::F3,
     KeyCode::F5,
     KeyCode::F6,
@@ -194,6 +197,9 @@ pub struct Config {
     /// FDS: insert the disk side the game asks for automatically.
     #[serde(default = "default_true")]
     pub fds_auto_disk: bool,
+    /// Vs. System DIP switches (bit 0 = switch 1).
+    #[serde(default)]
+    pub vs_dip: u8,
 }
 
 /// Region setting: the ROM header's choice or a forced TV system.
@@ -338,6 +344,7 @@ impl Default for Config {
             rewind: true,
             region: RegionPref::Auto,
             fds_auto_disk: true,
+            vs_dip: 0,
         }
     }
 }
