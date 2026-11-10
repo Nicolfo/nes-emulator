@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct IremG101 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mirroring: Mirroring,
     /// Submapper 1: fixed single-screen, mirroring register ignored.
@@ -41,7 +42,7 @@ impl IremG101 {
         };
         IremG101 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mirroring,
             fixed_mirroring,
@@ -87,7 +88,7 @@ impl Mapper for IremG101 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

@@ -1,3 +1,4 @@
+use super::Chr;
 use super::discrete::{bank_index, chr_or_ram};
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 pub struct FongShenBang {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_ram: Vec<u8>,
     regs: [u8; 8],
@@ -27,7 +28,7 @@ impl FongShenBang {
         regs[3] = 0xFF;
         FongShenBang {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_ram: vec![0; 0x800],
             regs,
@@ -52,7 +53,7 @@ impl Mapper for FongShenBang {
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         // The board's 2KB work RAM is fixed; NES 2.0 rounds it to 8KB.
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

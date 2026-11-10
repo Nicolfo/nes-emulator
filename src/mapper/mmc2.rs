@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Mmc2 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     #[serde(default)]
     chr_is_ram: bool,
     mirroring: Mirroring,
@@ -25,7 +26,7 @@ impl Mmc2 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Mmc2 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mirroring,
             prg_bank: 0,
@@ -59,7 +60,7 @@ impl Mapper for Mmc2 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
     fn cpu_read(&mut self, addr: u16) -> u8 {

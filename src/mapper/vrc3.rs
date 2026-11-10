@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct Vrc3 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     prg_ram: Vec<u8>,
     mirroring: Mirroring,
     prg_bank: u8,
@@ -22,7 +23,7 @@ impl Vrc3 {
         let _ = chr;
         Vrc3 {
             prg,
-            chr: vec![0; 0x2000],
+            chr: vec![0; 0x2000].into(),
             prg_ram: vec![0; 0x2000],
             mirroring,
             prg_bank: 0,
@@ -39,7 +40,7 @@ impl Mapper for Vrc3 {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

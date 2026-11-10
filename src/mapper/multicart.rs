@@ -6,6 +6,8 @@
 //! - 228 Active Enterprises Action 52 / Cheetahmen II
 //! - 232 Camerica BF9096 Quattro (submapper 1: Aladdin Deck Enhancer)
 
+use super::Chr;
+
 use super::discrete::{bank_index, chr_or_ram};
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ macro_rules! chr_impl {
     ($unit:expr) => {
         fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
             if chr_ram > 0 && self.chr_is_ram {
-                self.chr = vec![0; chr_ram];
+                self.chr = vec![0; chr_ram].into();
             }
         }
 
@@ -48,7 +50,7 @@ macro_rules! chr_impl {
 pub struct K1029 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mode: u8,
     reg: u8,
@@ -59,7 +61,7 @@ impl K1029 {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         K1029 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mode: 0,
             reg: 0,
@@ -122,7 +124,7 @@ impl Mapper for K1029 {
 pub struct Caltron {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     outer: u8,
     inner: u8,
@@ -133,7 +135,7 @@ impl Caltron {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         Caltron {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             outer: 0,
             inner: 0,
@@ -189,7 +191,7 @@ impl Mapper for Caltron {
 pub struct RumbleStation {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     outer: u8,
     inner: u8,
@@ -201,7 +203,7 @@ impl RumbleStation {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         RumbleStation {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             outer: 0,
             inner: 0,
@@ -259,7 +261,7 @@ impl Mapper for RumbleStation {
 pub struct Action52 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     addr_latch: u16,
     data_latch: u8,
@@ -271,7 +273,7 @@ impl Action52 {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         Action52 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             addr_latch: 0,
             data_latch: 0,
@@ -346,7 +348,7 @@ impl Mapper for Action52 {
 pub struct Quattro {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     aladdin: bool,
     block: u8,
@@ -359,7 +361,7 @@ impl Quattro {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         Quattro {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             aladdin: submapper == 1,
             block: 0,

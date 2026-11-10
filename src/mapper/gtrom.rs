@@ -1,3 +1,4 @@
+use super::Chr;
 use super::discrete::{bank_index, chr_or_ram};
 use super::flash::Sst39sf;
 use super::{Mapper, Mirroring, NtTarget};
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct Gtrom {
     #[serde(default)]
     chip: Sst39sf,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     nt_ram: Vec<u8>,
     reg: u8,
@@ -28,7 +29,7 @@ impl Gtrom {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x4000);
         Gtrom {
             chip: Sst39sf::new(prg),
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             nt_ram: vec![0; 0x2000],
             reg: 0,
@@ -65,8 +66,9 @@ impl Mapper for Gtrom {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
         let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
-        if new.chr.len() != self.chr.len() || new.nt_ram.len() != self.nt_ram.len() {
-            return Err("savestate CHR/nametable RAM size doesn't match this ROM".into());
+        super::StateField::restore(&mut new.chr, &mut self.chr, "chr")?;
+        if new.nt_ram.len() != self.nt_ram.len() {
+            return Err("savestate nametable RAM size doesn't match this ROM".into());
         }
         new.chip.graft(&mut self.chip)?;
         *self = new;
@@ -75,7 +77,7 @@ impl Mapper for Gtrom {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

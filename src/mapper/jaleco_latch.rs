@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 pub struct JalecoLatch {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mapper_id: u8,
     prg_bank: u8,
@@ -115,7 +116,7 @@ impl JalecoLatch {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         JalecoLatch {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mapper_id,
             prg_bank: 0,
@@ -140,13 +141,7 @@ impl Mapper for JalecoLatch {
     // clips over (they are not part of the state).
     fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
         let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
-        if new.chr.len() != self.chr.len() {
-            return Err(format!(
-                "savestate chr is {} bytes; this ROM uses {}",
-                new.chr.len(),
-                self.chr.len()
-            ));
-        }
+        super::StateField::restore(&mut new.chr, &mut self.chr, "chr")?;
         new.prg = std::mem::take(&mut self.prg);
         new.speech.adopt_clips_from(&mut self.speech);
         *self = new;
@@ -155,7 +150,7 @@ impl Mapper for JalecoLatch {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

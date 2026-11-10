@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct Sunsoft1 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     chr_banks: [u8; 2],
     mirroring: Mirroring,
@@ -29,7 +30,7 @@ impl Sunsoft1 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Sunsoft1 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             chr_banks: [0, 1],
             mirroring,
@@ -48,7 +49,7 @@ impl Mapper for Sunsoft1 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

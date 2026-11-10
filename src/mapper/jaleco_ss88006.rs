@@ -1,3 +1,4 @@
+use super::Chr;
 use super::jaleco_latch::SpeechPlayer;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 pub struct JalecoSs88006 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_ram: Vec<u8>,
     prg_ram_enabled: bool,
@@ -57,7 +58,7 @@ impl JalecoSs88006 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         JalecoSs88006 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_ram: vec![0; 0x2000],
             prg_ram_enabled: false,
@@ -112,13 +113,7 @@ impl Mapper for JalecoSs88006 {
     // over (they are not part of the state).
     fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
         let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
-        if new.chr.len() != self.chr.len() {
-            return Err(format!(
-                "savestate chr is {} bytes; this ROM uses {}",
-                new.chr.len(),
-                self.chr.len()
-            ));
-        }
+        super::StateField::restore(&mut new.chr, &mut self.chr, "chr")?;
         if new.prg_ram.len() != self.prg_ram.len() {
             return Err(format!(
                 "savestate prg_ram is {} bytes; this ROM uses {}",
@@ -137,7 +132,7 @@ impl Mapper for JalecoSs88006 {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 
