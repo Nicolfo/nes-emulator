@@ -24,7 +24,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 24 | VRC6 (VRC6a) | 16/8KB PRG, 1KB CHR, cycle/scanline IRQ, pulse+saw expansion audio | Akumajou Densetsu |
 | 26 | VRC6 (VRC6b) | VRC6 on the swapped-A0/A1 pinout | Madara, Esper Dream 2 |
 | 28 | Action 53 | Homebrew multicart: configurable NROM/UxROM/BNROM modes and mirroring | Action 53 homebrew collections |
-| 30 | UNROM 512 | 16KB PRG select + fixed last bank, 4x8KB CHR RAM banks, header-selected H/V/one-screen/four-screen mirroring; flash writes ignored | Black Box Challenge, homebrew (RetroUSB, InfiniteNESLives) |
+| 30 | UNROM 512 | 16KB PRG select + fixed last bank, 4x8KB CHR RAM banks, header-selected H/V/one-screen mirroring or four-screen nametables in the last 8KB of CHR RAM; battery-bit boards self-save to SST39SF flash (persisted as `.sav`) | Black Box Challenge, homebrew (RetroUSB, InfiniteNESLives) |
 | 32 | Irem G101 | Two switchable 8KB PRG banks (swap mode), 1KB CHR banks, mirroring; submapper 1 fixed single-screen | Image Fight, Major League, Kaiketsu Yanchamaru |
 | 33 | Taito TC0190 | Two 8KB PRG banks + two fixed, 2KB/1KB CHR banks, mirroring bit (no IRQ); auto-promotes to TC0690 if the ROM drives the IRQ registers | Don Doko Don, Insector X, Power Blazer |
 | 34 | BNROM / NINA-001 | 32KB PRG select (BNROM) or PRG/CHR banks + PRG RAM (NINA-001) | Deadly Towers, Impossible Mission II |
@@ -63,7 +63,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 95 | Namco 3425 | Namco 108 whose CHR bit 5 drives the nametable select | Dragon Buster |
 | 97 | Irem TAM-S1 | Last 16KB fixed at $8000, switchable 16KB at $C000, mirroring select | Kaiketsu Yanchamaru |
 | 107 | Magic Dragon | One byte selects both 32KB PRG and 8KB CHR | Magic Dragon |
-| 111 | GTROM / Cheapocabra | 32KB PRG banks, two 8KB CHR RAM banks, 8KB four-screen nametable RAM in two pages; flash writes ignored | Membler Industries homebrew |
+| 111 | GTROM / Cheapocabra | 32KB PRG banks, two 8KB CHR RAM banks, 8KB four-screen nametable RAM in two pages; SST39SF040 flash self-saving (persisted as `.sav` with the battery bit) | Membler Industries homebrew |
 | 113 | NINA-03/06 multicart (Sachen/HES) | Mapper 79 with wider PRG/CHR banks and a mirroring bit | Mind Blower Pak, Papillon Gals |
 | 118 | TxSROM (MMC3) | MMC3 with CHR-bank-driven nametable select (TLSROM/TSROM) | NES Play Action Football, Armadillo |
 | 119 | TQROM (MMC3) | MMC3 with 8KB CHR RAM selected by CHR bank bit 6 alongside CHR ROM | High Speed, Pin-Bot |
