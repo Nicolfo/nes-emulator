@@ -6,6 +6,7 @@ use crate::cheats::RomPatch;
 use crate::controller::{Controller, FOUR_SCORE_SIG_4016, FOUR_SCORE_SIG_4017, InputDevice};
 use crate::mapper::Mapper;
 use crate::ppu::Ppu;
+use crate::vs::VsIo;
 use crate::zapper::Zapper;
 
 /// RDY assertion delay (CPU cycles) for a DMC "load" DMA after a $4015 write.
@@ -28,6 +29,10 @@ pub struct Bus {
     /// Light gun in port 2; when present it answers $4017 instead of
     /// `controller2`. Host input, not machine state (never savestated).
     pub zapper: Option<Zapper>,
+    /// Vs. System coin-op inputs; Some only on a Vs. cabinet, where they
+    /// add coin/service/DIP bits to $4016/$4017 reads. Host input, not
+    /// machine state (never savestated).
+    pub vs: Option<VsIo>,
     /// Active Game Genie / raw ROM patches applied to $8000-$FFFF reads.
     pub rom_patches: Vec<RomPatch>,
     pub cycles: u64,
@@ -79,6 +84,7 @@ impl Bus {
             controller1: Controller::default(),
             controller2: Controller::default(),
             zapper: None,
+            vs: None,
             rom_patches: Vec::new(),
             cycles: 0,
             region,
@@ -121,7 +127,11 @@ impl Bus {
             // Controller reads drive D0-D4 only; D5-D7 stay open bus.
             0x4016 => {
                 let ctrl_val = self.controller1.read();
-                let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
+                let r = match &self.vs {
+                    // Vs.: D0 pad, D2 service, D3-4 DIP 1-2, D5-6 coins.
+                    Some(vs) => (ctrl_val & 0x01) | vs.port1_bits() | (self.open_bus & 0x80),
+                    None => (ctrl_val & 0x1F) | (self.open_bus & 0xE0),
+                };
                 self.open_bus = r;
                 r
             }
@@ -130,7 +140,11 @@ impl Bus {
                     Some(z) => z.read(&self.ppu),
                     None => self.controller2.read(),
                 };
-                let r = (ctrl_val & 0x1F) | (self.open_bus & 0xE0);
+                let r = match &self.vs {
+                    // Vs.: D0 pad, D2-7 DIP switches 3-8.
+                    Some(vs) => (ctrl_val & 0x01) | vs.port2_bits(),
+                    None => (ctrl_val & 0x1F) | (self.open_bus & 0xE0),
+                };
                 self.open_bus = r;
                 r
             }
@@ -229,6 +243,9 @@ impl Bus {
             0x4016 => {
                 self.controller1.write(val);
                 self.controller2.write(val);
+                if self.vs.is_some() {
+                    self.cart.vs_io_write(val);
+                }
             }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),
             0x4018..=0x401F => {}

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::cartridge::Region;
 use crate::mapper::{Mapper, NtTarget};
 use crate::palette::NES_PALETTE;
+use crate::vs::VsPpu;
 
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
@@ -104,6 +105,10 @@ pub struct Ppu {
     palette: [u8; 32],
     read_buffer: u8,
 
+    /// Vs. System RGB PPU (palette ROM, emphasis, 2C05 register quirks);
+    /// None for the composite 2C02/2C07 of a home console.
+    #[serde(default)]
+    vs: Option<VsPpu>,
     pub scanline: i16, // -1 = pre-render, 0..239 visible, 241..260 vblank (241..310 PAL, 291..310 Dendy)
     pub dot: u16,      // 0..340
     region: Region,
@@ -177,6 +182,7 @@ impl Ppu {
             read_buffer: 0,
             scanline: -1,
             dot: 0,
+            vs: None,
             region: Region::Ntsc,
             odd_frame: false,
             suppress_vbl: false,
@@ -191,6 +197,11 @@ impl Ppu {
             pat_hi_latch: 0,
             framebuffer: vec![0; WIDTH * HEIGHT * 4],
         }
+    }
+
+    /// Make this an RGB Vs. System PPU (or back to a home-console PPU).
+    pub fn set_vs_ppu(&mut self, vs: Option<VsPpu>) {
+        self.vs = vs;
     }
 
     pub fn set_region(&mut self, region: Region) {
@@ -280,6 +291,12 @@ impl Ppu {
                 if self.scanline == self.vblank_line() && self.dot == 1 {
                     self.suppress_vbl = true;
                 }
+                // RC2C05: the low bits carry the chip's identification
+                // value ($3D also overrides bit 5).
+                if let Some(id) = self.vs.and_then(VsPpu::status_id) {
+                    let mask = if id & 0x20 != 0 { 0x3F } else { 0x1F };
+                    res = (res & !mask) | id;
+                }
                 self.status &= !0x80; // clear vblank
                 self.w = false;
                 self.io_bus_refresh(0xE0, res); // only the top 3 bits are driven
@@ -337,7 +354,12 @@ impl Ppu {
 
     pub fn write_register(&mut self, reg: u16, val: u8, cart: &mut dyn Mapper) {
         self.io_bus_refresh(0xFF, val);
-        match reg & 7 {
+        // RC2C05: $2000 and $2001 are swapped.
+        let reg = match reg & 7 {
+            0 | 1 if self.vs.is_some_and(VsPpu::swaps_ctrl_mask) => (reg & 7) ^ 1,
+            r => r,
+        };
+        match reg {
             0 => {
                 self.ctrl = val;
                 self.t = (self.t & !0x0C00) | (((val & 3) as u16) << 10);
@@ -1018,7 +1040,10 @@ impl Ppu {
 
         let grey = if self.mask & 1 != 0 { 0x30 } else { 0x3F };
         let color = self.palette[Self::palette_index(0x3F00 | palette_idx as u16)] as usize & grey;
-        let rgb = NES_PALETTE[color];
+        let rgb = match self.vs {
+            Some(vs) => vs.rgb(color as u8, self.mask),
+            None => NES_PALETTE[color],
+        };
         let off = (py as usize * WIDTH + px as usize) * 4;
         self.framebuffer[off] = rgb[0];
         self.framebuffer[off + 1] = rgb[1];
