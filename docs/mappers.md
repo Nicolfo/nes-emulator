@@ -19,9 +19,9 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 15 | K-1029 / K-1030P | Multicart: four PRG modes (32KB, UNROM, 8KB, 16KB) chosen by address bits, mirroring bit, mode-protected CHR RAM | 100-in-1 Contra Function 16 |
 | 16 | Bandai FCG / LZ93D50 | 16KB PRG select, 1KB CHR banks, 16-bit cycle IRQ, serial-EEPROM saves | Dragon Ball Z, Rokudenashi Blues |
 | 18 | Jaleco SS88006 | Three 8KB PRG banks, eight 1KB CHR banks (nibble registers), PRG RAM with write protect, mirroring, CPU-cycle IRQ with 4/8/12/16-bit width, uPD7756 speech from host-supplied samples | Pizza Pop!, Ninja Jajamaru: Ginga Daisakusen, Plasma Ball |
-| 19 | Namco 163 | PRG/CHR banking, CHR-ROM nametables, wavetable expansion audio | Rolling Thunder, Megami Tensei II, Mappy Kids |
+| 19 | Namco 163 | PRG/CHR banking, CHR-ROM or CIRAM nametables, CIRAM pattern pages ($E800 bits 6/7), PRG RAM write protect ($F800), wavetable expansion audio with $E000 mute | Rolling Thunder, Megami Tensei II, Mappy Kids |
 | 21, 22, 23, 25 | Konami VRC2 / VRC4 | 8/16KB PRG, 1KB CHR banking, scanline IRQ; pinout variants resolved by mapper/submapper | Ganbare Goemon Gaiden 2, Crisis Force, Wai Wai World 2, TMNT (J) |
-| 24 | VRC6 (VRC6a) | 16/8KB PRG, 1KB CHR, cycle/scanline IRQ, pulse+saw expansion audio | Akumajou Densetsu |
+| 24 | VRC6 (VRC6a) | 16/8KB PRG, all four $B003 CHR layouts (1KB/2KB/mixed) with the A10 rule, CIRAM or CHR-ROM nametables, PRG RAM enable, cycle/scanline IRQ, pulse+saw expansion audio | Akumajou Densetsu |
 | 26 | VRC6 (VRC6b) | VRC6 on the swapped-A0/A1 pinout | Madara, Esper Dream 2 |
 | 28 | Action 53 | Homebrew multicart: configurable NROM/UxROM/BNROM modes and mirroring | Action 53 homebrew collections |
 | 30 | UNROM 512 | 16KB PRG select + fixed last bank, 4x8KB CHR RAM banks, header-selected H/V/one-screen mirroring or four-screen nametables in the last 8KB of CHR RAM; battery-bit boards self-save to SST39SF flash (persisted as `.sav`) | Black Box Challenge, homebrew (RetroUSB, InfiniteNESLives) |

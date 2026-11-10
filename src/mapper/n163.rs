@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 /// Namco 163 (mapper 19, Rolling Thunder, Megami Tensei II): 1KB CHR
 /// banking that extends into nametable space, a 15-bit CPU-cycle IRQ
 /// counter, and a multiplexed wavetable sound chip with up to 8 channels.
+///
+/// Any CHR register holding $E0-$FF selects a 1KB CIRAM page (bit 0)
+/// instead of CHR ROM - always for the four nametable registers, and for
+/// the pattern registers unless $E800 bit 6 ($0000-$0FFF) / bit 7
+/// ($1000-$1FFF) is set. Because pattern fetches can land in CIRAM, the
+/// board owns the 2KB of nametable RAM itself (every nametable access is
+/// routed here). $E000 bit 6 mutes the sound chip and $F800 doubles as the
+/// PRG RAM write protect (upper nibble $4 = writable, bits 0-3 protect
+/// each 2KB window).
 #[derive(Serialize, Deserialize)]
 pub struct N163 {
     #[serde(skip)]
@@ -16,10 +25,30 @@ pub struct N163 {
     // CHR regs for $0000-$1FFF (8) and the four nametables (4). Values
     // $E0-$FF select a CIRAM page instead of CHR ROM.
     chr_banks: [u8; 12],
+    /// The console's 2KB nametable RAM, served by the board.
+    #[serde(default = "ciram_default")]
+    ciram: Vec<u8>,
+    /// $E800 bits 6/7: pattern registers $E0+ read CHR ROM, not CIRAM.
+    #[serde(default)]
+    chr_rom_low: bool,
+    #[serde(default)]
+    chr_rom_high: bool,
+    /// $E000 bit 6: sound chip muted.
+    #[serde(default)]
+    sound_disabled: bool,
+    /// Last $F800 value (PRG RAM write protect). Until the game first writes
+    /// $F800 the RAM stays writable, so iNES dumps of Namco 175 boards
+    /// mislabeled as mapper 19 (which have no such register) keep saving.
+    #[serde(default)]
+    write_protect: Option<u8>,
     irq_counter: u16,
     irq_enabled: bool,
     irq_line: bool,
     audio: N163Audio,
+}
+
+fn ciram_default() -> Vec<u8> {
+    vec![0; 0x800]
 }
 
 impl N163 {
@@ -41,6 +70,11 @@ impl N163 {
             prg_ram: vec![0; 0x2000],
             prg_banks: [0; 3],
             chr_banks,
+            ciram: ciram_default(),
+            chr_rom_low: false,
+            chr_rom_high: false,
+            sound_disabled: false,
+            write_protect: None,
             irq_counter: 0,
             irq_enabled: false,
             irq_line: false,
@@ -53,8 +87,30 @@ impl N163 {
         (bank as usize % banks) * 0x400 + (addr as usize & 0x3FF)
     }
 
-    fn chr_byte(&self, bank: u8, addr: u16) -> u8 {
-        self.chr[self.chr_offset(bank, addr)]
+    /// CIRAM offset when `addr`'s register selects a CIRAM page.
+    fn ciram_offset(&self, addr: u16) -> Option<usize> {
+        let bank = self.chr_bank_for(addr);
+        if bank < 0xE0 {
+            return None;
+        }
+        if addr < 0x2000 {
+            let rom = if addr < 0x1000 {
+                self.chr_rom_low
+            } else {
+                self.chr_rom_high
+            };
+            if rom {
+                return None;
+            }
+        }
+        Some(((bank as usize & 1) << 10) | (addr as usize & 0x3FF))
+    }
+
+    fn prg_ram_writable(&self, addr: u16) -> bool {
+        match self.write_protect {
+            None => true,
+            Some(wp) => wp & 0xF0 == 0x40 && wp & (1 << ((addr >> 11) & 3)) == 0,
+        }
     }
 
     /// CHR bank register backing a PPU address: pattern space uses the
@@ -69,7 +125,7 @@ impl N163 {
 }
 
 impl Mapper for N163 {
-    crate::impl_mapper_savestate!(chr, prg_ram);
+    crate::impl_mapper_savestate!(chr, prg_ram, ciram);
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
@@ -105,31 +161,45 @@ impl Mapper for N163 {
                 self.irq_enabled = val & 0x80 != 0;
                 self.irq_line = false;
             }
-            0x6000..=0x7800 => self.prg_ram[(addr & 0x1FFF) as usize] = val,
+            0x6000..=0x7800 => {
+                if self.prg_ram_writable(addr) {
+                    let len = self.prg_ram.len();
+                    self.prg_ram[(addr as usize & 0x1FFF) % len] = val;
+                }
+            }
             0x8000..=0xB800 => self.chr_banks[((addr - 0x8000) >> 11) as usize] = val,
             0xC000..=0xD800 => self.chr_banks[8 + ((addr - 0xC000) >> 11) as usize] = val,
-            0xE000 => self.prg_banks[0] = val & 0x3F,
-            // Bits 6/7 ($E800) disable CIRAM selection per pattern table;
-            // not emulated (pattern fetches always serve CHR ROM here).
-            0xE800 => self.prg_banks[1] = val & 0x3F,
+            0xE000 => {
+                self.prg_banks[0] = val & 0x3F;
+                self.sound_disabled = val & 0x40 != 0;
+            }
+            0xE800 => {
+                self.prg_banks[1] = val & 0x3F;
+                self.chr_rom_low = val & 0x40 != 0;
+                self.chr_rom_high = val & 0x80 != 0;
+            }
             0xF000 => self.prg_banks[2] = val & 0x3F,
-            0xF800 => self.audio.addr_write(val),
+            0xF800 => {
+                self.write_protect = Some(val);
+                self.audio.addr_write(val);
+            }
             _ => {}
         }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
-        // Pattern space: banks $E0+ can map CIRAM (unless disabled by $E800
-        // bits 6/7); no supported game uses that, serve ROM. Nametable
-        // space: routed here when the NT register selects CHR ROM.
-        self.chr_byte(self.chr_bank_for(addr), addr)
+        match self.ciram_offset(addr) {
+            Some(off) => self.ciram[off],
+            None => self.chr[self.chr_offset(self.chr_bank_for(addr), addr)],
+        }
     }
 
     fn ppu_write(&mut self, addr: u16, val: u8) {
-        // Real N163 boards are CHR ROM; the RAM path only serves zero-CHR
-        // images (iNES CHR RAM convention). CIRAM nametable writes go
-        // through NtTarget::Ciram, not here.
-        if self.chr_is_ram {
+        if let Some(off) = self.ciram_offset(addr) {
+            self.ciram[off] = val;
+        } else if self.chr_is_ram {
+            // Real N163 boards are CHR ROM; the RAM path only serves
+            // zero-CHR images (iNES CHR RAM convention).
             let off = self.chr_offset(self.chr_bank_for(addr), addr);
             self.chr[off] = val;
         }
@@ -140,13 +210,9 @@ impl Mapper for N163 {
         Mirroring::Vertical
     }
 
-    fn nt_target(&mut self, addr: u16) -> NtTarget {
-        let bank = self.chr_banks[8 + ((addr >> 10) & 3) as usize];
-        if bank >= 0xE0 {
-            NtTarget::Ciram(((bank as u16 & 1) << 10) | (addr & 0x3FF))
-        } else {
-            NtTarget::Cart
-        }
+    fn nt_target(&mut self, _addr: u16) -> NtTarget {
+        // The board serves CIRAM itself (pattern fetches can map it too).
+        NtTarget::Cart
     }
 
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
@@ -185,7 +251,11 @@ impl Mapper for N163 {
     }
 
     fn audio_sample(&self) -> f32 {
-        self.audio.sample()
+        if self.sound_disabled {
+            0.0
+        } else {
+            self.audio.sample()
+        }
     }
 }
 
@@ -324,10 +394,89 @@ mod tests {
         m.cpu_write(0xC000, 0xE0); // NT0 -> CIRAM page 0
         m.cpu_write(0xC800, 0xE1); // NT1 -> CIRAM page 1
         m.cpu_write(0xD000, 12); // NT2 -> CHR ROM bank 12
-        assert_eq!(m.nt_target(0x2005), NtTarget::Ciram(0x005));
-        assert_eq!(m.nt_target(0x2405), NtTarget::Ciram(0x405));
-        assert_eq!(m.nt_target(0x2800), NtTarget::Cart);
+        m.cpu_write(0xD800, 0xE0); // NT3 -> CIRAM page 0 (shared with NT0)
+        assert_eq!(m.nt_target(0x2005), NtTarget::Cart);
+        m.ppu_write(0x2005, 0xAA);
+        m.ppu_write(0x2405, 0xBB);
+        assert_eq!(m.ppu_read(0x2C05), 0xAA, "NT3 mirrors CIRAM page 0");
+        assert_eq!(m.ppu_read(0x2405), 0xBB);
         assert_eq!(m.ppu_read(0x2800), 12);
+        m.ppu_write(0x2800, 0x55); // CHR ROM nametable: read-only
+        assert_eq!(m.ppu_read(0x2800), 12);
+    }
+
+    #[test]
+    fn pattern_banks_e0_and_up_map_ciram_unless_e800_disables_it() {
+        let mut m = n163();
+        m.cpu_write(0xC000, 0xE1); // NT0 -> CIRAM page 1
+        m.ppu_write(0x2010, 0x77);
+        m.cpu_write(0x8000, 0xE1); // $0000 pattern slot -> CIRAM page 1
+        m.cpu_write(0xA000, 0xE1); // $1000 pattern slot -> CIRAM page 1
+        assert_eq!(m.ppu_read(0x0010), 0x77);
+        assert_eq!(m.ppu_read(0x1010), 0x77);
+        m.ppu_write(0x0011, 0x66); // CIRAM is writable through CHR space
+        assert_eq!(m.ppu_read(0x2011), 0x66);
+        // $E800 bit 6: low pattern table reads CHR ROM; bit 7: high one.
+        m.cpu_write(0xE800, 0x40);
+        assert_eq!(m.ppu_read(0x0010), 0xE1 % 64);
+        assert_eq!(m.ppu_read(0x1010), 0x77);
+        m.cpu_write(0xE800, 0xC0);
+        assert_eq!(m.ppu_read(0x1010), 0xE1 % 64);
+        // Nametable registers have no disable bit.
+        assert_eq!(m.ppu_read(0x2010), 0x77);
+    }
+
+    #[test]
+    fn sound_disable_bit_mutes_output() {
+        let mut m = n163();
+        m.cpu_write(0xF800, 0xF8); // addr $78, auto-inc
+        for v in [0, 0, 0x40, 0, 0xF8, 0, 0, 0x0F] {
+            m.cpu_write(0x4800, v);
+        }
+        m.cpu_write(0xF800, 0x80);
+        for _ in 0..4 {
+            m.cpu_write(0x4800, 0xFF);
+        }
+        let peak = |m: &mut N163| {
+            (0..2000).fold(0.0f32, |p, _| {
+                m.cpu_clock();
+                p.max(m.audio_sample().abs())
+            })
+        };
+        assert!(peak(&mut m) > 0.0);
+        m.cpu_write(0xE000, 0x40);
+        assert_eq!(peak(&mut m), 0.0);
+        m.cpu_write(0xE000, 0x00);
+        assert!(peak(&mut m) > 0.0);
+    }
+
+    #[test]
+    fn f800_write_protects_prg_ram() {
+        let mut m = n163();
+        m.cpu_write(0x6000, 1); // no $F800 write yet: writable
+        assert_eq!(m.prg_ram_read(0x6000), Some(1));
+        m.cpu_write(0xF800, 0x00); // upper nibble != 4: all protected
+        m.cpu_write(0x6000, 2);
+        assert_eq!(m.prg_ram_read(0x6000), Some(1));
+        m.cpu_write(0xF800, 0x42); // writable except window 1 ($6800-$6FFF)
+        m.cpu_write(0x6000, 3);
+        m.cpu_write(0x6800, 4);
+        m.cpu_write(0x7800, 5);
+        assert_eq!(m.prg_ram_read(0x6000), Some(3));
+        assert_eq!(m.prg_ram_read(0x6800), Some(0));
+        assert_eq!(m.prg_ram_read(0x7800), Some(5));
+    }
+
+    #[test]
+    fn ciram_survives_savestate() {
+        let mut m = n163();
+        m.cpu_write(0xC000, 0xE0);
+        m.ppu_write(0x2123, 0x9C);
+        let blob = m.save_state();
+        let mut r = n163();
+        r.load_state(&blob).unwrap();
+        r.cpu_write(0xC000, 0xE0);
+        assert_eq!(r.ppu_read(0x2123), 0x9C);
     }
 
     #[test]

@@ -1,9 +1,13 @@
-use super::{Mapper, Mirroring};
+use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
-/// VRC6 (mapper 24, Akumajou Densetsu): 16KB+8KB PRG banking, 1KB CHR
-/// banking, the VRC scanline/cycle IRQ, and expansion audio (two pulse
-/// channels with variable duty plus a sawtooth channel).
+/// VRC6 (mapper 24, Akumajou Densetsu): 16KB+8KB PRG banking, the VRC
+/// scanline/cycle IRQ, expansion audio (two pulse channels with variable
+/// duty plus a sawtooth channel), and the full $B003 "PPU banking style"
+/// register: four CHR layouts (1KB, 2KB, mixed), CIRAM or CHR-ROM
+/// nametables with per-mode page selection, the CHR A10 rule and the PRG
+/// RAM enable. Commercial games only use mode 0 with CIRAM ($20-$2C,
+/// $A0-$AC), which behaves exactly like plain register-selected mirroring.
 ///
 /// Mapper 26 is the same chip on the VRC6b pinout, where the A0 and A1 lines
 /// feeding the register decoder are swapped; everything else is identical.
@@ -19,6 +23,10 @@ pub struct Vrc6 {
     prg_16k: u8,
     prg_8k: u8,
     chr_banks: [u8; 8],
+    /// $B003. `None` only for savestates written before the register was
+    /// modelled: they behave as the mode-0 value matching `mirroring`.
+    #[serde(default)]
+    ppu_mode: Option<u8>,
     irq: VrcIrq,
     audio: Vrc6Audio,
     // VRC6b swaps the A0/A1 register-select lines relative to VRC6a.
@@ -48,16 +56,102 @@ impl Vrc6 {
             prg_16k: 0,
             prg_8k: 0,
             chr_banks: [0; 8],
+            ppu_mode: Some(0),
             irq: VrcIrq::new(),
             audio: Vrc6Audio::new(),
             swap_lines,
         }
     }
 
+    /// Effective $B003 value (see `ppu_mode`).
+    fn mode(&self) -> u8 {
+        self.ppu_mode.unwrap_or_else(|| {
+            // Legacy savestate: the old core only modelled mode 0 mirroring.
+            let mm = match self.mirroring {
+                Mirroring::Horizontal => 1,
+                Mirroring::SingleScreenLo => 2,
+                Mirroring::SingleScreenHi => 3,
+                _ => 0,
+            };
+            0xA0 | (mm << 2)
+        })
+    }
+
+    /// 1KB CHR page for pattern slot `slot` (0-7). In 2KB layouts P=1
+    /// (bit 5) passes PPU A10 through (even/odd page of the register);
+    /// P=0 takes A10 from the register's LSB, duplicating one half.
+    fn pattern_page(&self, slot: usize) -> u8 {
+        let mode = self.mode();
+        let r = &self.chr_banks;
+        let two_k = |reg: u8| {
+            if mode & 0x20 != 0 {
+                (reg & 0xFE) | (slot as u8 & 1)
+            } else {
+                reg
+            }
+        };
+        match mode & 3 {
+            0 => r[slot],
+            1 => two_k(r[slot / 2]),
+            // Modes 2/3: $0000-$0FFF in 1KB pages, $1000-$1FFF in 2KB.
+            _ if slot < 4 => r[slot],
+            _ => two_k(r[4 + (slot - 4) / 2]),
+        }
+    }
+
     fn chr_offset(&self, addr: u16) -> usize {
         let banks = self.chr.len() / 0x400;
-        let bank = self.chr_banks[(addr >> 10) as usize & 7] as usize % banks;
+        let bank = self.pattern_page((addr >> 10) as usize & 7) as usize % banks;
         bank * 0x400 + (addr as usize & 0x3FF)
+    }
+
+    /// Page backing nametable `nt` (0-3): a CHR page when N (bit 4) is set,
+    /// otherwise a CIRAM page (only its bit 0 matters).
+    fn nametable_page(&self, nt: usize) -> u8 {
+        let mode = self.mode();
+        let r = &self.chr_banks;
+        let (r6, r7) = (r[6], r[7]);
+        let rom = mode & 0x10 != 0;
+        // The four mode-0 P=1 layouts used by the commercial games.
+        let fixed = match mode & 0x2F {
+            0x20 | 0x27 => Some([r6 & 0xFE, r6 | 1, r7 & 0xFE, r7 | 1]),
+            0x23 | 0x24 => Some([r6 & 0xFE, r7 & 0xFE, r6 | 1, r7 | 1]),
+            0x28 | 0x2F => Some([r6 & 0xFE, r6 & 0xFE, r7 & 0xFE, r7 & 0xFE]),
+            0x2B | 0x2C => Some([r6 | 1, r7 | 1, r6 | 1, r7 | 1]),
+            _ => None,
+        };
+        if let Some(pages) = fixed {
+            if rom {
+                return pages[nt];
+            }
+            // CIRAM: vertical / horizontal / one-screen A / one-screen B.
+            return match mode & 0x2F {
+                0x20 | 0x27 => [0, 1, 0, 1][nt],
+                0x23 | 0x24 => [0, 0, 1, 1][nt],
+                0x28 | 0x2F => 0,
+                _ => 1,
+            };
+        }
+        match mode & 7 {
+            0 | 6 | 7 => [r6, r6, r7, r7][nt],
+            1 | 5 => [r[4], r[5], r6, r7][nt],
+            _ => [r6, r7, r6, r7][nt],
+        }
+    }
+
+    fn rom_nametables(&self) -> bool {
+        self.mode() & 0x10 != 0 && self.mirroring != Mirroring::FourScreen
+    }
+
+    fn nt_rom_offset(&self, addr: u16) -> usize {
+        let banks = self.chr.len() / 0x400;
+        let page = self.nametable_page(((addr >> 10) & 3) as usize) as usize % banks;
+        page * 0x400 + (addr as usize & 0x3FF)
+    }
+
+    /// W (bit 7): PRG RAM at $6000-$7FFF responds only when set.
+    fn prg_ram_enabled(&self) -> bool {
+        self.mode() & 0x80 != 0
     }
 
     /// The two register-select bits, with A0/A1 swapped on VRC6b.
@@ -105,25 +199,18 @@ impl Mapper for Vrc6 {
         // The register-select bits depend on the A0/A1 pinout (VRC6a vs b).
         let r = self.reg(addr);
         match (addr & 0xF000, r) {
-            (0x6000, _) if addr < 0x8000 => self.prg_ram[(addr & 0x1FFF) as usize] = val,
-            (0x7000, _) => self.prg_ram[(addr & 0x1FFF) as usize] = val,
+            (0x6000 | 0x7000, _) => {
+                if self.prg_ram_enabled() {
+                    let len = self.prg_ram.len();
+                    self.prg_ram[(addr as usize & 0x1FFF) % len] = val;
+                }
+            }
             (0x8000, _) => self.prg_16k = val & 0x0F,
             (0x9000, 0..=2) => self.audio.pulse_write(0, r, val),
             (0x9000, _) => self.audio.freq_ctrl = val,
             (0xA000, 0..=2) => self.audio.pulse_write(1, r, val),
             (0xB000, 0..=2) => self.audio.saw_write(r, val),
-            (0xB000, _) => {
-                if self.mirroring != Mirroring::FourScreen {
-                    self.mirroring = match (val >> 2) & 3 {
-                        0 => Mirroring::Vertical,
-                        1 => Mirroring::Horizontal,
-                        2 => Mirroring::SingleScreenLo,
-                        _ => Mirroring::SingleScreenHi,
-                    };
-                }
-                // Bits 0-1 select exotic CHR/NT banking modes; only the
-                // common mode 0 (8 x 1KB) is emulated.
-            }
+            (0xB000, _) => self.ppu_mode = Some(val),
             (0xC000, _) => self.prg_8k = val & 0x1F,
             (0xD000, k) => self.chr_banks[k as usize] = val,
             (0xE000, k) => self.chr_banks[4 + k as usize] = val,
@@ -135,6 +222,10 @@ impl Mapper for Vrc6 {
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
+        if addr >= 0x2000 {
+            // Routed here by nt_target: CHR-ROM nametables.
+            return self.chr[self.nt_rom_offset(addr)];
+        }
         self.chr[self.chr_offset(addr)]
     }
 
@@ -142,17 +233,45 @@ impl Mapper for Vrc6 {
         // Real VRC6 boards are CHR ROM; the RAM path only serves zero-CHR
         // images (iNES CHR RAM convention).
         if self.chr_is_ram {
-            let off = self.chr_offset(addr);
+            let off = if addr >= 0x2000 {
+                self.nt_rom_offset(addr)
+            } else {
+                self.chr_offset(addr)
+            };
             self.chr[off] = val;
         }
     }
 
     fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        if self.mirroring == Mirroring::FourScreen {
+            return Mirroring::FourScreen;
+        }
+        // Reported for the common CIRAM layouts; nt_target does the routing.
+        match self.mode() & 0x2F {
+            0x23 | 0x24 => Mirroring::Horizontal,
+            0x28 | 0x2F => Mirroring::SingleScreenLo,
+            0x2B | 0x2C => Mirroring::SingleScreenHi,
+            _ => Mirroring::Vertical,
+        }
+    }
+
+    fn nt_target(&mut self, addr: u16) -> NtTarget {
+        if self.mirroring == Mirroring::FourScreen {
+            return NtTarget::Ciram(mirror_nt(Mirroring::FourScreen, addr));
+        }
+        if self.rom_nametables() {
+            return NtTarget::Cart;
+        }
+        let page = self.nametable_page(((addr >> 10) & 3) as usize) as u16 & 1;
+        NtTarget::Ciram((page << 10) | (addr & 0x3FF))
     }
 
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
-        Some(self.prg_ram[(addr & 0x1FFF) as usize])
+        if !self.prg_ram_enabled() {
+            return None;
+        }
+        let len = self.prg_ram.len();
+        Some(self.prg_ram[(addr as usize & 0x1FFF) % len])
     }
 
     fn prg_ram(&self) -> Option<&[u8]> {
@@ -442,7 +561,7 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), 2);
         // Mirroring control is at ($B000, reg 3). On VRC6b reg 3 needs A0=1,
         // A1=1 with the lines swapped, i.e. address bits 1,0 = 1,1 -> $B003.
-        m.cpu_write(0xB003, 1 << 2);
+        m.cpu_write(0xB003, 0x24);
         assert_eq!(m.mirroring(), Mirroring::Horizontal);
         // The CHR low-bank register ($D000 reg group): on VRC6b $D001 and
         // $D002 swap. Writing $D002 targets reg index 1.
@@ -450,13 +569,119 @@ mod tests {
         assert_eq!(m.ppu_read(0x0400), 9);
     }
 
+    /// CIRAM page (0/1) for each of the four nametables.
+    fn ciram_pages(m: &mut Vrc6) -> [u16; 4] {
+        [0x2000u16, 0x2400, 0x2800, 0x2C00].map(|a| match m.nt_target(a) {
+            NtTarget::Ciram(off) => off >> 10,
+            NtTarget::Cart => 9,
+        })
+    }
+
     #[test]
     fn mirroring_bits() {
+        // The values the commercial games write: mode 0, P=1, CIRAM.
         let mut m = vrc6();
-        m.cpu_write(0xB003, 1 << 2);
-        assert_eq!(m.mirroring(), Mirroring::Horizontal);
-        m.cpu_write(0xB003, 2 << 2);
-        assert_eq!(m.mirroring(), Mirroring::SingleScreenLo);
+        for (val, pages, mir) in [
+            (0x20, [0, 1, 0, 1], Mirroring::Vertical),
+            (0x24, [0, 0, 1, 1], Mirroring::Horizontal),
+            (0x28, [0, 0, 0, 0], Mirroring::SingleScreenLo),
+            (0xAC, [1, 1, 1, 1], Mirroring::SingleScreenHi),
+        ] {
+            m.cpu_write(0xB003, val);
+            assert_eq!(m.mirroring(), mir, "${val:02X}");
+            assert_eq!(ciram_pages(&mut m), pages, "${val:02X}");
+        }
+    }
+
+    #[test]
+    fn ciram_pages_from_registers_outside_the_fixed_layouts() {
+        let mut m = vrc6();
+        m.cpu_write(0xE000, 0x11); // R4 odd
+        m.cpu_write(0xE001, 0x10); // R5 even
+        m.cpu_write(0xE002, 0x03); // R6 odd
+        m.cpu_write(0xE003, 0x02); // R7 even
+        m.cpu_write(0xB003, 0x01); // mode 1, P=0: R4-R7 select each NT
+        assert_eq!(ciram_pages(&mut m), [1, 0, 1, 0]);
+        m.cpu_write(0xB003, 0x02); // mode 2: R6 R7 R6 R7
+        assert_eq!(ciram_pages(&mut m), [1, 0, 1, 0]);
+        m.cpu_write(0xB003, 0x00); // mode 0, P=0: R6 R6 R7 R7
+        assert_eq!(ciram_pages(&mut m), [1, 1, 0, 0]);
+    }
+
+    #[test]
+    fn chr_modes_and_a10_rule() {
+        let mut m = vrc6();
+        for (i, v) in [2u8, 5, 8, 11, 12, 15, 6, 7].iter().enumerate() {
+            let a = [
+                0xD000, 0xD001, 0xD002, 0xD003, 0xE000, 0xE001, 0xE002, 0xE003,
+            ][i];
+            m.cpu_write(a, *v);
+        }
+        let pages = |m: &mut Vrc6| -> Vec<u8> { (0..8).map(|s| m.ppu_read(s * 0x400)).collect() };
+        m.cpu_write(0xB003, 0x20); // mode 0: eight 1KB registers
+        assert_eq!(pages(&mut m), [2, 5, 8, 11, 12, 15, 6, 7]);
+        m.cpu_write(0xB003, 0x21); // mode 1, P=1: R0-R3 as 2KB (A10 from PPU)
+        assert_eq!(pages(&mut m), [2, 3, 4, 5, 8, 9, 10, 11]);
+        m.cpu_write(0xB003, 0x01); // mode 1, P=0: A10 from the register LSB
+        assert_eq!(pages(&mut m), [2, 2, 5, 5, 8, 8, 11, 11]);
+        m.cpu_write(0xB003, 0x22); // mode 2: 1KB low half, 2KB high half
+        assert_eq!(pages(&mut m), [2, 5, 8, 11, 12, 13, 14, 15]);
+        m.cpu_write(0xB003, 0x03); // mode 3, P=0
+        assert_eq!(pages(&mut m), [2, 5, 8, 11, 12, 12, 15, 15]);
+    }
+
+    #[test]
+    fn rom_nametables() {
+        let mut m = vrc6();
+        m.cpu_write(0xE000, 9); // R4
+        m.cpu_write(0xE001, 10); // R5
+        m.cpu_write(0xE002, 13); // R6
+        m.cpu_write(0xE003, 14); // R7
+        m.cpu_write(0xB003, 0x11); // mode 1, N=1: four-screen from R4-R7
+        assert_eq!(m.nt_target(0x2000), NtTarget::Cart);
+        let nts: Vec<u8> = [0x2000, 0x2400, 0x2800, 0x2C00]
+            .iter()
+            .map(|&a| m.ppu_read(a))
+            .collect();
+        assert_eq!(nts, [9, 10, 13, 14]);
+        m.cpu_write(0xB003, 0x34); // mode 0, P=1, N=1, MM=1: R6/R7 pairs
+        let nts: Vec<u8> = [0x2000, 0x2400, 0x2800, 0x2C00]
+            .iter()
+            .map(|&a| m.ppu_read(a))
+            .collect();
+        assert_eq!(nts, [12, 14, 13, 15]);
+    }
+
+    #[test]
+    fn prg_ram_needs_enable_bit() {
+        let mut m = vrc6();
+        m.cpu_write(0x6000, 0x55);
+        assert_eq!(m.prg_ram_read(0x6000), None, "disabled at power-on");
+        m.cpu_write(0xB003, 0xA0);
+        m.cpu_write(0x6000, 0x55);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x55));
+        m.cpu_write(0xB003, 0x20);
+        assert_eq!(m.prg_ram_read(0x6000), None);
+        m.cpu_write(0x7FFF, 1); // ignored while disabled
+        m.cpu_write(0xB003, 0xA0);
+        assert_eq!(m.prg_ram_read(0x7FFF), Some(0));
+    }
+
+    #[test]
+    fn legacy_savestate_keeps_its_mirroring() {
+        let mut m = vrc6();
+        m.cpu_write(0xB003, 0x24);
+        let mut state: serde_json::Value = serde_json::from_slice(&m.save_state()).unwrap();
+        // States from before $B003 was modelled: no ppu_mode, mirroring set.
+        state.as_object_mut().unwrap().remove("ppu_mode");
+        state["mirroring"] = serde_json::json!("Horizontal");
+        let mut restored = vrc6();
+        restored
+            .load_state(&serde_json::to_vec(&state).unwrap())
+            .unwrap();
+        assert_eq!(restored.mirroring(), Mirroring::Horizontal);
+        restored.cpu_write(0x6000, 7);
+        assert_eq!(restored.prg_ram_read(0x6000), Some(7), "RAM stays usable");
     }
 
     #[test]
