@@ -237,6 +237,16 @@ pub trait Mapper {
     /// that track. No-op for real boards.
     fn nsf_select(&mut self, _song: usize) {}
 
+    /// Whether the board carries a speech chip whose recordings the host
+    /// must supply (see [`Mapper::set_speech_samples`]).
+    fn has_speech(&self) -> bool {
+        false
+    }
+    /// Supply the speech chip's recordings, which live in an undumped mask
+    /// ROM: mono clips in -1..1 at `_sample_rate`, indexed by the chip's
+    /// sample number (`None` = not available). No-op for other boards.
+    fn set_speech_samples(&mut self, _samples: Vec<Option<Vec<f32>>>, _sample_rate: u32) {}
+
     /// Serialize the mapper's full state (banking registers, IRQ counters,
     /// PRG/CHR RAM, expansion audio) for a savestate. Implemented per mapper
     /// via [`impl_mapper_savestate!`]; the bytes are opaque JSON tied to the

@@ -1,3 +1,4 @@
+use super::jaleco_latch::SpeechPlayer;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -16,10 +17,14 @@ use serde::{Deserialize, Serialize};
 /// $F000        IRQ acknowledge + reload counter
 /// $F001        [.... SSSE] E = IRQ enable, S = counter width (also acks)
 /// $F002        [.... ..MM] mirroring: 0 H, 1 V, 2 1ScA, 3 1ScB
-/// $F003        uPD7756 speech control (not emulated)
+/// $F003        [.NNN NNSR] uPD7756 speech: R=0 holds the chip in reset
+///              (stops it); S rising (with R=1) starts sample NNNNN
 /// ```
 /// Games: Pizza Pop!, Ninja Jajamaru: Ginga Daisakusen, Plasma Ball,
 /// The Lord of King, Saiyuuki World 2.
+///
+/// The speech chip's recordings are in its undumped mask ROM; playback uses
+/// host-supplied clips (see [`SpeechPlayer`]).
 #[derive(Serialize, Deserialize)]
 pub struct JalecoSs88006 {
     #[serde(skip)]
@@ -39,6 +44,11 @@ pub struct JalecoSs88006 {
     irq_mask: u16,
     irq_enabled: bool,
     irq_line: bool,
+    #[serde(default)]
+    speech: SpeechPlayer,
+    /// Last $F003 value, for the start bit's rising edge.
+    #[serde(default)]
+    speech_ctrl: u8,
 }
 
 impl JalecoSs88006 {
@@ -61,6 +71,8 @@ impl JalecoSs88006 {
             irq_mask: 0xFFFF,
             irq_enabled: false,
             irq_line: false,
+            speech: SpeechPlayer::default(),
+            speech_ctrl: 0,
         }
     }
 
@@ -92,7 +104,33 @@ fn set_nibble(reg: &mut u8, val: u8, high: bool) {
 }
 
 impl Mapper for JalecoSs88006 {
-    crate::impl_mapper_savestate!(chr, prg_ram);
+    fn save_state(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("serialize mapper state")
+    }
+
+    // `impl_mapper_savestate!` plus carrying the host-supplied speech clips
+    // over (they are not part of the state).
+    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
+        let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        if new.chr.len() != self.chr.len() {
+            return Err(format!(
+                "savestate chr is {} bytes; this ROM uses {}",
+                new.chr.len(),
+                self.chr.len()
+            ));
+        }
+        if new.prg_ram.len() != self.prg_ram.len() {
+            return Err(format!(
+                "savestate prg_ram is {} bytes; this ROM uses {}",
+                new.prg_ram.len(),
+                self.prg_ram.len()
+            ));
+        }
+        new.prg = std::mem::take(&mut self.prg);
+        new.speech.adopt_clips_from(&mut self.speech);
+        *self = new;
+        Ok(())
+    }
 
     fn set_ram_sizes(&mut self, prg_ram: usize, chr_ram: usize) {
         if prg_ram > 0 {
@@ -158,6 +196,14 @@ impl Mapper for JalecoSs88006 {
                     0xFFFF
                 };
             }
+            0xF003 => {
+                if val & 1 == 0 {
+                    self.speech.stop();
+                } else if val & 2 != 0 && self.speech_ctrl & 2 == 0 {
+                    self.speech.start(((val >> 2) & 0x1F) as usize);
+                }
+                self.speech_ctrl = val;
+            }
             0xF002 if !self.four_screen => {
                 self.mirroring = match val & 3 {
                     0 => Mirroring::Horizontal,
@@ -202,7 +248,20 @@ impl Mapper for JalecoSs88006 {
         self.irq_line
     }
 
+    fn audio_sample(&self) -> f32 {
+        self.speech.sample()
+    }
+
+    fn has_speech(&self) -> bool {
+        true
+    }
+
+    fn set_speech_samples(&mut self, samples: Vec<Option<Vec<f32>>>, sample_rate: u32) {
+        self.speech.set_samples(samples, sample_rate);
+    }
+
     fn cpu_clock(&mut self) {
+        self.speech.clock();
         if !self.irq_enabled {
             return;
         }
@@ -299,5 +358,36 @@ mod tests {
         assert_eq!(m.mirroring(), Mirroring::Horizontal);
         m.cpu_write(0xF002, 3);
         assert_eq!(m.mirroring(), Mirroring::SingleScreenHi);
+    }
+
+    #[test]
+    fn speech_start_edge_reset_and_savestate() {
+        use super::super::jaleco_latch::SPEECH_GAIN;
+        let mut m = ss();
+        assert!(m.has_speech());
+        let clips: Vec<Option<Vec<f32>>> =
+            (0..32).map(|n| Some(vec![n as f32 / 40.0; 4000])).collect();
+        m.set_speech_samples(clips, 8000);
+        // R=1, S rising, sample 5.
+        m.cpu_write(0xF003, (5 << 2) | 1);
+        m.cpu_write(0xF003, (5 << 2) | 3);
+        m.cpu_clock();
+        assert!((m.audio_sample() - 5.0 / 40.0 * SPEECH_GAIN).abs() < 1e-6);
+        // Holding S high doesn't retrigger; a new edge switches sample.
+        m.cpu_write(0xF003, (9 << 2) | 3);
+        m.cpu_clock();
+        assert!((m.audio_sample() - 5.0 / 40.0 * SPEECH_GAIN).abs() < 1e-6);
+        m.cpu_write(0xF003, (9 << 2) | 1);
+        m.cpu_write(0xF003, (9 << 2) | 3);
+        m.cpu_clock();
+        assert!((m.audio_sample() - 9.0 / 40.0 * SPEECH_GAIN).abs() < 1e-6);
+        // Savestate keeps the position, not the clips.
+        let state = m.save_state();
+        assert!(!String::from_utf8_lossy(&state).contains("samples"));
+        m.cpu_write(0xF003, 0); // reset stops it
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0);
+        m.load_state(&state).unwrap();
+        assert!((m.audio_sample() - 9.0 / 40.0 * SPEECH_GAIN).abs() < 1e-6);
     }
 }

@@ -111,6 +111,21 @@ impl Nes {
         })
     }
 
+    /// Whether the cartridge has a speech chip (Jaleco uPD7755/uPD7756)
+    /// whose recordings the host should supply with
+    /// [`Nes::set_speech_samples`]; without them the speech is silent.
+    pub fn wants_speech_samples(&self) -> bool {
+        self.cpu.bus.cart.has_speech()
+    }
+
+    /// Supply the speech chip's recordings: mono clips in -1..1 at
+    /// `sample_rate`, indexed by the chip's sample number (`None` = missing).
+    /// Host data, not machine state: keep them across savestate loads by
+    /// supplying them once after building the machine.
+    pub fn set_speech_samples(&mut self, samples: Vec<Option<Vec<f32>>>, sample_rate: u32) {
+        self.cpu.bus.cart.set_speech_samples(samples, sample_rate);
+    }
+
     /// NSF metadata (title, song count, current song) when an NSF is loaded.
     pub fn nsf_info(&self) -> Option<NsfInfo> {
         self.cpu.bus.cart.nsf_info()

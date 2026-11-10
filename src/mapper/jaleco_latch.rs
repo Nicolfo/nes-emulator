@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// - **86 (JF-13)**: `$6000-$6FFF [.CPP ..CC]`: 32KB PRG bank `PP`, 8KB CHR
 ///   bank `C..CC` (bit 6 is CHR bit 2). $7000-$7FFF drives the uPD7756
-///   speech chip (not emulated). Moero!! Pro Yakyuu, Argus (J).
+///   speech chip: `[..RS NNNN]` - a write with R=1 and S=0 starts sample
+///   `NNNN`, R=0 holds the chip in reset (stops it). The chip's recordings
+///   live in its undumped mask ROM, so playback uses host-supplied clips
+///   (see [`SpeechPlayer`]). Moero!! Pro Yakyuu, Argus (J).
 /// - **87 (J87, also Konami/Taito)**: `$6000-$7FFF [.... ..LH]`: 8KB CHR bank
 ///   with the two bits swapped (`HL`). PRG is fixed (NROM). City Connection
 ///   (J), The Goonies (J), Argus, Hyper Olympic.
@@ -21,6 +24,89 @@ pub struct JalecoLatch {
     prg_bank: u8,
     chr_bank: u8,
     mirroring: Mirroring,
+    #[serde(default)]
+    speech: SpeechPlayer,
+}
+
+/// NTSC CPU clock, the rate `SpeechPlayer::clock` is called at.
+const CPU_HZ: f64 = 1_789_773.0;
+/// Speech output level relative to the APU's ~1.0 full scale.
+pub(crate) const SPEECH_GAIN: f32 = 0.35;
+
+/// Playback of the NEC uPD7755/uPD7756 ADPCM speech chips on Jaleco boards.
+///
+/// The chips decode recordings from an internal mask ROM that iNES dumps
+/// don't include, so - like other emulators - this plays host-supplied
+/// recordings instead: one clip per sample number, set via
+/// [`Mapper::set_speech_samples`]. The clips are host data, not machine
+/// state: savestates keep only the playback position, and the live clips
+/// carry over a restore. Without clips the chip is silent.
+#[derive(Serialize, Deserialize, Default)]
+pub(crate) struct SpeechPlayer {
+    #[serde(skip)]
+    samples: Vec<Option<Vec<f32>>>,
+    /// Clip samples advanced per CPU cycle.
+    #[serde(skip)]
+    step: f64,
+    /// Sample number playing, if any.
+    playing: Option<usize>,
+    /// Position in the clip, in clip samples.
+    pos: f64,
+}
+
+impl SpeechPlayer {
+    pub(crate) fn set_samples(&mut self, samples: Vec<Option<Vec<f32>>>, sample_rate: u32) {
+        self.samples = samples;
+        self.step = sample_rate as f64 / CPU_HZ;
+    }
+
+    /// Start sample `index` from the beginning, cutting any current one.
+    pub(crate) fn start(&mut self, index: usize) {
+        self.playing = Some(index);
+        self.pos = 0.0;
+    }
+
+    pub(crate) fn stop(&mut self) {
+        self.playing = None;
+        self.pos = 0.0;
+    }
+
+    /// Whether a clip is currently sounding (the chip's BUSY output; no
+    /// emulated board wires it to a CPU-readable register).
+    #[cfg(test)]
+    pub(crate) fn busy(&self) -> bool {
+        self.current().is_some()
+    }
+
+    fn current(&self) -> Option<&[f32]> {
+        let clip = self.samples.get(self.playing?)?.as_deref()?;
+        // A hand-edited state may carry a NaN/negative position.
+        (self.pos >= 0.0 && (self.pos as usize) < clip.len()).then_some(clip)
+    }
+
+    /// Advance one CPU cycle.
+    pub(crate) fn clock(&mut self) {
+        if self.playing.is_none() {
+            return;
+        }
+        self.pos += self.step;
+        if self.current().is_none() {
+            self.stop();
+        }
+    }
+
+    pub(crate) fn sample(&self) -> f32 {
+        self.current().map_or(0.0, |clip| {
+            clip[self.pos as usize].clamp(-1.0, 1.0) * SPEECH_GAIN
+        })
+    }
+
+    /// Carry the host-supplied clips over to a state restored from a
+    /// savestate (they are not part of it).
+    pub(crate) fn adopt_clips_from(&mut self, live: &mut SpeechPlayer) {
+        self.samples = std::mem::take(&mut live.samples);
+        self.step = live.step;
+    }
 }
 
 impl JalecoLatch {
@@ -35,6 +121,7 @@ impl JalecoLatch {
             prg_bank: 0,
             chr_bank: 0,
             mirroring,
+            speech: SpeechPlayer::default(),
         }
     }
 
@@ -45,7 +132,26 @@ impl JalecoLatch {
 }
 
 impl Mapper for JalecoLatch {
-    crate::impl_mapper_savestate!(chr);
+    fn save_state(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("serialize mapper state")
+    }
+
+    // `impl_mapper_savestate!(chr)`, plus carrying the host-supplied speech
+    // clips over (they are not part of the state).
+    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
+        let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        if new.chr.len() != self.chr.len() {
+            return Err(format!(
+                "savestate chr is {} bytes; this ROM uses {}",
+                new.chr.len(),
+                self.chr.len()
+            ));
+        }
+        new.prg = std::mem::take(&mut self.prg);
+        new.speech.adopt_clips_from(&mut self.speech);
+        *self = new;
+        Ok(())
+    }
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
@@ -68,6 +174,13 @@ impl Mapper for JalecoLatch {
                 self.prg_bank = (val >> 4) & 3;
                 self.chr_bank = (val & 3) | ((val >> 4) & 4);
             }
+            (86, 0x7000..=0x7FFF) => match val & 0x30 {
+                // R (bit 5) high with S (bit 4) low starts sample NNNN.
+                0x20 => self.speech.start((val & 0x0F) as usize),
+                // R low holds the chip in reset.
+                0x00 | 0x10 => self.speech.stop(),
+                _ => {}
+            },
             (87, 0x6000..=0x7FFF) => {
                 self.chr_bank = ((val & 1) << 1) | ((val >> 1) & 1);
             }
@@ -93,6 +206,24 @@ impl Mapper for JalecoLatch {
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
+
+    fn cpu_clock(&mut self) {
+        self.speech.clock();
+    }
+
+    fn audio_sample(&self) -> f32 {
+        self.speech.sample()
+    }
+
+    fn has_speech(&self) -> bool {
+        self.mapper_id == 86
+    }
+
+    fn set_speech_samples(&mut self, samples: Vec<Option<Vec<f32>>>, sample_rate: u32) {
+        if self.mapper_id == 86 {
+            self.speech.set_samples(samples, sample_rate);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +244,87 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 5);
         m.cpu_write(0x7000, 0xFF); // speech port: no banking effect
         assert_eq!(m.cpu_read(0x8000), 2);
+    }
+
+    /// Clip `n` is a constant level of `(n + 1) / 10` lasting `len` samples;
+    /// clip 2 is missing.
+    pub(crate) fn clips(len: usize) -> Vec<Option<Vec<f32>>> {
+        (0..4)
+            .map(|n| (n != 2).then(|| vec![(n + 1) as f32 / 10.0; len]))
+            .collect()
+    }
+
+    #[test]
+    fn jf13_speech_trigger_plays_mixes_and_ends() {
+        let mut m = board(86);
+        assert!(m.has_speech());
+        m.cpu_write(0x7000, 0x20 | 1); // start sample 1
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0, "no clips loaded: silent");
+        // 8 kHz clip of 80 samples = 10 ms = ~17900 CPU cycles.
+        m.set_speech_samples(clips(80), 8000);
+        m.cpu_write(0x7000, 0x20 | 1);
+        m.cpu_clock();
+        assert!((m.audio_sample() - 0.2 * SPEECH_GAIN).abs() < 1e-6);
+        assert!(m.speech.busy());
+        for _ in 0..18_000 {
+            m.cpu_clock();
+        }
+        assert_eq!(m.audio_sample(), 0.0, "clip finished");
+        assert!(!m.speech.busy());
+        // A missing clip and an out-of-range number are silent, not panics.
+        m.cpu_write(0x7000, 0x20 | 2);
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0);
+        m.cpu_write(0x7000, 0x20 | 0x0F);
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0);
+    }
+
+    #[test]
+    fn jf13_new_start_or_reset_cuts_playback() {
+        let mut m = board(86);
+        m.set_speech_samples(clips(8000), 8000);
+        m.cpu_write(0x7000, 0x20); // sample 0
+        m.cpu_clock();
+        assert!((m.audio_sample() - 0.1 * SPEECH_GAIN).abs() < 1e-6);
+        m.cpu_write(0x7000, 0x20 | 3); // a new start cuts to sample 3
+        m.cpu_clock();
+        assert!((m.audio_sample() - 0.4 * SPEECH_GAIN).abs() < 1e-6);
+        m.cpu_write(0x7000, 0x00); // reset
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0);
+    }
+
+    #[test]
+    fn jf13_savestate_keeps_position_not_clips() {
+        let mut m = board(86);
+        m.set_speech_samples(clips(8000), 8000);
+        m.cpu_write(0x7000, 0x20 | 1);
+        for _ in 0..1000 {
+            m.cpu_clock();
+        }
+        let state = m.save_state();
+        let text = String::from_utf8(state.clone()).unwrap();
+        assert!(
+            !text.contains("samples"),
+            "clip data must not be serialized"
+        );
+        m.cpu_write(0x7000, 0x00);
+        m.load_state(&state).unwrap();
+        assert!(m.speech.busy(), "playback resumes with the live clips");
+        assert!((m.audio_sample() - 0.2 * SPEECH_GAIN).abs() < 1e-6);
+    }
+
+    #[test]
+    fn only_jf13_has_speech() {
+        assert!(!board(87).has_speech());
+        assert!(!board(140).has_speech());
+        let mut m = board(87);
+        m.set_speech_samples(clips(10), 8000);
+        m.cpu_write(0x7000, 0x21);
+        m.cpu_clock();
+        assert_eq!(m.audio_sample(), 0.0);
     }
 
     #[test]

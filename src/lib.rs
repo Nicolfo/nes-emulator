@@ -25,4 +25,5 @@ pub mod palette;
 pub mod ppu;
 pub mod rewind;
 pub mod savestate;
+pub mod wav;
 pub mod zapper;
