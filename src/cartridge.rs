@@ -5,7 +5,7 @@ use crate::mapper::{
     Mapper, Mirroring, Mmc1, Mmc2, Mmc3, Mmc3Board, Mmc4, Mmc5, N163, Namco108, Namco108Board,
     Namco175340, Nrom, Quattro, Rambo1, RumbleStation, Sunsoft1, Sunsoft2, Sunsoft3, Sunsoft4,
     TaitoTc0690, TaitoX1005, TaitoX1017, Txsrom, Unrom180, Unrom512, Uxrom, Vrc1, Vrc3, Vrc4, Vrc6,
-    Vrc7,
+    Vrc7, VsUnisystem,
 };
 
 /// TV system the cartridge targets; drives CPU/PPU clock ratio, frame
@@ -218,6 +218,7 @@ pub fn load_rom(data: &[u8]) -> Result<(Box<dyn Mapper>, Region, bool), String> 
         92 => Box::new(JalecoJf17::new_high_window(prg, chr, mirroring)),
         94 => Box::new(Latch::new(LatchKind::Un1rom, prg, chr, mirroring)),
         97 => Box::new(IremTamS1::new(prg, chr, mirroring)),
+        99 => Box::new(VsUnisystem::new(prg, chr, mirroring)),
         107 => Box::new(Latch::new(LatchKind::MagicDragon, prg, chr, mirroring)),
         111 => Box::new(Gtrom::new(prg, chr)), // four-screen board NT RAM
         113 => Box::new(Latch::new(LatchKind::Nina113, prg, chr, mirroring)),

@@ -31,7 +31,13 @@ impl Nes {
         }
         let (cart, header_region, battery) = load_rom(rom)?;
         let region = region.unwrap_or(header_region);
-        let mut cpu = Cpu::new(Bus::with_region(cart, region));
+        let mut bus = Bus::with_region(cart, region);
+        // Vs. System cabinet: RGB PPU and the coin-op I/O on $4016/$4017.
+        if let Some(ppu) = crate::vs::detect(rom) {
+            bus.ppu.set_vs_ppu(Some(ppu));
+            bus.vs = Some(crate::vs::VsIo::default());
+        }
+        let mut cpu = Cpu::new(bus);
         cpu.reset();
         Ok(Nes {
             cpu,
@@ -304,6 +310,28 @@ impl Nes {
         self.cpu.bus.apu.take_samples()
     }
 
+    /// Whether the loaded ROM is a Vs. System arcade dump.
+    pub fn is_vs_system(&self) -> bool {
+        self.cpu.bus.vs.is_some()
+    }
+
+    /// Vs. System coin slots and service button, as held levels. The host
+    /// pulses a coin for a few frames per insert. Ignored off Vs.
+    pub fn set_vs_inputs(&mut self, coin1: bool, coin2: bool, service: bool) {
+        if let Some(vs) = &mut self.cpu.bus.vs {
+            vs.coin1 = coin1;
+            vs.coin2 = coin2;
+            vs.service = service;
+        }
+    }
+
+    /// Vs. System DIP switches 1-8 (bit 0 = switch 1). Ignored off Vs.
+    pub fn set_vs_dip(&mut self, dip: u8) {
+        if let Some(vs) = &mut self.cpu.bus.vs {
+            vs.dip = dip;
+        }
+    }
+
     /// Choose what is plugged into the controller ports.
     pub fn set_input_device(&mut self, device: InputDevice) {
         self.cpu.bus.set_input_device(device);
@@ -482,6 +510,57 @@ mod tests {
         nes2[7] = 0x08;
         nes2[12] = 3;
         assert_eq!(Nes::new(&nes2).unwrap().region(), Region::Dendy);
+    }
+
+    /// Vs. UniSystem (mapper 99) image: 32KB PRG, 16KB CHR, iNES Vs. bit.
+    fn vs_rom() -> Vec<u8> {
+        let mut data = vec![0u8; 16 + 0x8000 + 0x4000];
+        data[0..4].copy_from_slice(b"NES");
+        data[4] = 2;
+        data[5] = 2;
+        data[6] = 0x38; // mapper 99 low nibble 3, four-screen
+        data[7] = 0x61; // mapper 99 high nibble 6, Vs. bit
+        data[16..16 + 0x8000].fill(0xEA);
+        data[16 + 0x7FFC] = 0x00;
+        data[16 + 0x7FFD] = 0x80;
+        // CHR bank 0 = $00, bank 1 = $11.
+        data[16 + 0x8000 + 0x2000..].fill(0x11);
+        data
+    }
+
+    #[test]
+    fn vs_system_io_ports_and_mapper_99() {
+        let mut nes = Nes::new(&vs_rom()).unwrap();
+        assert!(nes.is_vs_system());
+        nes.set_vs_dip(0b1100_0101);
+        nes.set_vs_inputs(true, false, true);
+        let bus = &mut nes.cpu.bus;
+        let p1 = bus.read(0x4016);
+        assert_eq!(p1 & 0x7E, 0x04 | (0b01 << 3) | 0x20, "service, DIP1, coin1");
+        assert_eq!(bus.read(0x4017) & 0xFC, 0b1100_0100, "DIP 3-8");
+        // $4016 bit 2 selects CHR bank 1.
+        assert_eq!(bus.cart.ppu_read(0x0000), 0x00);
+        bus.write(0x4016, 0x04);
+        assert_eq!(bus.cart.ppu_read(0x0000), 0x11);
+        // Home-console ROMs see none of it.
+        let mut home = Nes::new(&nrom_filled(0xEA)).unwrap();
+        assert!(!home.is_vs_system());
+        home.set_vs_inputs(true, true, true); // no-op
+        assert!(home.cpu.bus.vs.is_none());
+    }
+
+    #[test]
+    fn rc2c05_swaps_ctrl_and_mask_and_reports_its_id() {
+        let mut data = vs_rom();
+        data[7] = 0x69; // NES 2.0, console type Vs.
+        data[6] = 0x38;
+        data[13] = 0x09; // RC2C05-02
+        let mut nes = Nes::new(&data).unwrap();
+        let bus = &mut nes.cpu.bus;
+        assert_eq!(bus.read(0x2002) & 0x3F, 0x3D);
+        // A write to $2001 lands in PPUCTRL: NMI enable is bit 7.
+        bus.write(0x2001, 0x80);
+        assert!(bus.ppu.ctrl & 0x80 != 0);
     }
 
     #[test]

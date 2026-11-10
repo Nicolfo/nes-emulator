@@ -4,7 +4,7 @@
 
 A NES (Nintendo Entertainment System) emulator written in Rust. Video, audio and
 input, NTSC, PAL and Dendy machines (auto-detected from the ROM header), the
-Famicom Disk System (with its wavetable audio), NSF music playback, and 88 mappers
+Famicom Disk System (with its wavetable audio), NSF music playback, Vs. System arcade boards, and 89 mappers
 - with expansion audio for the MMC5, VRC6, VRC7, N163 and Sunsoft 5B - covering games
 such as Super Mario Bros. 1–3, Battletoads, Mega Man, Punch-Out!!, Gimmick!,
 Akumajou Densetsu, Lagrange Point and Castlevania III. See [docs/mappers.md](docs/mappers.md)

@@ -49,6 +49,7 @@ mod vrc3;
 mod vrc4;
 mod vrc6;
 mod vrc7;
+mod vs_unisystem;
 
 pub use action53::Action53;
 pub use axrom::Axrom;
@@ -99,6 +100,7 @@ pub use vrc3::Vrc3;
 pub use vrc4::Vrc4;
 pub use vrc6::Vrc6;
 pub use vrc7::Vrc7;
+pub use vs_unisystem::VsUnisystem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Mirroring {
@@ -185,6 +187,9 @@ pub trait Mapper {
     /// Observe CPU writes to the PPU registers ($2000-$3FFF); the MMC5
     /// snoops $2000/$2001 for sprite size and rendering state.
     fn cpu_bus_write(&mut self, _addr: u16, _val: u8) {}
+    /// Vs. System: observe $4016 writes (the controller strobe register),
+    /// whose bit 2 drives the Vs. UniSystem board's bank select.
+    fn vs_io_write(&mut self, _val: u8) {}
 
     /// Bytes persisted to the `.sav` file (when the header's battery bit is
     /// set). Defaults to the PRG RAM; flash-saving boards return their PRG

@@ -177,6 +177,29 @@ That layout is what `prg_ram` exposes, so disk saves persist through the same
 restore). Side changes go through `Nes::fds_insert`, which leaves the drive
 empty for about a second so the BIOS notices the swap.
 
+### Vs. System
+
+Nintendo's Vs. UniSystem arcade boards are NES hardware with an RGB PPU and
+coin-op I/O ([`src/vs.rs`](../../src/vs.rs)). `vs::detect` reads the header:
+NES 2.0 console type 1 with byte 13 naming the PPU, or the plain iNES flags7
+bit 0, which is trusted only when bytes 12-15 are clean and defaults to the
+RP2C03 since iNES can't name the PPU. Any mapper can be a Vs. game (1, 4, 206
+and others); mapper 99 is the dedicated discrete board.
+
+- **Palette.** `Ppu::set_vs_ppu` swaps the composite NES palette for the
+  chip's colour ROM: 2C03 / RC2C03B, or one of the four scrambled RP2C04
+  orders (canonical ROM + per-variant lookup table, data from Nintendulator).
+  On these RGB PPUs the $2001 emphasis bits force a channel to full.
+- **RC2C05.** $2000/$2001 are swapped and $2002's low bits return the chip
+  ID ($1B, $3D or $1C).
+- **I/O.** `Bus::vs` adds the service button (bit 2), DIP 1-2 (bits 3-4) and
+  coins (bits 5-6) to $4016 reads, and DIP 3-8 to $4017 bits 2-7. A $4016
+  write also reaches `Mapper::vs_io_write`, where mapper 99 takes its bank
+  bit. The host drives them via `Nes::set_vs_inputs` / `Nes::set_vs_dip`.
+
+Not emulated: the Vs. DualSystem (two linked boards), and the RBI Baseball,
+TKO Boxing and Super Xevious protection chips.
+
 ### Where to look
 
 | You want to understand… | Look at |
@@ -187,3 +210,4 @@ empty for about a second so the BIOS notices the swap.
 | The simplest concrete mapper | `src/mapper/nrom.rs` |
 | The full mapper list | [docs/mappers.md](../mappers.md) |
 | Famicom Disk System (drive, timer, audio) | `src/mapper/fds.rs`, `src/mapper/fds_audio.rs` |
+| Vs. System (palettes, coin I/O, mapper 99) | `src/vs.rs`, `src/mapper/vs_unisystem.rs` |

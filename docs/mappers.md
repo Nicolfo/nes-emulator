@@ -62,6 +62,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 94 | UN1ROM | UxROM with the bank in bits 2-4 | Senjou no Ookami (Commando J) |
 | 95 | Namco 3425 | Namco 108 whose CHR bit 5 drives the nametable select | Dragon Buster |
 | 97 | Irem TAM-S1 | Last 16KB fixed at $8000, switchable 16KB at $C000, mirroring select | Kaiketsu Yanchamaru |
+| 99 | Vs. UniSystem | $4016 bit 2 selects the 8KB CHR bank (and Vs. Gumshoe's PRG bank at $8000); 2KB work RAM | Vs. Super Mario Bros., Vs. Excitebike, Vs. Golf, Vs. Gumshoe |
 | 107 | Magic Dragon | One byte selects both 32KB PRG and 8KB CHR | Magic Dragon |
 | 111 | GTROM / Cheapocabra | 32KB PRG banks, two 8KB CHR RAM banks, 8KB four-screen nametable RAM in two pages; SST39SF040 flash self-saving (persisted as `.sav` with the battery bit) | Membler Industries homebrew |
 | 113 | NINA-03/06 multicart (Sachen/HES) | Mapper 79 with wider PRG/CHR banks and a mirroring bit | Mind Blower Pak, Papillon Gals |
