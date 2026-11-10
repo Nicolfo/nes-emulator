@@ -67,6 +67,7 @@ Players 3 and 4 reach the game only with INPUT set to FOUR SCORE.
 | Mute / unmute | F6 |
 | Load state | F7 |
 | Flip FDS disk side | F8 |
+| Vs. System coin 1 / coin 2 / service | F1 / F2 / F4 |
 | Fast-forward (hold) | Tab |
 | Rewind (hold) | Backspace |
 | Fullscreen | F11 / double-click |
@@ -97,6 +98,13 @@ to the executable. Disk sides switch automatically when the game asks for
 one (OPTIONS > FDS AUTO DISK); F8 flips to the next side by hand. Disk writes
 are saved to `<image>.sav`. **NSF** music files open a player screen: Left/Right change
 tracks.
+
+**Vs. System** arcade dumps (iNES Vs. flag / NES 2.0 console type 1) run with
+their RGB PPU palettes and coin-op inputs: F1/F2 insert coins, F4 is the
+service button, and OPTIONS > VS DIP 1-8 sets the cabinet's DIP switches.
+**Speech**: the Jaleco boards' uPD7756 voice clips aren't in ROM dumps; drop
+recordings named `00.wav`-`31.wav` into a `<rom name>.samples/` folder next to
+the ROM to hear them (Moero!! Pro Yakyuu, Ninja Jajamaru: Ginga Daisakusen).
 
 ## Architecture
 

@@ -143,6 +143,63 @@ struct App {
     fds_side: usize,
     /// NSF: frame_count when the current track started (play-time display).
     track_start: u64,
+    /// Vs. System: frames left on each coin slot's pulse, and the service
+    /// button (F4) held.
+    coin_frames: [u8; 2],
+    vs_service: bool,
+}
+
+/// How long a coin insert holds the coin line (frames).
+const COIN_PULSE_FRAMES: u8 = 4;
+/// Speech sample numbers the Jaleco uPD7756 boards can play.
+const SPEECH_SAMPLES: usize = 32;
+
+/// Load `<rom dir>/<rom stem>.samples/NN.wav` for a speech-chip board.
+/// Clips are resampled to the first clip's rate. Returns (samples, rate,
+/// how many were found).
+fn load_speech_samples(rom: &Path) -> (Vec<Option<Vec<f32>>>, u32, usize) {
+    let dir = rom.with_extension("samples");
+    let mut rate = 0u32;
+    let mut found = 0;
+    let samples = (0..SPEECH_SAMPLES)
+        .map(|n| {
+            let path = dir.join(format!("{n:02}.wav"));
+            let data = std::fs::read(&path).ok()?;
+            match nes_emulator::wav::parse(&data) {
+                Ok((pcm, r)) => {
+                    found += 1;
+                    if rate == 0 {
+                        rate = r;
+                    }
+                    Some(resample(&pcm, r, rate))
+                }
+                Err(e) => {
+                    eprintln!("skipping {}: {e}", path.display());
+                    None
+                }
+            }
+        })
+        .collect();
+    (samples, rate.max(1), found)
+}
+
+/// Linear resample `pcm` from `from` Hz to `to` Hz.
+fn resample(pcm: &[f32], from: u32, to: u32) -> Vec<f32> {
+    if from == to || pcm.is_empty() || from == 0 {
+        return pcm.to_vec();
+    }
+    let n = (pcm.len() as u64 * to as u64 / from as u64).max(1) as usize;
+    let step = from as f64 / to as f64;
+    (0..n)
+        .map(|i| {
+            let pos = i as f64 * step;
+            let j = pos as usize;
+            let frac = (pos - j as f64) as f32;
+            let a = pcm[j.min(pcm.len() - 1)];
+            let b = pcm[(j + 1).min(pcm.len() - 1)];
+            a + (b - a) * frac
+        })
+        .collect()
 }
 
 /// Max gap between two left clicks to count as a double-click.
@@ -254,6 +311,7 @@ impl App {
         self.rewinding = false;
         self.zapper_trigger = false;
         self.zapper_offscreen = false;
+        self.vs_service = false;
     }
 
     /// Crosshair over the game while the Zapper is plugged in.
@@ -448,6 +506,25 @@ impl App {
         }
         nes.set_input_device(self.cfg.input_device);
         nes.fds_set_auto_insert(self.cfg.fds_auto_disk);
+        nes.set_vs_dip(self.cfg.vs_dip);
+        self.coin_frames = [0, 0];
+        self.vs_service = false;
+        let mut notice = None;
+        if nes.wants_speech_samples() {
+            let (samples, rate, found) = load_speech_samples(path);
+            if found > 0 {
+                nes.set_speech_samples(samples, rate);
+                notice = Some(format!("SPEECH: {found} SAMPLES"));
+            } else {
+                eprintln!(
+                    "speech chip present; put NN.wav clips in {} to hear it",
+                    path.with_extension("samples").display()
+                );
+            }
+        }
+        if nes.is_vs_system() {
+            notice = Some("VS SYSTEM: F1/F2 COIN, F4 SERVICE".into());
+        }
         self.sav_path = Some(restore_battery_ram(&mut nes, path));
         self.rom_path = Some(path.to_path_buf());
         self.nes = Some(nes);
@@ -467,6 +544,9 @@ impl App {
             w.set_title(&format!("NES Emulator - {name}"));
         }
         self.start_running();
+        if let Some(msg) = notice {
+            self.flash(msg);
+        }
     }
 
     /// Rebuild a running cartridge game so a REGION change takes effect now.
@@ -788,6 +868,13 @@ impl App {
                 self.restart_for_region();
                 return;
             }
+            SetRow::VsDip => {
+                // Left/right step the 8-bit value; Enter counts up.
+                self.cfg.vs_dip = self.cfg.vs_dip.wrapping_add(delta as u8);
+                if let Some(nes) = &mut self.nes {
+                    nes.set_vs_dip(self.cfg.vs_dip);
+                }
+            }
             SetRow::FdsAuto => {
                 self.cfg.fds_auto_disk = !self.cfg.fds_auto_disk;
                 if let Some(nes) = &mut self.nes {
@@ -918,6 +1005,17 @@ impl App {
                 }
                 return;
             }
+            // Vs. System coin slots and service button (no-ops elsewhere).
+            KeyCode::F1 | KeyCode::F2 => {
+                if pressed {
+                    self.coin_frames[(code == KeyCode::F2) as usize] = COIN_PULSE_FRAMES;
+                }
+                return;
+            }
+            KeyCode::F4 => {
+                self.vs_service = pressed;
+                return;
+            }
             // F8 flips the FDS disk to the next side (eject, then insert).
             KeyCode::F8 => {
                 if pressed && let Some(nes) = &mut self.nes {
@@ -1038,7 +1136,13 @@ impl App {
             REWIND_INTERVAL
         };
         let capture = self.cfg.rewind && self.frame_count.is_multiple_of(interval);
+        let coins = [self.coin_frames[0] > 0, self.coin_frames[1] > 0];
+        for c in &mut self.coin_frames {
+            *c = c.saturating_sub(1);
+        }
+        let service = self.vs_service;
         let nes = self.nes.as_mut().expect("emulate_frame needs a game");
+        nes.set_vs_inputs(coins[0], coins[1], service);
         nes.set_buttons(inputs);
         nes.set_zapper(aim, trigger);
         if capture {
@@ -1467,6 +1571,8 @@ fn main() {
         osd: None,
         fds_side: 0,
         track_start: 0,
+        coin_frames: [0, 0],
+        vs_service: false,
     };
     app.apply_volume();
     // optional CLI arg still works: jump straight into a ROM
@@ -1481,6 +1587,46 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resample_changes_length_and_keeps_endpoints() {
+        let pcm: Vec<f32> = (0..100).map(|i| i as f32 / 99.0).collect();
+        let up = resample(&pcm, 8000, 16000);
+        assert_eq!(up.len(), 200);
+        assert_eq!(up[0], 0.0);
+        assert!((up[199] - 1.0).abs() < 0.02);
+        assert_eq!(resample(&pcm, 8000, 8000), pcm);
+        assert!(resample(&[], 8000, 44100).is_empty());
+    }
+
+    #[test]
+    fn speech_samples_load_from_rom_samples_dir() {
+        let dir = std::env::temp_dir().join(format!("nes-speech-{}", std::process::id()));
+        let samples = dir.join("game.samples");
+        std::fs::create_dir_all(&samples).unwrap();
+        // Minimal 8-bit mono WAV: 4 frames at 8 kHz.
+        let mut wav = b"RIFF".to_vec();
+        wav.extend_from_slice(&(36u32 + 4).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&8000u32.to_le_bytes());
+        wav.extend_from_slice(&8000u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&8u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4u32.to_le_bytes());
+        wav.extend_from_slice(&[128, 255, 128, 0]);
+        std::fs::write(samples.join("03.wav"), &wav).unwrap();
+        std::fs::write(samples.join("05.wav"), b"not a wav").unwrap();
+        let (clips, rate, found) = load_speech_samples(&dir.join("game.nes"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((rate, found), (8000, 1));
+        assert_eq!(clips.len(), SPEECH_SAMPLES);
+        assert_eq!(clips[3].as_ref().map(|c| c.len()), Some(4));
+        assert!(clips[5].is_none() && clips[0].is_none());
+    }
 
     #[test]
     fn cheat_file_roundtrip() {
