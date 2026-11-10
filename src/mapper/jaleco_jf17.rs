@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +25,7 @@ use serde::{Deserialize, Serialize};
 pub struct JalecoJf17 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_bank: u8,
     chr_bank: u8,
@@ -40,7 +41,7 @@ impl JalecoJf17 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         JalecoJf17 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_bank: 0,
             chr_bank: 0,
@@ -64,7 +65,7 @@ impl Mapper for JalecoJf17 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

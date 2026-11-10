@@ -435,6 +435,67 @@ mod tests {
     }
 
     #[test]
+    fn chr_rom_stays_out_of_savestates_and_old_states_still_load() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/nestest.nes");
+        let data = std::fs::read(path).unwrap();
+        let mut nes = Nes::new(&data).unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let blob = nes.save_state().unwrap();
+        let mut doc: serde_json::Value = serde_json::from_slice(&blob).unwrap();
+        assert!(
+            doc["mapper"]["chr"].is_null(),
+            "CHR ROM must not be serialized"
+        );
+        assert!(blob.len() < 30_000, "state is {} bytes", blob.len());
+
+        for _ in 0..20 {
+            nes.run_frame();
+        }
+        let reference = nes.framebuffer().to_vec();
+
+        // The same state in the old layout: CHR ROM embedded as an array.
+        let prg_len = data[4] as usize * 0x4000;
+        let chr_rom = data[16 + prg_len..16 + prg_len + data[5] as usize * 0x2000].to_vec();
+        let mut old = doc.clone();
+        old["mapper"]["chr"] = serde_json::Value::from(chr_rom.clone());
+        let old = serde_json::to_vec(&old).unwrap();
+
+        for blob in [&blob, &old] {
+            let mut m = Nes::new(&data).unwrap();
+            m.load_state(blob).unwrap();
+            for _ in 0..20 {
+                m.run_frame();
+            }
+            assert_eq!(m.framebuffer(), reference.as_slice());
+            // Re-saving drops the redundant CHR ROM again.
+            let again: serde_json::Value =
+                serde_json::from_slice(&m.save_state().unwrap()).unwrap();
+            assert!(again["mapper"]["chr"].is_null());
+        }
+
+        // A CHR array of the wrong size is a different ROM: rejected.
+        doc["mapper"]["chr"] = serde_json::Value::from(vec![0u8; 0x1000]);
+        let wrong = serde_json::to_vec(&doc).unwrap();
+        assert!(Nes::new(&data).unwrap().load_state(&wrong).is_err());
+    }
+
+    #[test]
+    fn chr_ram_survives_savestates() {
+        // NROM with CHR RAM (CHR size 0): pattern writes must be kept.
+        let mut rom = rom(0x00);
+        rom[5] = 0;
+        rom.truncate(16 + 32 * 1024);
+        let mut nes = Nes::new(&rom).unwrap();
+        nes.cpu.bus.cart.ppu_write(0x0123, 0x5A);
+        let blob = nes.save_state().unwrap();
+        let mut m = Nes::new(&rom).unwrap();
+        m.load_state(&blob).unwrap();
+        assert_eq!(m.cpu.bus.cart.ppu_read(0x0123), 0x5A);
+    }
+
+    #[test]
     fn savestate_roundtrip_is_deterministic() {
         // Saving, diverging, then restoring must reproduce the exact same
         // machine: run the restored state forward and compare framebuffers.

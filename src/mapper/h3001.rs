@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub struct H3001 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mirroring: Mirroring,
     four_screen: bool,
@@ -48,7 +49,7 @@ impl H3001 {
         let four_screen = mirroring == Mirroring::FourScreen;
         H3001 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mirroring,
             four_screen,
@@ -104,7 +105,7 @@ impl Mapper for H3001 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

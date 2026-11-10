@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 pub struct Action53 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mirroring: Mirroring,
 
@@ -57,7 +58,7 @@ impl Action53 {
         let chr = if chr_is_ram { vec![0; 0x8000] } else { chr };
         Action53 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mirroring,
             reg_select: 0,
@@ -156,7 +157,7 @@ impl Mapper for Action53 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

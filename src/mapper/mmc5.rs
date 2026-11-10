@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring, NtTarget};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +13,7 @@ pub struct Mmc5 {
     #[serde(skip)]
     prg: Vec<u8>,
     prg_ram: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     #[serde(with = "crate::savestate::byte_array")]
     exram: [u8; 0x400],
     prg_mode: u8,
@@ -81,7 +82,7 @@ impl Mmc5 {
         Mmc5 {
             prg,
             prg_ram: vec![0; 0x10000],
-            chr,
+            chr: chr.into(),
             exram: [0; 0x400],
             prg_mode: 3,
             chr_mode: 3,

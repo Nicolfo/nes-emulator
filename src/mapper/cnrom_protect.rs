@@ -1,3 +1,4 @@
+use super::Chr;
 use super::discrete::{bank_index, chr_or_ram};
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 pub struct CnromProtect {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     submapper: u8,
     chr_enabled: bool,
@@ -26,7 +27,7 @@ impl CnromProtect {
         let (chr, chr_is_ram) = chr_or_ram(chr, 0x2000);
         CnromProtect {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             submapper,
             chr_enabled: true,
@@ -47,7 +48,7 @@ impl Mapper for CnromProtect {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

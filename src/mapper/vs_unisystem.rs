@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct VsUnisystem {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     #[serde(default)]
     chr_is_ram: bool,
     ram: Vec<u8>,
@@ -24,7 +25,7 @@ impl VsUnisystem {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         VsUnisystem {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             ram: vec![0; 0x800],
             bank_bit: false,
@@ -55,7 +56,7 @@ impl Mapper for VsUnisystem {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

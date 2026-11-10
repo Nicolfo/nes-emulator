@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct Sunsoft4 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     #[serde(default)]
     chr_is_ram: bool,
     prg_ram: Vec<u8>,
@@ -36,7 +37,7 @@ impl Sunsoft4 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Sunsoft4 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_ram: vec![0; 0x2000],
             chr_banks: [0; 4],
@@ -98,7 +99,7 @@ impl Mapper for Sunsoft4 {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring, NtTarget};
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +41,7 @@ fn prg8_offset(prg_len: usize, bank: usize, addr: u16) -> usize {
 pub struct TaitoX1005 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     ram: Vec<u8>,
     ram_enabled: bool,
@@ -58,7 +59,7 @@ impl TaitoX1005 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         TaitoX1005 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             ram: vec![0; 0x80],
             ram_enabled: false,
@@ -77,7 +78,7 @@ impl Mapper for TaitoX1005 {
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         // The 128-byte RAM is inside the chip; only CHR RAM is sizeable.
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 
@@ -167,7 +168,7 @@ impl Mapper for TaitoX1005 {
 pub struct TaitoX1017 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     ram: Vec<u8>,
     ram_enabled: [bool; 3],
@@ -187,7 +188,7 @@ impl TaitoX1017 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         TaitoX1017 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             ram: vec![0; 0x1400],
             ram_enabled: [false; 3],
@@ -217,7 +218,7 @@ impl Mapper for TaitoX1017 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

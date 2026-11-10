@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct IremLrog017 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_ram: Vec<u8>,
     prg_bank: u8,
     chr_bank: u8,
@@ -21,7 +22,7 @@ impl IremLrog017 {
         let chr = if chr.is_empty() { vec![0; 0x800] } else { chr };
         IremLrog017 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_ram: vec![0; 0x1800],
             prg_bank: 0,
             chr_bank: 0,
@@ -77,7 +78,7 @@ impl Mapper for IremLrog017 {
 pub struct IremTamS1 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_bank: u8,
     mirroring: Mirroring,
@@ -90,7 +91,7 @@ impl IremTamS1 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         IremTamS1 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_bank: 0,
             four_screen: mirroring == Mirroring::FourScreen,
@@ -104,7 +105,7 @@ impl Mapper for IremTamS1 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

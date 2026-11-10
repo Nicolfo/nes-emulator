@@ -35,7 +35,7 @@ must be captured or the restore won't be bit-exact:
   counter.
 - **Controller** - the strobe line and shift register.
 - **Cartridge / mapper** - banking registers, IRQ counters, PRG/CHR RAM, and any
-  expansion-audio state.
+  expansion-audio state (but not PRG or CHR ROM - see "The mapper boundary").
 
 ## What is deliberately left out
 
@@ -94,10 +94,22 @@ error rather than silently corrupting state.
 The PRG ROM is marked `#[serde(skip)]` in every mapper and grafted back from
 the live instance on load - the ROM is immutable and already loaded, and
 serializing up to a megabyte of it as JSON numbers dominated the state size.
-CHR still rides along (it may be RAM, and even as ROM it keeps the blob mostly
-self-describing); the macro also length-guards the resizable buffers (CHR,
-PRG RAM) so a mismatched or hand-edited state is rejected instead of panicking
-later bank math.
+CHR ROM is left out too, without each board having to say whether its CHR is
+ROM or RAM: mappers hold CHR in a [`Chr`](../../src/mapper/chr.rs), a
+copy-on-write buffer over the power-on image that marks itself dirty on the
+first mutable access. An untouched `Chr` (CHR ROM, or CHR RAM nothing has
+written yet) serializes as `null`; a written one serializes in full exactly
+like the old `Vec<u8>`, so CHR RAM is preserved. On load the macro restores
+each listed field through `StateField::restore`: a `null` CHR gets the live
+instance's power-on image grafted back, real data must match the live size.
+States written before this (with CHR ROM as a full array) still load; if the
+array equals the ROM the buffer goes clean again, so re-saving drops it. For
+SMB3 this took a snapshot from 452 KB to 37 KB and `Nes::snapshot` from
+1.7 ms to 0.15 ms, which is what rewind capture pays every other frame.
+
+The same `StateField::restore` pass length-guards the resizable buffers (CHR,
+PRG RAM, CHR RAM) so a mismatched or hand-edited state is rejected instead of
+panicking later bank math.
 
 ## Format versions
 

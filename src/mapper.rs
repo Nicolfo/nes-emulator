@@ -3,6 +3,7 @@ mod axrom;
 mod bandai74161;
 mod bandai_fcg;
 mod bnrom;
+mod chr;
 mod cnrom;
 mod cnrom_protect;
 mod codemasters;
@@ -56,6 +57,7 @@ pub use axrom::Axrom;
 pub use bandai_fcg::BandaiFcg;
 pub use bandai74161::Bandai74161;
 pub use bnrom::Bnrom;
+pub use chr::{Chr, StateField};
 pub use cnrom::Cnrom;
 pub use cnrom_protect::CnromProtect;
 pub use codemasters::Codemasters;
@@ -272,12 +274,16 @@ pub trait Mapper {
 /// of PRG ROM. `load_state` grafts the live `prg` onto the restored state.
 /// Invoke inside the `impl Mapper` block.
 ///
-/// Listing field names (`impl_mapper_savestate!(chr, prg_ram)`) makes
-/// `load_state` reject a state whose named buffers differ in length from the
-/// live instance's. `Vec`-sized RAM has no inherent length check on
-/// deserialize (unlike a fixed array), so without the guard a crafted state
-/// could shrink a buffer and panic later bank math; a same-ROM state always
-/// matches because the sizes are derived from the ROM header.
+/// Listing field names (`impl_mapper_savestate!(chr, prg_ram)`) restores
+/// each through [`StateField::restore`]: `load_state` rejects a state whose
+/// named buffers differ in length from the live instance's (`Vec`-sized RAM
+/// has no inherent length check on deserialize, unlike a fixed array, so
+/// without the guard a crafted state could shrink a buffer and panic later
+/// bank math; a same-ROM state always matches because the sizes are derived
+/// from the ROM header). CHR is held in a [`Chr`], which serializes as
+/// `null` until written - CHR ROM never enters the state - and gets its
+/// power-on image grafted back from the live instance here. A listed `Chr`
+/// field is therefore required, not just checked.
 #[macro_export]
 macro_rules! impl_mapper_savestate {
     ($($field:ident),* $(,)?) => {
@@ -288,13 +294,11 @@ macro_rules! impl_mapper_savestate {
         fn load_state(&mut self, data: &[u8]) -> ::std::result::Result<(), ::std::string::String> {
             let mut new: Self = ::serde_json::from_slice(data).map_err(|e| e.to_string())?;
             $(
-                if new.$field.len() != self.$field.len() {
-                    return ::std::result::Result::Err(::std::format!(
-                        concat!("savestate ", stringify!($field), " is {} bytes; this ROM uses {}"),
-                        new.$field.len(),
-                        self.$field.len(),
-                    ));
-                }
+                $crate::mapper::StateField::restore(
+                    &mut new.$field,
+                    &mut self.$field,
+                    stringify!($field),
+                )?;
             )*
             new.prg = ::std::mem::take(&mut self.prg);
             *self = new;

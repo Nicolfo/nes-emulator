@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 pub struct HolyDiver {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_bank: u8,
     chr_bank: u8,
@@ -38,7 +39,7 @@ impl HolyDiver {
         let four_screen = mirroring == Mirroring::FourScreen;
         HolyDiver {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_bank: 0,
             chr_bank: 0,
@@ -53,7 +54,7 @@ impl Mapper for HolyDiver {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +57,7 @@ enum ChrLoc {
 pub struct Mmc3 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     #[serde(default)]
     board: Mmc3Board,
@@ -101,7 +102,7 @@ impl Mmc3 {
         };
         Mmc3 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             board,
             outer: 0,
@@ -249,7 +250,7 @@ impl Mapper for Mmc3 {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
     fn cpu_read(&mut self, addr: u16) -> u8 {

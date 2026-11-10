@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring, NtTarget, mirror_nt};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub struct Rambo1 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_ram: Vec<u8>,
     mirroring: Mirroring,
@@ -48,7 +49,7 @@ impl Rambo1 {
         let chr = if chr_is_ram { vec![0; 0x2000] } else { chr };
         Rambo1 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_ram: vec![0; 0x2000],
             mirroring,
@@ -195,7 +196,7 @@ impl Mapper for Rambo1 {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

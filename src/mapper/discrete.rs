@@ -17,6 +17,8 @@
 //!
 //! Bus conflicts are not emulated (like the other discrete boards).
 
+use super::Chr;
+
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +74,7 @@ pub struct Latch {
     kind: LatchKind,
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     prg_ram: Vec<u8>,
     prg_bank: u8,
@@ -91,7 +93,7 @@ impl Latch {
         Latch {
             kind,
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             prg_ram: if kind.has_prg_ram() {
                 vec![0; 0x2000]
@@ -172,7 +174,7 @@ impl Mapper for Latch {
             self.prg_ram = vec![0; prg_ram];
         }
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

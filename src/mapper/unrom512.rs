@@ -1,3 +1,4 @@
+use super::Chr;
 use super::discrete::{bank_index, chr_or_ram};
 use super::flash::Sst39sf;
 use super::{Mapper, Mirroring, NtTarget};
@@ -32,7 +33,7 @@ pub struct Unrom512 {
     /// PRG flash (or plain ROM on non-flashable boards: writes never reach it).
     #[serde(default)]
     chip: Sst39sf,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     #[serde(alias = "flash")]
     flashable: bool,
@@ -57,7 +58,7 @@ impl Unrom512 {
         };
         Unrom512 {
             chip: Sst39sf::new(prg),
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             flashable: battery,
             nt,
@@ -98,13 +99,7 @@ impl Mapper for Unrom512 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
         let mut new: Self = serde_json::from_slice(data).map_err(|e| e.to_string())?;
-        if new.chr.len() != self.chr.len() {
-            return Err(format!(
-                "savestate chr is {} bytes; this ROM uses {}",
-                new.chr.len(),
-                self.chr.len()
-            ));
-        }
+        super::StateField::restore(&mut new.chr, &mut self.chr, "chr")?;
         new.chip.graft(&mut self.chip)?;
         *self = new;
         Ok(())
@@ -112,7 +107,7 @@ impl Mapper for Unrom512 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 

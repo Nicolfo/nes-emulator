@@ -1,3 +1,4 @@
+use super::Chr;
 use super::{Mapper, Mirroring};
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 pub struct Sunsoft3 {
     #[serde(skip)]
     prg: Vec<u8>,
-    chr: Vec<u8>,
+    chr: Chr,
     chr_is_ram: bool,
     mirroring: Mirroring,
     four_screen: bool,
@@ -40,7 +41,7 @@ impl Sunsoft3 {
         let four_screen = mirroring == Mirroring::FourScreen;
         Sunsoft3 {
             prg,
-            chr,
+            chr: chr.into(),
             chr_is_ram,
             mirroring,
             four_screen,
@@ -75,7 +76,7 @@ impl Mapper for Sunsoft3 {
 
     fn set_ram_sizes(&mut self, _prg_ram: usize, chr_ram: usize) {
         if chr_ram > 0 && self.chr_is_ram {
-            self.chr = vec![0; chr_ram];
+            self.chr = vec![0; chr_ram].into();
         }
     }
 
