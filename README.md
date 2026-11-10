@@ -93,8 +93,9 @@ RAM addresses are held at the value every frame. Codes are saved per game as
 
 **Famicom Disk System** games need the FDS BIOS, which is not included: put
 `disksys.rom` (8 KB) next to the `.fds` file, in the config directory, or next
-to the executable. F8 flips to the next disk side; disk writes are saved to
-`<image>.sav`. **NSF** music files open a player screen: Left/Right change
+to the executable. Disk sides switch automatically when the game asks for
+one (OPTIONS > FDS AUTO DISK); F8 flips to the next side by hand. Disk writes
+are saved to `<image>.sav`. **NSF** music files open a player screen: Left/Right change
 tracks.
 
 ## Architecture

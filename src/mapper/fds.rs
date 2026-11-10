@@ -251,9 +251,34 @@ pub struct Fds {
     side: Option<usize>,
     pending_side: Option<usize>,
     insert_delay: u32,
+    /// Independent block-CRC checker for the $4030 CRC-error flag: CRC over
+    /// the block from its start mark, the bytes left to see it reach zero
+    /// once the game raises CRC control, and the latched error.
+    #[serde(default)]
+    check_crc: u16,
+    #[serde(default)]
+    crc_window: u8,
+    #[serde(default)]
+    crc_error: bool,
+    /// Automatic side selection from the BIOS disk check (see
+    /// [`Mapper::fds_bios_disk_check`]); switched off for disks whose sides
+    /// can't be told apart.
+    #[serde(default = "default_true")]
+    auto_insert: bool,
 
     audio: FdsAudio,
 }
+
+fn default_true() -> bool {
+    true
+}
+
+/// Offset of the 10-byte disk ID (manufacturer, game name, type, version,
+/// side, disk number, disk type, ...) in a side: after the block code and
+/// the 14-character "*NINTENDO-HVC*" string.
+const DISK_ID: usize = 15;
+/// Bytes the BIOS compares, with $FF in the expected ID as a wildcard.
+const DISK_ID_LEN: usize = 10;
 
 impl Fds {
     /// `bios` must be 8KB; `sides` are `.fds`-layout sides (see
@@ -297,6 +322,10 @@ impl Fds {
             side: Some(0),
             pending_side: None,
             insert_delay: 0,
+            check_crc: 0,
+            crc_window: 0,
+            crc_error: false,
+            auto_insert: true,
             audio: FdsAudio::new(),
         }
     }
@@ -385,6 +414,25 @@ impl Fds {
                 // not raise the transfer IRQ.
                 self.gap_ended = true;
                 need_irq = false;
+                self.check_crc = 0;
+                self.crc_window = 0;
+                self.crc_error = false;
+            }
+            if self.gap_ended {
+                self.check_crc = crc_step(self.check_crc, data);
+                if self.crc_control && !self.prev_crc_control {
+                    // CRC check requested: the block's two CRC bytes are
+                    // at most a few bytes away.
+                    self.crc_window = 3;
+                }
+                if self.crc_window > 0 {
+                    if self.check_crc == 0 {
+                        self.crc_window = 0;
+                    } else {
+                        self.crc_window -= 1;
+                        self.crc_error = self.crc_window == 0;
+                    }
+                }
             }
             if self.gap_ended {
                 self.transfer_complete = true;
@@ -510,6 +558,9 @@ impl Mapper for Fds {
                 if self.transfer_complete {
                     v |= 0x02;
                 }
+                if self.crc_error {
+                    v |= 0x10;
+                }
                 if self.end_of_head {
                     v |= 0x40;
                 }
@@ -590,6 +641,41 @@ impl Mapper for Fds {
 
     fn fds_current_side(&self) -> Option<usize> {
         self.side
+    }
+
+    fn fds_bios_disk_check(&mut self, expected: &[u8; 10]) {
+        if !self.auto_insert {
+            return;
+        }
+        let matches: Vec<usize> = (0..self.streams.len())
+            .filter(|&i| {
+                let id = self
+                    .disk
+                    .get(i * SIDE_SIZE + DISK_ID..i * SIDE_SIZE + DISK_ID + DISK_ID_LEN);
+                id.is_some_and(|id| expected.iter().zip(id).all(|(&e, &d)| e == 0xFF || e == d))
+            })
+            .collect();
+        match matches.as_slice() {
+            [] => {}
+            [only] => {
+                if self.side != Some(*only) {
+                    // Swap straight in: the BIOS is waiting on this check.
+                    self.sync_disk();
+                    self.side = Some(*only);
+                    self.pending_side = None;
+                    self.insert_delay = 0;
+                    self.scanning = false;
+                    self.end_of_head = true;
+                }
+            }
+            // Several sides share an ID (some unlicensed disks): guessing
+            // would loop, so leave side changes to the player.
+            _ => self.auto_insert = false,
+        }
+    }
+
+    fn fds_set_auto_insert(&mut self, on: bool) {
+        self.auto_insert = on;
     }
 
     fn fds_insert(&mut self, side: Option<usize>) {
@@ -780,6 +866,62 @@ mod tests {
             m.clock_drive();
         }
         assert_eq!(m.fds_current_side(), None);
+    }
+
+    #[test]
+    fn bios_disk_check_inserts_the_matching_side() {
+        let mut a = sample_side();
+        let mut b = sample_side();
+        a[DISK_ID + 6] = 0; // side number byte differs
+        b[DISK_ID + 6] = 1;
+        let mut m = Fds::new(vec![0; 0x2000], vec![a.clone(), b.clone()]);
+        assert_eq!(m.fds_current_side(), Some(0));
+        let mut want = [0xFF; 10];
+        want[6] = 1;
+        m.fds_bios_disk_check(&want);
+        assert_eq!(m.fds_current_side(), Some(1), "side B auto-inserted");
+        // A wildcard ID matching both sides disables auto insertion.
+        m.fds_bios_disk_check(&[0xFF; 10]);
+        want[6] = 0;
+        m.fds_bios_disk_check(&want);
+        assert_eq!(m.fds_current_side(), Some(1), "auto insert now off");
+    }
+
+    #[test]
+    fn crc_error_flag_only_for_corrupt_blocks() {
+        let read_block = |side: Vec<u8>, corrupt: bool| -> bool {
+            let mut stream = side_to_stream(&side);
+            let mark = stream.iter().position(|&b| b != 0).unwrap();
+            if corrupt {
+                stream[mark + 5] ^= 0xFF;
+            }
+            let mut m = Fds::new(vec![0; 0x2000], vec![side]);
+            m.streams[0].0 = stream;
+            m.write_control(0x45 | 0x40); // motor, read, disk ready
+            let mut error = false;
+            let mut bytes = 0;
+            for _ in 0..2_000_000 {
+                m.clock_drive();
+                if m.transfer_complete {
+                    m.transfer_complete = false;
+                    bytes += 1;
+                    // Disk info block: 56 data bytes after the mark.
+                    if bytes == 56 {
+                        m.write_control(0x45 | 0x40 | 0x10); // CRC control
+                    }
+                    if bytes > 59 {
+                        error = m.cpu_reg_read(0x4030).unwrap() & 0x10 != 0;
+                        break;
+                    }
+                }
+            }
+            error
+        };
+        assert!(!read_block(sample_side(), false), "good block reads clean");
+        assert!(
+            read_block(sample_side(), true),
+            "corrupt block flags CRC error"
+        );
     }
 
     #[test]

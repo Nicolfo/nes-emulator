@@ -191,6 +191,9 @@ pub struct Config {
     /// TV system: follow the ROM header, or force one.
     #[serde(default)]
     pub region: RegionPref,
+    /// FDS: insert the disk side the game asks for automatically.
+    #[serde(default = "default_true")]
+    pub fds_auto_disk: bool,
 }
 
 /// Region setting: the ROM header's choice or a forced TV system.
@@ -334,6 +337,7 @@ impl Default for Config {
             input_device: InputDevice::Standard,
             rewind: true,
             region: RegionPref::Auto,
+            fds_auto_disk: true,
         }
     }
 }

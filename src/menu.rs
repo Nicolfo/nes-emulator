@@ -216,6 +216,7 @@ pub enum SetRow {
     Input,
     Region,
     Rewind,
+    FdsAuto,
     Reset,
     Back,
 }
@@ -235,6 +236,7 @@ pub fn settings_rows(page: usize) -> Vec<SetRow> {
             SetRow::Input,
             SetRow::Region,
             SetRow::Rewind,
+            SetRow::FdsAuto,
             SetRow::Reset,
         ]);
     }
@@ -314,6 +316,7 @@ pub fn render_settings(
             ),
             SetRow::Region => ("REGION", Some(format!("< {} >", cfg.region.label()))),
             SetRow::Rewind => ("REWIND", Some(on_off(cfg.rewind).to_string())),
+            SetRow::FdsAuto => ("FDS AUTO DISK", Some(on_off(cfg.fds_auto_disk).to_string())),
             SetRow::Reset => ("RESET DEFAULTS", None),
             SetRow::Back => ("BACK", None),
         };

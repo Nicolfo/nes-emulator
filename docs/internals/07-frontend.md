@@ -172,7 +172,12 @@ poked into RAM at the start of every frame. The list lives next to the ROM as
 `*NINTENDO-HVC*` dump, or a `.fds` extension) boot through `Nes::new_fds`
 with the BIOS, which users must supply as `disksys.rom` next to the image, in
 the config directory or next to the executable. **F8** flips to the next disk
-side (the drive stays empty ~1 s so the BIOS sees the change). The disk
+side (the drive stays empty ~1 s so the BIOS sees the change). With
+OPTIONS > FDS AUTO DISK on (the default), sides switch by themselves: when the
+BIOS runs its disk-ID check at `$E445`, the bus hands the 10-byte ID the game
+expects (pointed to by `$00/$01`) to the board, which inserts the single side
+whose disk info block matches (`$FF` bytes are wildcards). Disks whose sides
+share an ID turn the feature off and fall back to F8. The disk
 image itself is the "battery RAM": writes the game makes are saved to
 `<image>.sav` in plain `.fds` layout.
 
