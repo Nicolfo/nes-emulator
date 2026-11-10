@@ -71,6 +71,11 @@ impl Nes {
             || (data.len() >= 15 && data[0] == 0x01 && &data[1..15] == b"*NINTENDO-HVC*")
     }
 
+    /// Let the FDS pick the disk side the game asks for (default on).
+    pub fn fds_set_auto_insert(&mut self, on: bool) {
+        self.cpu.bus.cart.fds_set_auto_insert(on);
+    }
+
     /// Number of disk sides when an FDS image is loaded; None for cartridges.
     pub fn fds_side_count(&self) -> Option<usize> {
         self.cpu.bus.cart.fds_side_count()

@@ -15,6 +15,9 @@ pub const DMC_LOAD_DELAY: u8 = 1;
 /// Parity of bus cycles on which the DMC fetch ("get" cycle) may occur.
 pub const DMC_GET_PARITY: u64 = 1;
 
+/// Entry of the FDS BIOS disk-ID check routine.
+const FDS_DISK_CHECK: u16 = 0xE445;
+
 pub struct Bus {
     pub ram: [u8; 0x800],
     pub ppu: Ppu,
@@ -147,6 +150,9 @@ impl Bus {
                 None => self.open_bus,
             },
             _ => {
+                if addr == FDS_DISK_CHECK {
+                    self.fds_disk_check();
+                }
                 let mut r = self.cart.cpu_read(addr);
                 if !self.rom_patches.is_empty() {
                     r = self.patch_rom_read(addr, r);
@@ -155,6 +161,29 @@ impl Bus {
                 r
             }
         }
+    }
+
+    /// The FDS BIOS routine at $E445 compares the inserted disk against the
+    /// 10-byte ID its caller points to from $00/$01. Executing it hands that
+    /// ID to the cartridge so an FDS board can auto-insert the right side
+    /// (no-op for everything else). The ID is peeked without side effects.
+    #[cold]
+    fn fds_disk_check(&mut self) {
+        if self.cart.fds_side_count().is_none() {
+            return;
+        }
+        let ptr = self.ram[0] as u16 | (self.ram[1] as u16) << 8;
+        let mut id = [0u8; 10];
+        for (i, b) in id.iter_mut().enumerate() {
+            let a = ptr.wrapping_add(i as u16);
+            *b = match a {
+                0x0000..=0x1FFF => self.ram[(a & 0x7FF) as usize],
+                // FDS RAM and BIOS reads have no side effects.
+                0x6000..=0xFFFF if a != FDS_DISK_CHECK => self.cart.cpu_read(a),
+                _ => 0,
+            };
+        }
+        self.cart.fds_bios_disk_check(&id);
     }
 
     /// Apply the first matching cheat patch to a cartridge ROM read.

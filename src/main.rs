@@ -447,6 +447,7 @@ impl App {
             nes.set_sample_rate(a.sample_rate as f64);
         }
         nes.set_input_device(self.cfg.input_device);
+        nes.fds_set_auto_insert(self.cfg.fds_auto_disk);
         self.sav_path = Some(restore_battery_ram(&mut nes, path));
         self.rom_path = Some(path.to_path_buf());
         self.nes = Some(nes);
@@ -786,6 +787,12 @@ impl App {
                 self.cfg.save();
                 self.restart_for_region();
                 return;
+            }
+            SetRow::FdsAuto => {
+                self.cfg.fds_auto_disk = !self.cfg.fds_auto_disk;
+                if let Some(nes) = &mut self.nes {
+                    nes.fds_set_auto_insert(self.cfg.fds_auto_disk);
+                }
             }
             SetRow::Rewind => {
                 self.cfg.rewind = !self.cfg.rewind;

@@ -190,6 +190,11 @@ pub trait Mapper {
     /// drive's gapped disk streams from the restored `.fds` image).
     fn battery_ram_loaded(&mut self) {}
 
+    /// Famicom Disk System: the BIOS is checking for the disk whose 10-byte
+    /// ID is `expected` ($FF = any); boards may insert the matching side.
+    fn fds_bios_disk_check(&mut self, _expected: &[u8; 10]) {}
+    /// Famicom Disk System: enable/disable automatic side insertion.
+    fn fds_set_auto_insert(&mut self, _on: bool) {}
     /// Famicom Disk System: number of disk sides; None for cartridges.
     fn fds_side_count(&self) -> Option<usize> {
         None
