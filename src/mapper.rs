@@ -10,6 +10,7 @@ mod colordreams;
 mod discrete;
 mod fds;
 mod fds_audio;
+mod flash;
 mod fme7;
 mod fong_shen_bang;
 mod gtrom;
@@ -184,6 +185,24 @@ pub trait Mapper {
     /// Observe CPU writes to the PPU registers ($2000-$3FFF); the MMC5
     /// snoops $2000/$2001 for sprite size and rendering state.
     fn cpu_bus_write(&mut self, _addr: u16, _val: u8) {}
+
+    /// Bytes persisted to the `.sav` file (when the header's battery bit is
+    /// set). Defaults to the PRG RAM; flash-saving boards return their PRG
+    /// flash instead.
+    fn battery_save(&self) -> Option<&[u8]> {
+        self.prg_ram()
+    }
+    /// Restore a `.sav` blob produced by [`Mapper::battery_save`]. The
+    /// default copies the overlapping prefix into PRG RAM and calls
+    /// [`Mapper::battery_ram_loaded`]; flash boards accept only an exact-size
+    /// image (anything else would overwrite the program).
+    fn battery_restore(&mut self, data: &[u8]) {
+        if let Some(ram) = self.prg_ram_mut() {
+            let n = ram.len().min(data.len());
+            ram[..n].copy_from_slice(&data[..n]);
+        }
+        self.battery_ram_loaded();
+    }
 
     /// Called after a .sav blob was copied into [`Mapper::prg_ram_mut`], for
     /// boards whose persisted bytes feed derived state (the FDS rebuilds its

@@ -145,28 +145,25 @@ impl Nes {
         self.cpu.reset();
     }
 
-    /// Battery-backed PRG RAM to persist as a .sav file; None when the
-    /// cartridge has no battery or the board has no PRG RAM.
+    /// Battery-backed save data to persist as a .sav file (PRG RAM, or the
+    /// PRG flash of self-saving boards); None when the cartridge has no
+    /// battery or nothing to save.
     pub fn battery_ram(&self) -> Option<&[u8]> {
         if self.battery {
-            self.cpu.bus.cart.prg_ram()
+            self.cpu.bus.cart.battery_save()
         } else {
             None
         }
     }
 
-    /// Restore a previously saved .sav file into battery-backed PRG RAM.
-    /// Ignored when the cartridge has no battery; size mismatches copy the
-    /// overlapping prefix.
+    /// Restore a previously saved .sav file. Ignored when the cartridge has
+    /// no battery. PRG RAM takes the overlapping prefix of a size mismatch;
+    /// flash boards ignore a mismatched file entirely.
     pub fn load_battery_ram(&mut self, data: &[u8]) {
         if !self.battery {
             return;
         }
-        if let Some(ram) = self.cpu.bus.cart.prg_ram_mut() {
-            let n = ram.len().min(data.len());
-            ram[..n].copy_from_slice(&data[..n]);
-        }
-        self.cpu.bus.cart.battery_ram_loaded();
+        self.cpu.bus.cart.battery_restore(data);
     }
 
     /// Serialize the full machine state to a savestate blob. The state is
