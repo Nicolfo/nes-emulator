@@ -18,7 +18,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 13 | CPROM | Fixed 32KB PRG, 16KB CHR RAM with a switchable 4KB bank at $1000 | Videomation |
 | 15 | K-1029 / K-1030P | Multicart: four PRG modes (32KB, UNROM, 8KB, 16KB) chosen by address bits, mirroring bit, mode-protected CHR RAM | 100-in-1 Contra Function 16 |
 | 16 | Bandai FCG / LZ93D50 | 16KB PRG select, 1KB CHR banks, 16-bit cycle IRQ, serial-EEPROM saves | Dragon Ball Z, Rokudenashi Blues |
-| 18 | Jaleco SS88006 | Three 8KB PRG banks, eight 1KB CHR banks (nibble registers), PRG RAM with write protect, mirroring, CPU-cycle IRQ with 4/8/12/16-bit width (uPD7756 speech not emulated) | Pizza Pop!, Ninja Jajamaru: Ginga Daisakusen, Plasma Ball |
+| 18 | Jaleco SS88006 | Three 8KB PRG banks, eight 1KB CHR banks (nibble registers), PRG RAM with write protect, mirroring, CPU-cycle IRQ with 4/8/12/16-bit width, uPD7756 speech from host-supplied samples | Pizza Pop!, Ninja Jajamaru: Ginga Daisakusen, Plasma Ball |
 | 19 | Namco 163 | PRG/CHR banking, CHR-ROM nametables, wavetable expansion audio | Rolling Thunder, Megami Tensei II, Mappy Kids |
 | 21, 22, 23, 25 | Konami VRC2 / VRC4 | 8/16KB PRG, 1KB CHR banking, scanline IRQ; pinout variants resolved by mapper/submapper | Ganbare Goemon Gaiden 2, Crisis Force, Wai Wai World 2, TMNT (J) |
 | 24 | VRC6 (VRC6a) | 16/8KB PRG, 1KB CHR, cycle/scanline IRQ, pulse+saw expansion audio | Akumajou Densetsu |
@@ -53,7 +53,7 @@ marks boards whose extra sound channels are mixed into the APU output.
 | 80 | Taito X1-005 | 8KB PRG / 2KB+1KB CHR banking, mirroring, 128-byte battery RAM inside the chip | Minelvaton Saga, Kyonshiizu 2 |
 | 82 | Taito X1-017 | X1-005-style banking with CHR half-swap, PRG registers shifted by 2, 5KB battery RAM in three keyed chunks | SD Keiji: Blader, Kyuukyoku Harikiri Stadium III |
 | 85 | VRC7 | 8KB PRG / 1KB CHR banking, battery PRG RAM, VRC scanline/cycle IRQ, OPLL FM expansion audio (6 two-operator channels) | Lagrange Point, Tiny Toon Adventures 2 (J) |
-| 86 | Jaleco JF-13 | $6000 latch: 32KB PRG + 8KB CHR (uPD7756 speech not emulated) | Moero!! Pro Yakyuu, Argus (J) |
+| 86 | Jaleco JF-13 | $6000 latch: 32KB PRG + 8KB CHR, uPD7756 speech from host-supplied samples | Moero!! Pro Yakyuu, Argus (J) |
 | 87 | Jaleco J87 | $6000 latch: 8KB CHR select with swapped bits, fixed PRG | City Connection (J), The Goonies (J), Hyper Olympic |
 | 88 | Namco 3433 | Namco 108 with CHR A16 tied to PPU A12 (128KB CHR) | Quinty, Dragon Spirit (J), Namco Classic |
 | 89 | Sunsoft-2 (Sunsoft-3 board) | 16KB PRG + 8KB CHR select, one-screen mirroring select | Tenka no Goikenban: Mito Koumon |

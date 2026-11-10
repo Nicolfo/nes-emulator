@@ -185,6 +185,18 @@ NSF files (`NESM\x1A`) load through `Nes::new` and show a player screen
 (`menu::render_nsf`) instead of the framebuffer: title, artist, track
 number and play time. Left/Right switch tracks, F3 restarts the current one.
 
+### Speech samples (Jaleco mappers 18 and 86)
+
+The uPD7755/uPD7756 speech chips on some Jaleco boards (Moero!! Pro Yakyuu,
+Pizza Pop!, Ninja Jajamaru) decode recordings from an internal mask ROM that
+iNES dumps don't contain. As in other emulators, the speech is played from
+recordings the user supplies: when `Nes::wants_speech_samples()` is true,
+the host loads `<rom dir>/<rom stem>.samples/NN.wav` (NN = the chip's sample
+number as two decimal digits, `00`-`31`; 8-bit unsigned or 16-bit PCM, any
+rate, stereo is downmixed - see `src/wav.rs`) and passes them to
+`Nes::set_speech_samples`. Missing files are silent. The clips are host
+data, not machine state: savestates keep only the playback position.
+
 ### Region override
 
 Settings > OPTIONS > REGION forces NTSC, PAL or **Dendy** (AUTO follows the
