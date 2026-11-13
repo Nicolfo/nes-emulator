@@ -96,8 +96,10 @@ RAM addresses are held at the value every frame. Codes are saved per game as
 `disksys.rom` (8 KB) next to the `.fds` file, in the config directory, or next
 to the executable. Disk sides switch automatically when the game asks for
 one (OPTIONS > FDS AUTO DISK); F8 flips to the next side by hand. Disk writes
-are saved to `<image>.sav`. **NSF** music files open a player screen: Left/Right change
-tracks.
+are saved to `<image>.sav`. **NSF** music files (also NSF2 and NSFe) open a player screen:
+Left/Right change tracks (in playlist order), with track names and lengths
+shown when the file has them; timed tracks fade out and move on by
+themselves. NSF2 tunes may use the IRQ timer and non-returning init.
 
 **Vs. System** arcade dumps (iNES Vs. flag / NES 2.0 console type 1) run with
 their RGB PPU palettes and coin-op inputs: F1/F2 insert coins, F4 is the

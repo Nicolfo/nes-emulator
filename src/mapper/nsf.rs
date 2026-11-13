@@ -11,6 +11,13 @@
 //! header's play rate; the driver's IRQ handler acknowledges it and calls the
 //! play routine. Running the real code on the real CPU/APU keeps the timing
 //! (and the tune's sound) cycle-accurate.
+//!
+//! NSF2 tunes that use the IRQ timer or a non-returning init own the IRQ, so
+//! for them the driver switches to the NSF2 scheme: init runs once with
+//! Y = $80 (and, for a non-returning init, again with Y = $81, interrupted by
+//! play), play is called from an NMI the board pulses at the play rate, the
+//! IRQ vector at $FFFE/$FFFF is RAM the tune fills in, and $401B-$401D are
+//! the NSF2 cycle-counting IRQ timer.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +29,10 @@ use super::vrc6::Vrc6Audio;
 use super::vrc7::Opll;
 use super::{Mapper, Mirroring};
 use crate::cartridge::Region;
-use crate::nsf::{EXP_5B, EXP_FDS, EXP_MMC5, EXP_N163, EXP_VRC6, EXP_VRC7, NsfHeader, NsfInfo};
+use crate::nsf::{
+    EXP_5B, EXP_FDS, EXP_MMC5, EXP_N163, EXP_VRC6, EXP_VRC7, FLAG_IRQ, FLAG_NON_RETURNING_INIT,
+    FLAG_SUPPRESS_PLAY, NsfHeader, NsfInfo, NsfMeta,
+};
 
 /// Base address of the driver program.
 const DRIVER_BASE: u16 = 0x4100;
@@ -34,6 +44,11 @@ const REG_REGION: u16 = 0x41F1;
 const REG_ACK: u16 = 0x41F2;
 /// Driver register: any write starts the play timer (after init returns).
 const REG_START: u16 = 0x41F3;
+/// Driver register: current song number, without reloading FDS RAM (the
+/// NSF2 second init call).
+const REG_SONG_PEEK: u16 = 0x41F4;
+/// Driver register: any write marks the NSF2 play NMI handler finished.
+const REG_DONE: u16 = 0x41F6;
 
 const RESET_ENTRY: u16 = DRIVER_BASE;
 const IRQ_ENTRY: u16 = DRIVER_BASE + 0x66;
@@ -41,6 +56,15 @@ const NMI_ENTRY: u16 = DRIVER_BASE + 0x78;
 /// Offsets of the JSR operands patched with the init/play addresses.
 const INIT_OPERAND: usize = 0x5D;
 const PLAY_OPERAND: usize = 0x71;
+
+/// NSF2 driver: shares the reset code up to `NSF2_TAIL`, then continues
+/// with its own init/idle/NMI sequence (see `NSF2_DRIVER_TAIL`).
+const NSF2_TAIL: usize = 0x56;
+const NSF2_NMI_ENTRY: u16 = DRIVER_BASE + 0x72;
+const NSF2_INIT_OPERAND: usize = 0x5F;
+const NSF2_INIT2: usize = 0x64;
+const NSF2_INIT2_OPERAND: usize = 0x6D;
+const NSF2_PLAY_OPERAND: usize = 0x7D;
 
 /// Hand-assembled driver (offsets relative to $4100; see the module docs).
 #[rustfmt::skip]
@@ -77,6 +101,33 @@ const DRIVER: [u8; 0x79] = [
     // $4178 nmi (and the IRQ handler's tail): RTI
     0x40,
 ];
+
+/// NSF2 driver from offset `NSF2_TAIL` ($4156) on.
+#[rustfmt::skip]
+const NSF2_DRIVER_TAIL: [u8; 0x32] = [
+    // $4156: LDA song / LDX region / LDY #$80 / JSR init
+    0xAD, 0xF0, 0x41, 0xAE, 0xF1, 0x41, 0xA0, 0x80, 0x20, 0x00, 0x00,
+    // $4161: STA start (the play NMI begins; interrupts stay as init left them)
+    0x8D, 0xF3, 0x41,
+    // $4164: non-returning init only (otherwise JMP $416F is served here):
+    // LDA song / LDX region / LDY #$81 / JSR init
+    0xAD, 0xF4, 0x41, 0xAE, 0xF1, 0x41, 0xA0, 0x81, 0x20, 0x00, 0x00,
+    // $416F: idle: JMP $416F
+    0x4C, 0x6F, 0x41,
+    // $4172 nmi: PHA / TXA / PHA / TYA / PHA / LDA ack / BPL skip / JSR play
+    0x48, 0x8A, 0x48, 0x98, 0x48, 0xAD, 0xF2, 0x41, 0x10, 0x03, 0x20, 0x00, 0x00,
+    // $417F skip: STA done / PLA / TAY / PLA / TAX / PLA / RTI
+    0x8D, 0xF6, 0x41, 0x68, 0xA8, 0x68, 0xAA, 0x68, 0x40,
+];
+
+/// The file's metadata is ROM data, not machine state: kept out of
+/// savestates and carried over from the live board on load.
+impl super::StateField for NsfMeta {
+    fn restore(&mut self, live: &mut Self, _name: &str) -> Result<(), String> {
+        *self = std::mem::take(live);
+        Ok(())
+    }
+}
 
 /// Expansion chips, each present only when the header enables it.
 #[derive(Serialize, Deserialize, Default)]
@@ -136,6 +187,30 @@ pub struct NsfMapper {
     /// Initial FDS banks for the $6000/$7000 slots (header $76/$77).
     fds_low_init: [u8; 2],
     chips: Chips,
+    /// NSF2 feature flags (`FLAG_*`).
+    #[serde(default)]
+    flags: u8,
+    #[serde(skip)]
+    meta: NsfMeta,
+    /// NSF2: the IRQ vector at $FFFE/$FFFF is RAM.
+    #[serde(default)]
+    irq_vector: [u8; 2],
+    /// NSF2 IRQ timer ($401B-$401D): reload value, counter, active, flag.
+    #[serde(default)]
+    timer_reload: u16,
+    #[serde(default)]
+    timer_counter: u16,
+    #[serde(default)]
+    timer_active: bool,
+    #[serde(default)]
+    timer_irq: bool,
+    /// NSF2 play NMI: the line, play running, and a play due meanwhile.
+    #[serde(default)]
+    nmi_line: bool,
+    #[serde(default)]
+    in_play: bool,
+    #[serde(default)]
+    play_pending: bool,
 }
 
 /// FDS RAM spans $6000-$FFFF.
@@ -210,9 +285,47 @@ impl NsfMapper {
             multiplicand: 0xFF,
             multiplier: 0xFF,
             chips: Chips::new(h.expansion),
+            flags: h.flags,
+            meta: h.meta.clone(),
+            irq_vector: [0; 2],
+            timer_reload: 0,
+            timer_counter: 0,
+            timer_active: false,
+            timer_irq: false,
+            nmi_line: false,
+            in_play: false,
+            play_pending: false,
         };
         m.load_fds_ram();
+        m.reset_nsf2();
         m
+    }
+
+    /// NSF2 scheme (play from NMI, the IRQ belongs to the tune).
+    fn nsf2_driver(&self) -> bool {
+        self.flags & (FLAG_IRQ | FLAG_NON_RETURNING_INIT) != 0
+    }
+
+    /// Byte of the program image at `addr` ($8000-$FFFF) as banked now.
+    fn image_byte(&self, addr: u16) -> u8 {
+        if !self.fds_ram.is_empty() && !self.bankswitched {
+            self.prg[addr as usize - 0x6000]
+        } else {
+            self.prg_byte(addr)
+        }
+    }
+
+    /// Power-on state of the NSF2 extras: the IRQ vector RAM holds the
+    /// image's $FFFE/$FFFF, the IRQ timer and play NMI are idle.
+    fn reset_nsf2(&mut self) {
+        self.irq_vector = [self.image_byte(0xFFFE), self.image_byte(0xFFFF)];
+        self.timer_reload = 0;
+        self.timer_counter = 0;
+        self.timer_active = false;
+        self.timer_irq = false;
+        self.nmi_line = false;
+        self.in_play = false;
+        self.play_pending = false;
     }
 
     /// (Re)load the FDS RAM image from the program banks. Runs at power-on
@@ -249,6 +362,20 @@ impl NsfMapper {
         let off = (addr - DRIVER_BASE) as usize;
         let [init_lo, init_hi] = self.init_addr.to_le_bytes();
         let [play_lo, play_hi] = self.play_addr.to_le_bytes();
+        if self.nsf2_driver() && off >= NSF2_TAIL {
+            let returning = self.flags & FLAG_NON_RETURNING_INIT == 0;
+            return match off {
+                NSF2_INIT_OPERAND | NSF2_INIT2_OPERAND => init_lo,
+                o if o == NSF2_INIT_OPERAND + 1 || o == NSF2_INIT2_OPERAND + 1 => init_hi,
+                NSF2_PLAY_OPERAND => play_lo,
+                o if o == NSF2_PLAY_OPERAND + 1 => play_hi,
+                // Init returns for good: skip the second call.
+                o if returning && (NSF2_INIT2..NSF2_INIT2 + 3).contains(&o) => {
+                    [0x4C, 0x6F, 0x41][o - NSF2_INIT2]
+                }
+                o => NSF2_DRIVER_TAIL.get(o - NSF2_TAIL).copied().unwrap_or(0xEA),
+            };
+        }
         match off {
             INIT_OPERAND => init_lo,
             o if o == INIT_OPERAND + 1 => init_hi,
@@ -266,13 +393,16 @@ impl NsfMapper {
 }
 
 impl Mapper for NsfMapper {
-    crate::impl_mapper_savestate!(prg_ram, chr, exram, fds_ram);
+    crate::impl_mapper_savestate!(prg_ram, chr, exram, fds_ram, meta);
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let vector = |a: u16, hi: bool| if hi { (a >> 8) as u8 } else { a as u8 };
+        let nsf2 = self.nsf2_driver();
         match addr {
+            0xFFFA | 0xFFFB if nsf2 => vector(NSF2_NMI_ENTRY, addr & 1 != 0),
             0xFFFA | 0xFFFB => vector(NMI_ENTRY, addr & 1 != 0),
             0xFFFC | 0xFFFD => vector(RESET_ENTRY, addr & 1 != 0),
+            0xFFFE | 0xFFFF if nsf2 => self.irq_vector[addr as usize & 1],
             0xFFFE | 0xFFFF => vector(IRQ_ENTRY, addr & 1 != 0),
             0x8000..=0xFFF9 if !self.fds_ram.is_empty() => self.fds_ram[addr as usize - 0x6000],
             0x8000..=0xFFF9 => self.prg_byte(addr),
@@ -281,6 +411,10 @@ impl Mapper for NsfMapper {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
+        if (0xFFFE..=0xFFFF).contains(&addr) && self.nsf2_driver() {
+            // Vector RAM; expansion-chip ports below still see the write.
+            self.irq_vector[addr as usize & 1] = val;
+        }
         if !self.fds_ram.is_empty() {
             match addr {
                 // FDS RAM; expansion-chip registers below still see the write.
@@ -296,6 +430,12 @@ impl Mapper for NsfMapper {
             REG_START => {
                 self.timer_running = true;
                 self.counter = self.period;
+            }
+            REG_DONE => {
+                self.in_play = false;
+                if std::mem::take(&mut self.play_pending) {
+                    self.nmi_line = true;
+                }
             }
             0x5FF8..=0x5FFF if self.bankswitched => self.banks[(addr - 0x5FF8) as usize] = val,
             0x6000..=0x7FFF => self.prg_ram[(addr & 0x1FFF) as usize] = val,
@@ -364,11 +504,17 @@ impl Mapper for NsfMapper {
                 Region::Pal => 1,
                 Region::Dendy => 2,
             }),
+            REG_ACK if self.nsf2_driver() => {
+                let due = std::mem::take(&mut self.nmi_line);
+                self.in_play = due;
+                Some((due as u8) << 7)
+            }
             REG_ACK => {
                 let v = (self.irq_line as u8) << 7;
                 self.irq_line = false;
                 Some(v)
             }
+            REG_SONG_PEEK => Some(self.song as u8),
             DRIVER_BASE..=0x41FF => Some(self.driver_byte(addr)),
             0x4040..=0x4092 => self.chips.fds.as_ref().and_then(|f| f.read(addr)),
             0x4800 => self.chips.n163.as_mut().map(|n| n.data_read()),
@@ -416,7 +562,43 @@ impl Mapper for NsfMapper {
     }
 
     fn irq(&self) -> bool {
-        self.irq_line
+        if self.nsf2_driver() {
+            self.timer_irq
+        } else {
+            self.irq_line
+        }
+    }
+
+    fn nmi(&self) -> bool {
+        self.nmi_line
+    }
+
+    fn apu_io_read(&mut self, addr: u16) -> Option<u8> {
+        if self.flags & FLAG_IRQ == 0 {
+            return None;
+        }
+        match addr {
+            0x401B => Some(self.timer_reload as u8),
+            0x401C => Some((self.timer_reload >> 8) as u8),
+            0x401D => {
+                let v = (self.timer_irq as u8) << 7 | self.timer_active as u8;
+                self.timer_irq = false;
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+
+    fn apu_io_write(&mut self, addr: u16, val: u8) {
+        if self.flags & FLAG_IRQ == 0 {
+            return;
+        }
+        match addr {
+            0x401B => self.timer_reload = (self.timer_reload & 0xFF00) | val as u16,
+            0x401C => self.timer_reload = (self.timer_reload & 0x00FF) | (val as u16) << 8,
+            0x401D => self.timer_active = val & 0x01 != 0,
+            _ => {}
+        }
     }
 
     fn cpu_clock(&mut self) {
@@ -426,7 +608,27 @@ impl Mapper for NsfMapper {
             self.counter = self.counter.saturating_sub(1);
             if self.counter == 0 {
                 self.counter = self.period.max(1);
-                self.irq_line = true;
+                if self.flags & FLAG_SUPPRESS_PLAY != 0 {
+                    // Play is never called.
+                } else if !self.nsf2_driver() {
+                    self.irq_line = true;
+                } else if self.in_play {
+                    // Don't re-enter a long play: run it once it returns.
+                    self.play_pending = true;
+                } else {
+                    self.nmi_line = true;
+                }
+            }
+        }
+        if self.flags & FLAG_IRQ != 0 {
+            // NSF2 IRQ timer: period reload + 1; reloads while inactive.
+            if !self.timer_active {
+                self.timer_counter = self.timer_reload;
+            } else if self.timer_counter == 0 {
+                self.timer_counter = self.timer_reload;
+                self.timer_irq = true;
+            } else {
+                self.timer_counter -= 1;
             }
         }
         let c = &mut self.chips;
@@ -461,13 +663,20 @@ impl Mapper for NsfMapper {
     }
 
     fn nsf_info(&self) -> Option<NsfInfo> {
+        let m = &self.meta;
+        let s = self.song;
         Some(NsfInfo {
             title: self.title.clone(),
             artist: self.artist.clone(),
             copyright: self.copyright.clone(),
             total_songs: self.total_songs,
-            current_song: self.song,
+            current_song: s,
             expansion: self.expansion,
+            track_label: m.labels.get(s).cloned().unwrap_or_default(),
+            track_author: m.authors.get(s).cloned().unwrap_or_default(),
+            track_ms: m.times.get(s).copied().flatten(),
+            fade_ms: m.fades.get(s).copied().flatten(),
+            playlist: m.playlist.clone(),
         })
     }
 
@@ -480,6 +689,7 @@ impl Mapper for NsfMapper {
         self.irq_line = false;
         // Fresh chips so the previous track's notes don't ring on.
         self.chips = Chips::new(self.expansion);
+        self.reset_nsf2();
     }
 }
 
@@ -591,6 +801,85 @@ mod tests {
         assert_eq!(m.cpu_read(0x8000), 0x12);
         m.cpu_write(0x5FF6, 0);
         assert_eq!(m.prg_ram_read(0x6000), Some(0x10));
+    }
+
+    fn nsf2_mapper(flags: u8) -> NsfMapper {
+        let mut data = vec![0u8; 0x80];
+        data[0..5].copy_from_slice(b"NESM\x1A");
+        data[5] = 2;
+        data[6] = 1;
+        data[7] = 1;
+        data[0x08..0x0A].copy_from_slice(&0x8000u16.to_le_bytes());
+        data[0x7C] = flags;
+        let mut body = vec![0u8; 0x8000];
+        body[0x7FFE..].copy_from_slice(&[0x34, 0x12]); // image IRQ vector
+        data.extend_from_slice(&body);
+        let (h, body) = crate::nsf::parse(&data).unwrap();
+        NsfMapper::new(&h, body)
+    }
+
+    #[test]
+    fn nsf2_driver_layout_and_vectors() {
+        let mut m = nsf2_mapper(FLAG_IRQ | FLAG_NON_RETURNING_INIT);
+        let byte =
+            |m: &mut NsfMapper, off: usize| m.cpu_reg_read(DRIVER_BASE + off as u16).unwrap();
+        assert_eq!(
+            byte(&mut m, NSF2_INIT_OPERAND - 1),
+            0x20,
+            "JSR init (Y=$80)"
+        );
+        assert_eq!(
+            byte(&mut m, NSF2_INIT2_OPERAND - 1),
+            0x20,
+            "JSR init (Y=$81)"
+        );
+        assert_eq!(byte(&mut m, NSF2_PLAY_OPERAND - 1), 0x20, "JSR play");
+        assert_eq!(byte(&mut m, (NSF2_NMI_ENTRY - DRIVER_BASE) as usize), 0x48);
+        assert_eq!(
+            byte(&mut m, NSF2_TAIL + NSF2_DRIVER_TAIL.len() - 1),
+            0x40,
+            "RTI"
+        );
+        // NMI enters the NSF2 handler; $FFFE/$FFFF is RAM seeded from the image.
+        let vec = |m: &mut NsfMapper, a| m.cpu_read(a) as u16 | (m.cpu_read(a + 1) as u16) << 8;
+        assert_eq!(vec(&mut m, 0xFFFA), NSF2_NMI_ENTRY);
+        assert_eq!(vec(&mut m, 0xFFFE), 0x1234);
+        m.cpu_write(0xFFFE, 0x78);
+        assert_eq!(vec(&mut m, 0xFFFE), 0x1278);
+        // A returning init skips the second call.
+        let mut r = nsf2_mapper(FLAG_IRQ);
+        assert_eq!(byte(&mut r, NSF2_INIT2), 0x4C);
+        assert_eq!(byte(&mut r, NSF2_INIT2 + 1), 0x6F);
+        // Version-1 style tunes keep the classic driver.
+        let mut v1 = nsf2_mapper(0);
+        assert_eq!(vec(&mut v1, 0xFFFE), IRQ_ENTRY);
+        assert_eq!(v1.apu_io_read(0x401D), None);
+    }
+
+    #[test]
+    fn nsf2_irq_timer_counts_reload_plus_one() {
+        let mut m = nsf2_mapper(FLAG_IRQ);
+        m.apu_io_write(0x401B, 3);
+        m.apu_io_write(0x401C, 0);
+        assert_eq!(m.apu_io_read(0x401B), Some(3));
+        m.cpu_clock(); // inactive: keeps reloading
+        m.apu_io_write(0x401D, 1);
+        let mut fired = Vec::new();
+        for cycle in 1..=12 {
+            m.cpu_clock();
+            if m.irq() {
+                fired.push(cycle);
+                assert_eq!(m.apu_io_read(0x401D), Some(0x81), "flag + active");
+                assert!(!m.irq(), "read acknowledges");
+            }
+        }
+        assert_eq!(fired, [4, 8, 12], "period = reload + 1");
+        m.apu_io_write(0x401D, 0);
+        for _ in 0..10 {
+            m.cpu_clock();
+        }
+        assert!(!m.irq());
+        assert_eq!(m.apu_io_read(0x401D), Some(0));
     }
 
     #[test]

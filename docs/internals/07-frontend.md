@@ -181,9 +181,12 @@ share an ID turn the feature off and fall back to F8. The disk
 image itself is the "battery RAM": writes the game makes are saved to
 `<image>.sav` in plain `.fds` layout.
 
-NSF files (`NESM\x1A`) load through `Nes::new` and show a player screen
+NSF/NSF2/NSFe files load through `Nes::new` and show a player screen
 (`menu::render_nsf`) instead of the framebuffer: title, artist, track
-number and play time. Left/Right switch tracks, F3 restarts the current one.
+number and label, play time and length. Left/Right switch tracks (in the
+file's playlist order, `NsfInfo::neighbour`), F3 restarts the current one.
+Tracks with a known length fade out (`NsfInfo::gain_at`, applied to the
+audio samples) and advance to the next one (`App::nsf_auto_advance`).
 
 ### Vs. System inputs
 
