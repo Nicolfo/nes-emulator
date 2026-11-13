@@ -1234,6 +1234,120 @@ mod tests {
         assert!(reference[0x10] >= 20, "play kept running");
     }
 
+    /// NSF2 tune using the IRQ timer. Init's first call (Y = $80) stores
+    /// A/X/Y at $11-$13 and returns; a second call (Y = $81, only with a
+    /// non-returning init) records Y at $14. The IRQ setup - vector $8040,
+    /// timer reload $FFFF, CLI - runs in the second call, or in the first
+    /// when init returns. The IRQ handler acknowledges $401D and counts in
+    /// $16; play ($8060) counts in $10.
+    fn nsf2_irq_tune(flags: u8) -> Vec<u8> {
+        let mut data = nsf_header([0; 8], 0);
+        data[5] = 2;
+        data[0x7C] = flags;
+        data[0x0C..0x0E].copy_from_slice(&0x8060u16.to_le_bytes());
+        let mut prg = vec![0u8; 0x80];
+        let setup_irq = [
+            0xA9, 0x40, 0x8D, 0xFE, 0xFF, // LDA #$40 / STA $FFFE
+            0xA9, 0x80, 0x8D, 0xFF, 0xFF, // LDA #$80 / STA $FFFF
+            0xA9, 0xFF, 0x8D, 0x1B, 0x40, // reload lo
+            0x8D, 0x1C, 0x40, // reload hi
+            0xA9, 0x01, 0x8D, 0x1D, 0x40, // timer on
+            0x58, // CLI
+        ];
+        let non_returning = flags & crate::nsf::FLAG_NON_RETURNING_INIT != 0;
+        let mut init = vec![
+            0xC0, 0x81, // CPY #$81
+            0xF0, 0x07, // BEQ second
+            0x85, 0x11, 0x86, 0x12, 0x84, 0x13, // STA $11 / STX $12 / STY $13
+        ];
+        if non_returning {
+            init.push(0x60); // RTS
+            init.extend_from_slice(&[0x84, 0x14]); // second: STY $14
+            init.extend_from_slice(&setup_irq);
+            init.extend_from_slice(&[0xE6, 0x15, 0x4C]); // loop: INC $15 / JMP loop
+            let lp = 0x8000 + init.len() as u16 - 3;
+            init.extend_from_slice(&lp.to_le_bytes());
+        } else {
+            init.extend_from_slice(&setup_irq);
+            init.push(0x60);
+        }
+        prg[..init.len()].copy_from_slice(&init);
+        // irq: PHA / LDA $401D / INC $16 / PLA / RTI
+        prg[0x40..0x48].copy_from_slice(&[0x48, 0xAD, 0x1D, 0x40, 0xE6, 0x16, 0x68, 0x40]);
+        prg[0x60..0x63].copy_from_slice(&[0xE6, 0x10, 0x60]); // play: INC $10 / RTS
+        data.extend_from_slice(&prg);
+        data
+    }
+
+    /// (play calls, IRQs) over 60 frames after a 10-frame warm-up.
+    fn nsf2_counts(nes: &mut Nes) -> (u8, u8) {
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let (p, i) = (nes.cpu.bus.ram[0x10], nes.cpu.bus.ram[0x16]);
+        for _ in 0..60 {
+            nes.run_frame();
+        }
+        let ram = &nes.cpu.bus.ram;
+        (ram[0x10].wrapping_sub(p), ram[0x16].wrapping_sub(i))
+    }
+
+    #[test]
+    fn nsf2_non_returning_init_with_irq_timer() {
+        use crate::nsf::{FLAG_IRQ, FLAG_NON_RETURNING_INIT};
+        let mut nes = Nes::new_nsf(&nsf2_irq_tune(FLAG_IRQ | FLAG_NON_RETURNING_INIT)).unwrap();
+        let (plays, irqs) = nsf2_counts(&mut nes);
+        let ram = &nes.cpu.bus.ram;
+        assert_eq!(
+            (ram[0x11], ram[0x13], ram[0x14]),
+            (1, 0x80, 0x81),
+            "both init calls"
+        );
+        assert!(
+            (59..=61).contains(&plays),
+            "play from NMI interrupts init: {plays}"
+        );
+        // 60 NTSC frames / 65536-cycle timer period.
+        assert!((26..=28).contains(&irqs), "tune IRQs: {irqs}");
+        assert_ne!(ram[0x15], 0, "the non-returning init kept running");
+    }
+
+    #[test]
+    fn nsf2_irq_timer_with_returning_init() {
+        let mut nes = Nes::new_nsf(&nsf2_irq_tune(crate::nsf::FLAG_IRQ)).unwrap();
+        let (plays, irqs) = nsf2_counts(&mut nes);
+        assert_eq!(nes.cpu.bus.ram[0x14], 0, "no second init call");
+        assert!((59..=61).contains(&plays), "plays: {plays}");
+        assert!((26..=28).contains(&irqs), "tune IRQs: {irqs}");
+        // A track change restores the vector RAM from the image.
+        nes.nsf_play(0);
+        assert_eq!(nes.cpu.bus.cart.cpu_read(0xFFFE), 0);
+        // Savestates keep the NSF2 machinery running identically.
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let blob = nes.save_state().unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        let reference = nes.cpu.bus.ram;
+        nes.load_state(&blob).unwrap();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        assert_eq!(nes.cpu.bus.ram, reference);
+    }
+
+    #[test]
+    fn nsf2_suppressed_play_never_calls_play() {
+        use crate::nsf::{FLAG_NON_RETURNING_INIT, FLAG_SUPPRESS_PLAY};
+        let tune = nsf2_irq_tune(FLAG_NON_RETURNING_INIT | FLAG_SUPPRESS_PLAY);
+        let mut nes = Nes::new_nsf(&tune).unwrap();
+        let (plays, _) = nsf2_counts(&mut nes);
+        assert_eq!(plays, 0);
+        assert_eq!(nes.cpu.bus.ram[0x14], 0x81);
+    }
+
     #[test]
     fn nsf_play_is_noop_for_cartridges() {
         let mut nes = Nes::new(&rom(0x10)).unwrap();

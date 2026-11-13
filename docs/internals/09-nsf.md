@@ -11,6 +11,27 @@ title/artist/copyright strings, per-region play periods in microseconds,
 eight bank-switch init bytes and a bitmask of expansion sound chips.
 Reference: <https://www.nesdev.org/wiki/NSF>.
 
+**NSF2** (header version 2) adds a feature-flags byte at `$7C` - IRQ timer
+support (bit 4), non-returning init (bit 5), suppressed play (bit 6),
+mandatory metadata (bit 7) - and a 24-bit program length at `$7D-$7F`; when
+it is non-zero, NSFe-style metadata chunks follow the program.
+**NSFe** files (`NSFE` magic) carry everything in chunks: `INFO`, `DATA`,
+`BANK`, `RATE`, `NSF2` and the same metadata chunks. References:
+<https://www.nesdev.org/wiki/NSF2>, <https://www.nesdev.org/wiki/NSFe>.
+
+### Metadata
+
+`nsf::parse` reads `auth` (title, artist, copyright, ripper - overriding the
+header strings), `tlbl` (track labels), `taut` (track authors), `time` and
+`fade` (track length / fade-out in ms; negative = unknown), `plst` (play
+order), `RATE` (play periods) and `regn` (region, including Dendy) into
+`NsfHeader::meta`. Unknown lowercase chunks are skipped; an unknown uppercase
+(mandatory) chunk drops the NSF2 metadata but still plays the tune (an NSFe
+file with one is rejected). Text is UTF-8 - NSF v1 header strings fall back
+to Windows-1252 - and `nsf::to_display_ascii` transliterates it for the
+ASCII UI font (accents stripped, fullwidth forms narrowed, typographic
+punctuation simplified, other scripts shown as `?`).
+
 ## The implementation
 
 Rather than writing a separate "player", the emulator runs the NSF on the
@@ -39,6 +60,20 @@ normal machine through a synthetic board, `NsfMapper` (`src/mapper/nsf.rs`):
   `Mmc5Audio`, `FdsAudio`), instantiated only when the header enables them
   and summed into `Mapper::audio_sample`. FDS tunes run from RAM: `$6000-$FFFF`
   is loaded from the program image (banks copied in by `$5FF6-$5FFF` writes).
+- **NSF2 driver.** Tunes flagged for the IRQ timer or a non-returning init
+  own the IRQ, so the board serves a different driver tail from `$4156`:
+  init is called with Y = `$80`, the play timer starts, and for a
+  non-returning init it is called again with Y = `$81` (`$41F4` gives the
+  song without reloading FDS RAM) and may loop forever. Play then runs from
+  an **NMI** the board raises at the play rate (`Mapper::nmi`, ORed into the
+  CPU's NMI line): the handler at `$4172` acknowledges `$41F2`, calls play
+  and writes `$41F6` when done; a period that expires during play is
+  deferred, never nested. The driver never touches the I flag. `$FFFE/$FFFF`
+  becomes RAM seeded from the image, and `$401B/$401C` (reload) / `$401D`
+  (bit 0 enable; read = bit 7 IRQ flag, bit 0 enabled, acknowledges) form the
+  NSF2 IRQ timer: it counts down every CPU cycle, fires every reload + 1
+  cycles and reloads while disabled (`Mapper::apu_io_read`/`apu_io_write`
+  route `$4018-$401F`). Suppressed play stops the play timer altogether.
 - **Track selection.** `Nes::nsf_play(song)` calls `Mapper::nsf_select`
   (rewind banking, stop the timer, fresh expansion chips) and then resets
   the PPU, APU and CPU, so the driver re-runs init for the new track.
@@ -49,5 +84,10 @@ normal machine through a synthetic board, `NsfMapper` (`src/mapper/nsf.rs`):
 | Board, driver, timer, chip routing | `NsfMapper` (`src/mapper/nsf.rs`) |
 | Public API | `Nes::new_nsf`, `Nes::nsf_info`, `Nes::nsf_play` (`src/nes.rs`); `Nes::new` auto-detects NSF files |
 
-Not emulated: NSF2 metadata chunks and IRQ features, and non-timer
-IRQ sources inside a tune (a DMC IRQ is ignored by the driver).
+The frontend shows the track label and length, steps through the `plst`
+order with Left/Right, and when a track's length is known fades it out over
+its `fade` time (2 s by default) and moves on to the next track.
+
+Not emulated: custom `VRC7` patch sets (the default patches play),
+`mixe` mixing levels, and, for classic (non-NSF2) tunes, IRQ sources other
+than the play timer (a DMC IRQ is ignored by the driver).

@@ -177,6 +177,18 @@ pub trait Mapper {
     fn audio_sample(&self) -> f32 {
         0.0
     }
+    /// Level of the cartridge's NMI output (ORed with the PPU's; only the
+    /// NSF player board drives it).
+    fn nmi(&self) -> bool {
+        false
+    }
+    /// Reads of the unused APU test range $4018-$401F, which the NSF2 IRQ
+    /// timer occupies; None is open bus.
+    fn apu_io_read(&mut self, _addr: u16) -> Option<u8> {
+        None
+    }
+    /// Writes to $4018-$401F (see [`Mapper::apu_io_read`]).
+    fn apu_io_write(&mut self, _addr: u16, _val: u8) {}
     /// Readable cartridge registers in $4020-$5FFF; None is open bus.
     fn cpu_reg_read(&mut self, _addr: u16) -> Option<u8> {
         None

@@ -448,9 +448,22 @@ pub fn render_nsf(frame: &mut [u8], h: i32, info: &NsfInfo, seconds: u64) {
 
     let track = format!("< TRACK {} / {} >", info.current_song + 1, info.total_songs);
     let mid = (78 + footer_div) / 2;
-    draw_text_centered(frame, mid - 12, &track, FG, 2);
-    let time = format!("{}:{:02}", seconds / 60, seconds % 60);
-    draw_text_centered(frame, mid + 12, &time, DIM, 1);
+    draw_text_centered(frame, mid - 16, &track, FG, 2);
+    let clock = |s: u64| format!("{}:{:02}", s / 60, s % 60);
+    let time = match info.track_ms {
+        Some(ms) => format!("{} / {}", clock(seconds), clock(ms as u64 / 1000)),
+        None => clock(seconds),
+    };
+    draw_text_centered(frame, mid + 20, &time, DIM, 1);
+    // NSF2/NSFe track label (and its author, when it differs per track).
+    let label = match (info.track_label.trim(), info.track_author.trim()) {
+        ("", _) => String::new(),
+        (l, "") => l.to_string(),
+        (l, a) => format!("{l} - {a}"),
+    };
+    if !label.is_empty() {
+        draw_text_centered(frame, mid + 8, &fit(&label, 30), ACCENT, 1);
+    }
 
     let chips: Vec<&str> = [
         (nes_emulator::nsf::EXP_VRC6, "VRC6"),
@@ -465,7 +478,7 @@ pub fn render_nsf(frame: &mut [u8], h: i32, info: &NsfInfo, seconds: u64) {
     .map(|&(_, name)| name)
     .collect();
     if !chips.is_empty() {
-        draw_text_centered(frame, mid + 26, &format!("+ {}", chips.join(" ")), DIM, 1);
+        draw_text_centered(frame, mid + 32, &format!("+ {}", chips.join(" ")), DIM, 1);
     }
 
     fill_rect(frame, 40, footer_div, 176, 1, DIM);
@@ -720,6 +733,10 @@ mod tests {
             total_songs: 12,
             current_song: 2,
             expansion: nes_emulator::nsf::EXP_VRC6 | nes_emulator::nsf::EXP_FDS,
+            track_label: "STAGE 1".into(),
+            track_author: "SOMEONE".into(),
+            track_ms: Some(90_000),
+            ..Default::default()
         };
         for h in [HEIGHT as i32, 216] {
             let mut f = blank();

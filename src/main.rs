@@ -446,10 +446,10 @@ impl App {
 
     fn load_rom_dialog(&mut self) {
         let picked = rfd::FileDialog::new()
-            .add_filter("NES games and music", &["nes", "fds", "nsf"])
+            .add_filter("NES games and music", &["nes", "fds", "nsf", "nsfe"])
             .add_filter("NES ROM", &["nes"])
             .add_filter("Famicom Disk System", &["fds"])
-            .add_filter("NSF music", &["nsf"])
+            .add_filter("NSF music", &["nsf", "nsfe"])
             .set_title("Load NES ROM")
             .pick_file();
         if let Some(path) = picked {
@@ -1070,12 +1070,8 @@ impl App {
             {
                 if pressed && let Some(nes) = &mut self.nes {
                     let info = nes.nsf_info().expect("checked above");
-                    let n = info.total_songs;
-                    let song = if code == KeyCode::ArrowLeft {
-                        (info.current_song + n - 1) % n
-                    } else {
-                        (info.current_song + 1) % n
-                    };
+                    // Playlist order when the file has one.
+                    let song = info.neighbour(if code == KeyCode::ArrowLeft { -1 } else { 1 });
                     nes.nsf_play(song);
                     self.track_start = self.frame_count;
                     self.rewind.clear();
@@ -1176,7 +1172,47 @@ impl App {
         }
         catch_unwind(AssertUnwindSafe(|| nes.run_frame())).map_err(panic_msg)?;
         self.frame_count += 1;
+        self.nsf_auto_advance();
         Ok(())
+    }
+
+    /// Frames per second of the loaded game's region.
+    fn frame_rate(&self) -> u64 {
+        match self.nes.as_ref().map(|n| n.region()) {
+            Some(Region::Pal | Region::Dendy) => 50,
+            _ => 60,
+        }
+    }
+
+    /// Milliseconds the current NSF track has been playing.
+    fn nsf_elapsed_ms(&self) -> u64 {
+        (self.frame_count - self.track_start) * 1000 / self.frame_rate()
+    }
+
+    /// NSF tracks with a known length (NSF2/NSFe `time` chunk) fade out and
+    /// move on to the next track in play order when it runs out.
+    fn nsf_auto_advance(&mut self) {
+        let Some(info) = self.nes.as_ref().and_then(|n| n.nsf_info()) else {
+            return;
+        };
+        if info
+            .track_total_ms()
+            .is_some_and(|t| self.nsf_elapsed_ms() >= t as u64)
+        {
+            if let Some(nes) = &mut self.nes {
+                nes.nsf_play(info.neighbour(1));
+            }
+            self.track_start = self.frame_count;
+            self.rewind.clear();
+        }
+    }
+
+    /// Output gain for the NSF fade-out (1.0 for everything else).
+    fn nsf_gain(&self) -> f32 {
+        self.nes
+            .as_ref()
+            .and_then(|n| n.nsf_info())
+            .map_or(1.0, |info| info.gain_at(self.nsf_elapsed_ms()))
     }
 
     /// Step back one rewind snapshot and render the frame that follows it.
@@ -1320,11 +1356,7 @@ impl ApplicationHandler for App {
                     matches!(self.view, View::SlotPicker { .. }).then(|| self.slot_states());
                 let osd = self.osd_text();
                 let nsf = self.nes.as_ref().and_then(|n| n.nsf_info());
-                let fps = match self.nes.as_ref().map(|n| n.region()) {
-                    Some(Region::Pal | Region::Dendy) => 50,
-                    _ => 60,
-                };
-                let nsf_secs = (self.frame_count - self.track_start) / fps;
+                let nsf_secs = self.nsf_elapsed_ms() / 1000;
                 let cheat_rows: Vec<(String, bool)> = if matches!(self.view, View::Cheats { .. }) {
                     self.cheats
                         .iter()
@@ -1448,6 +1480,7 @@ impl ApplicationHandler for App {
             self.next_frame = now + period;
         }
         if ran && crash.is_none() {
+            let gain = self.nsf_gain();
             let nes = self.nes.as_mut().unwrap();
             let samples = nes.take_audio();
             if let Some(audio) = &self.audio {
@@ -1463,7 +1496,7 @@ impl ApplicationHandler for App {
                     } else {
                         1
                     };
-                    let kept: Vec<f32> = samples.into_iter().step_by(n).collect();
+                    let kept: Vec<f32> = samples.into_iter().step_by(n).map(|s| s * gain).collect();
                     audio.push(&kept);
                     // dynamic rate control: nudge resampling so the queue hovers
                     // around ~50 ms instead of slowly drifting to under/overflow

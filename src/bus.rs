@@ -163,6 +163,13 @@ impl Bus {
                 self.open_bus = r;
                 r
             }
+            0x4018..=0x401F => match self.cart.apu_io_read(addr) {
+                Some(v) => {
+                    self.open_bus = v;
+                    v
+                }
+                None => self.open_bus,
+            },
             0x4000..=0x401F => self.open_bus,
             0x4020..=0x5FFF => match self
                 .vs
@@ -273,7 +280,7 @@ impl Bus {
                 }
             }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write(addr, val),
-            0x4018..=0x401F => {}
+            0x4018..=0x401F => self.cart.apu_io_write(addr, val),
             _ => self.cart.cpu_write(addr, val),
         }
     }
@@ -375,7 +382,7 @@ impl Bus {
 
     /// Level of the PPU's NMI output (VBlank flag AND NMI enable).
     pub fn nmi_line(&self) -> bool {
-        self.ppu.nmi_line()
+        self.ppu.nmi_line() || self.cart.nmi()
     }
 
     /// Advance the PPU alone by `n` dots (sets the CPU/PPU clock alignment).
