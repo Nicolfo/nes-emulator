@@ -211,7 +211,18 @@ dedicated discrete board.
   D4 = 1, D6 = light seen, D7 = trigger. The gun is plugged in whatever the
   configured input device (`Nes::wants_vs_zapper`).
 
-Not emulated: the Vs. DualSystem (two linked boards).
+- **DualSystem.** Two complete boards ([`Nes::new_dual`](../../src/nes.rs)):
+  `vs::split_dual` cuts the dump into one mapper-99 image per board (main
+  first; 48KB of PRG is 24KB each at $A000-$FFFF, Raid on Bungeling Bay's
+  sub has a single 8KB bank), and the main `Nes` owns the sub's in
+  `Nes::sub`. `run_dual_frame` steps the sub CPU up to the main CPU's cycle
+  count after every main instruction. `sync_dual` applies the wiring: bit 1
+  of a board's last $4016 write, when low, holds the other board's /IRQ
+  (`Bus::vs_irq`); the main board's bit 1 gives the 2KB work RAM to the main
+  board (1) or the sub (0) - the two mapper buffers are swapped and the
+  board without access reads open bus (`Mapper::vs_set_ram_access`). $4016
+  bit 7 reads 1 on the sub. Savestates nest the sub's state
+  (`SaveState::vs_sub`); battery RAM comes from whichever board holds it.
 
 ### Where to look
 

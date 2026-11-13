@@ -416,6 +416,70 @@ pub fn detect(rom: &[u8]) -> Option<VsInfo> {
     })
 }
 
+/// Split a Vs. DualSystem dump into one mapper-99 iNES image per board,
+/// main first. The dump holds the main board's PRG then the sub's, and
+/// likewise for CHR (8KB CHR images that fit one board are shared). Odd
+/// layouts: 48KB of PRG is 24KB per board at $A000-$FFFF; Raid on Bungeling
+/// Bay's sub board has a single 8KB bank after the main board's 32KB.
+pub fn split_dual(rom: &[u8], kind: VsKind) -> Result<[Vec<u8>; 2], String> {
+    const K8: usize = 0x2000;
+    const K16: usize = 0x4000;
+    let h = rom.get(..16).ok_or("ROM too short")?;
+    let nes2 = h[7] & 0x0C == 0x08;
+    let msb = |nibble: u8| if nes2 { (nibble as usize) << 8 } else { 0 };
+    let prg_len = (h[4] as usize | msb(h[9] & 0x0F)) * K16;
+    let chr_len = (h[5] as usize | msb(h[9] >> 4)) * K8;
+    let start = 16 + if h[6] & 0x04 != 0 { 512 } else { 0 };
+    let truncated = || "DualSystem ROM is truncated".to_string();
+    let prg = rom.get(start..start + prg_len).ok_or_else(truncated)?;
+    let chr = rom
+        .get(start + prg_len..start + prg_len + chr_len)
+        .ok_or_else(truncated)?;
+    if prg.len() < 2 * K8 {
+        return Err("DualSystem ROM has too little PRG for two boards".into());
+    }
+    let (main_prg, sub_prg) = if kind == VsKind::DualBungeling && prg.len() <= 0xC000 {
+        (
+            prg[..0x8000.min(prg.len())].to_vec(),
+            prg[0x8000.min(prg.len() - K8)..][..K8].to_vec(),
+        )
+    } else if prg.len() == 0xC000 {
+        // 24KB each, mapped high: pad an unused bank in front for $8000.
+        let high = |p: &[u8]| [&[0xFF; K8][..], p].concat();
+        (high(&prg[..0x6000]), high(&prg[0x6000..]))
+    } else {
+        let half = prg.len() / 2;
+        (prg[..half].to_vec(), prg[half..].to_vec())
+    };
+    let (main_chr, sub_chr) = if chr.len() >= 2 * K16 {
+        let half = chr.len() / 2;
+        (chr[..half].to_vec(), chr[half..].to_vec())
+    } else {
+        (chr.to_vec(), chr.to_vec())
+    };
+    // Whole 16KB PRG units, repeating a short image (mirroring on hardware).
+    let units = |mut p: Vec<u8>| {
+        while !p.len().is_multiple_of(K16) {
+            p.extend_from_within(..p.len().min(K16 - p.len() % K16));
+        }
+        p
+    };
+    let image = |prg: Vec<u8>, chr: Vec<u8>| {
+        let prg = units(prg);
+        let mut out = vec![0u8; 16];
+        out[..4].copy_from_slice(b"NES\x1A");
+        out[4] = (prg.len() / K16) as u8;
+        out[5] = (chr.len() / K8) as u8;
+        // Mapper 99; keep mirroring, battery and four-screen; Vs. flag.
+        out[6] = 0x30 | (h[6] & 0x0B);
+        out[7] = 0x61;
+        out.extend_from_slice(&prg);
+        out.extend_from_slice(&chr);
+        out
+    };
+    Ok([image(main_prg, main_chr), image(sub_prg, sub_chr)])
+}
+
 // Palette data from Nintendulator (Quietust), octal RGB with 3 bits per
 // channel.
 
@@ -672,6 +736,49 @@ mod tests {
         // Bit 1 of the write is latched for the DualSystem link.
         io.write_4016(0x02, false, false);
         assert!(io.latch.main_sub);
+    }
+
+    /// iNES mapper-99 image: `prg_kb` of PRG where each 8KB bank holds its
+    /// index, `chr_kb` of CHR filled per 8KB bank with $10 + index.
+    fn dual_image(prg_kb: usize, chr_kb: usize) -> Vec<u8> {
+        let mut h = header(0x61, 0);
+        h[4] = (prg_kb / 16) as u8;
+        h[5] = (chr_kb / 8) as u8;
+        h[6] = 0x3A;
+        h.extend((0..prg_kb * 1024).map(|i| (i / 0x2000) as u8));
+        h.extend((0..chr_kb * 1024).map(|i| 0x10 + (i / 0x2000) as u8));
+        h
+    }
+
+    /// (PRG 8KB bank markers, CHR 8KB bank markers) of a split image.
+    fn banks(img: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let prg = img[4] as usize * 0x4000;
+        assert_eq!(img[6] >> 4 | img[7] & 0xF0, 99);
+        assert_eq!(img[6] & 0x0B, 0x0A, "four-screen + battery kept");
+        let body = &img[16..];
+        (
+            body[..prg].iter().step_by(0x2000).copied().collect(),
+            body[prg..].iter().step_by(0x2000).copied().collect(),
+        )
+    }
+
+    #[test]
+    fn dual_dumps_split_per_board() {
+        let [m, s] = split_dual(&dual_image(64, 32), VsKind::Dual).unwrap();
+        assert_eq!(banks(&m), (vec![0, 1, 2, 3], vec![0x10, 0x11]));
+        assert_eq!(banks(&s), (vec![4, 5, 6, 7], vec![0x12, 0x13]));
+        // 48KB: 24KB per board at $A000-$FFFF; 8KB CHR shared.
+        let [m, s] = split_dual(&dual_image(48, 8), VsKind::Dual).unwrap();
+        assert_eq!(banks(&m), (vec![0xFF, 0, 1, 2], vec![0x10]));
+        assert_eq!(banks(&s), (vec![0xFF, 3, 4, 5], vec![0x10]));
+        // Raid on Bungeling Bay: 32KB main, one 8KB sub bank mirrored.
+        let [m, s] = split_dual(&dual_image(48, 16), VsKind::DualBungeling).unwrap();
+        assert_eq!(banks(&m).0, vec![0, 1, 2, 3]);
+        assert_eq!(banks(&s).0, vec![4, 4]);
+        // Truncated dumps are rejected.
+        let mut short = dual_image(64, 32);
+        short.truncate(0x8000);
+        assert!(split_dual(&short, VsKind::Dual).is_err());
     }
 
     #[test]

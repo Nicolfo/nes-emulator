@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 /// strobes the controllers - selects the 8KB CHR bank and, on the 40KB
 /// Vs. Gumshoe, the 8KB PRG bank at $8000 (bank 0 or 4; $A000-$FFFF holds
 /// banks 1-3). $6000-$7FFF is the cabinet's 2KB work RAM, mirrored.
+///
+/// On a Vs. DualSystem the two boards share that RAM, one at a time: the
+/// board without access reads open bus there and its writes are lost.
+/// [`crate::nes::Nes`] hands the RAM over by swapping the two buffers.
 #[derive(Serialize, Deserialize)]
 pub struct VsUnisystem {
     #[serde(skip)]
@@ -17,6 +21,13 @@ pub struct VsUnisystem {
     ram: Vec<u8>,
     bank_bit: bool,
     mirroring: Mirroring,
+    /// DualSystem: this board currently owns the shared work RAM.
+    #[serde(default = "owns_ram")]
+    ram_access: bool,
+}
+
+fn owns_ram() -> bool {
+    true
 }
 
 impl VsUnisystem {
@@ -30,6 +41,7 @@ impl VsUnisystem {
             ram: vec![0; 0x800],
             bank_bit: false,
             mirroring,
+            ram_access: true,
         }
     }
 
@@ -69,13 +81,32 @@ impl Mapper for VsUnisystem {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8) {
-        if (0x6000..0x8000).contains(&addr) {
+        if (0x6000..0x8000).contains(&addr) && self.ram_access {
             self.ram[addr as usize & 0x7FF] = val;
         }
     }
 
     fn prg_ram_read(&mut self, addr: u16) -> Option<u8> {
-        Some(self.ram[addr as usize & 0x7FF])
+        self.ram_access.then(|| self.ram[addr as usize & 0x7FF])
+    }
+
+    fn battery_save(&self) -> Option<&[u8]> {
+        self.ram_access.then_some(&self.ram[..])
+    }
+
+    fn battery_restore(&mut self, data: &[u8]) {
+        if self.ram_access {
+            let n = self.ram.len().min(data.len());
+            self.ram[..n].copy_from_slice(&data[..n]);
+        }
+    }
+
+    fn vs_ram_access(&self) -> bool {
+        self.ram_access
+    }
+
+    fn vs_set_ram_access(&mut self, on: bool) {
+        self.ram_access = on;
     }
 
     fn prg_ram(&self) -> Option<&[u8]> {
@@ -155,5 +186,23 @@ mod tests {
         // A single CHR bank tolerates the bank bit.
         m.vs_io_write(0x04);
         assert_eq!(m.ppu_read(0x0000), 0);
+    }
+
+    #[test]
+    fn dualsystem_board_without_ram_access_sees_open_bus() {
+        let mut m = board(4, 1);
+        m.cpu_write(0x6000, 0x42);
+        m.vs_set_ram_access(false);
+        assert!(!m.vs_ram_access());
+        assert_eq!(m.prg_ram_read(0x6000), None);
+        m.cpu_write(0x6000, 0x99); // lost
+        assert!(m.battery_save().is_none());
+        m.vs_set_ram_access(true);
+        assert_eq!(m.prg_ram_read(0x6000), Some(0x42));
+        // The flag survives a savestate.
+        let s = m.save_state();
+        m.vs_set_ram_access(false);
+        m.load_state(&s).unwrap();
+        assert!(m.vs_ram_access());
     }
 }
