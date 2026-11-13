@@ -218,6 +218,7 @@ pub enum SetRow {
     Rewind,
     FdsAuto,
     VsDip,
+    VsDipSub,
     Reset,
     Back,
 }
@@ -239,6 +240,7 @@ pub fn settings_rows(page: usize) -> Vec<SetRow> {
             SetRow::Rewind,
             SetRow::FdsAuto,
             SetRow::VsDip,
+            SetRow::VsDipSub,
             SetRow::Reset,
         ]);
     }
@@ -323,6 +325,10 @@ pub fn render_settings(
             SetRow::VsDip => (
                 "VS DIP 1-8",
                 Some(format!("< {:08b} >", cfg.vs_dip.reverse_bits())),
+            ),
+            SetRow::VsDipSub => (
+                "VS SUB DIP 1-8",
+                Some(format!("< {:08b} >", cfg.vs_dip_sub.reverse_bits())),
             ),
             SetRow::Reset => ("RESET DEFAULTS", None),
             SetRow::Back => ("BACK", None),

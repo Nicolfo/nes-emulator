@@ -47,6 +47,9 @@ pub struct SaveState {
     /// array of byte values, three to four times larger, still accepted.
     #[serde(with = "mapper_json")]
     pub mapper: Vec<u8>,
+    /// Vs. DualSystem: the sub board's whole state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_sub: Option<Box<SaveState>>,
 }
 
 /// `serde` helper embedding the mapper's JSON state as a JSON value rather

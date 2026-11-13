@@ -505,6 +505,7 @@ impl App {
         nes.set_input_device(self.cfg.input_device);
         nes.fds_set_auto_insert(self.cfg.fds_auto_disk);
         nes.set_vs_dip(self.cfg.vs_dip);
+        nes.set_vs_dip_sub(self.cfg.vs_dip_sub);
         self.coin_frames = [0, 0];
         self.vs_service = false;
         let mut notice = None;
@@ -520,7 +521,9 @@ impl App {
                 );
             }
         }
-        if nes.wants_vs_zapper() {
+        if nes.is_vs_dual() {
+            notice = Some("VS DUALSYSTEM: P3/P4 + F2 COIN ON RIGHT".into());
+        } else if nes.wants_vs_zapper() {
             notice = Some("VS ZAPPER: MOUSE AIMS, F1 COIN".into());
         } else if nes.is_vs_system() {
             notice = Some("VS SYSTEM: F1/F2 COIN, F4 SERVICE".into());
@@ -637,8 +640,9 @@ impl App {
     /// `blit_menu`.
     fn apply_view_size(&mut self) {
         let h = self.running_height();
+        let w = self.screen_width();
         if let Some(p) = &mut self.pixels {
-            let _ = p.resize_buffer(WIDTH as u32, h as u32);
+            let _ = p.resize_buffer(w as u32, h as u32);
         }
         // A fullscreen window must not be snapped back to the scaled size, or
         // loading a ROM / changing scale would silently drop out of fullscreen.
@@ -646,9 +650,19 @@ impl App {
             && w.fullscreen().is_none()
         {
             let _ = w.request_inner_size(LogicalSize::new(
-                (WIDTH as u32 * self.cfg.scale) as f64,
+                (self.screen_width() as u32 * self.cfg.scale) as f64,
                 (h as u32 * self.cfg.scale) as f64,
             ));
+        }
+    }
+
+    /// Pixel width of the picture: two screens side by side for a Vs.
+    /// DualSystem (main left, sub right), else one.
+    fn screen_width(&self) -> usize {
+        if self.nes.as_ref().is_some_and(Nes::is_vs_dual) {
+            2 * WIDTH
+        } else {
+            WIDTH
         }
     }
 
@@ -879,6 +893,12 @@ impl App {
                 self.cfg.vs_dip = self.cfg.vs_dip.wrapping_add(delta as u8);
                 if let Some(nes) = &mut self.nes {
                     nes.set_vs_dip(self.cfg.vs_dip);
+                }
+            }
+            SetRow::VsDipSub => {
+                self.cfg.vs_dip_sub = self.cfg.vs_dip_sub.wrapping_add(delta as u8);
+                if let Some(nes) = &mut self.nes {
+                    nes.set_vs_dip_sub(self.cfg.vs_dip_sub);
                 }
             }
             SetRow::FdsAuto => {
@@ -1313,6 +1333,7 @@ impl ApplicationHandler for App {
                 } else {
                     Vec::new()
                 };
+                let fw = self.screen_width();
                 let Some(pixels) = &mut self.pixels else {
                     return;
                 };
@@ -1320,19 +1341,23 @@ impl ApplicationHandler for App {
                 match &self.view {
                     View::Running if nsf.is_some() => {
                         let info = nsf.as_ref().expect("guarded");
-                        blit_menu(frame, |f, h| menu::render_nsf(f, h, info, nsf_secs));
+                        blit_menu(frame, fw, |f, h| menu::render_nsf(f, h, info, nsf_secs));
                     }
                     View::Running => {
                         if let Some(nes) = &self.nes {
                             let fb = nes.framebuffer();
-                            frame.copy_from_slice(&fb[skip * WIDTH * 4..(skip + h) * WIDTH * 4]);
+                            let rows = skip * WIDTH * 4..(skip + h) * WIDTH * 4;
+                            match nes.sub_framebuffer() {
+                                Some(sub) => side_by_side(frame, &fb[rows.clone()], &sub[rows]),
+                                None => frame.copy_from_slice(&fb[rows]),
+                            }
                         }
                         if let Some(text) = &osd {
-                            menu::draw_osd(frame, text);
+                            on_left_screen(frame, fw, |f| menu::draw_osd(f, text));
                         }
                     }
                     View::Home { sel } => {
-                        blit_menu(frame, |f, h| {
+                        blit_menu(frame, fw, |f, h| {
                             menu::render_home(f, h, *sel, self.nes.is_some(), self.error.as_deref())
                         });
                     }
@@ -1342,17 +1367,19 @@ impl ApplicationHandler for App {
                         waiting,
                         player,
                     } => {
-                        blit_menu(frame, |f, h| {
+                        blit_menu(frame, fw, |f, h| {
                             menu::render_settings(f, h, &self.cfg, *page, *sel, *waiting, *player)
                         });
                     }
                     View::SlotPicker { saving, sel } => {
                         let (saving, sel) = (*saving, *sel);
                         let slots = picker_slots.expect("set whenever view is SlotPicker");
-                        blit_menu(frame, |f, h| menu::render_slots(f, h, saving, sel, &slots));
+                        blit_menu(frame, fw, |f, h| {
+                            menu::render_slots(f, h, saving, sel, &slots)
+                        });
                     }
                     View::Cheats { sel, entry, msg } => {
-                        blit_menu(frame, |f, h| {
+                        blit_menu(frame, fw, |f, h| {
                             menu::render_cheats(
                                 f,
                                 h,
@@ -1474,15 +1501,57 @@ impl ApplicationHandler for App {
 /// letterbox bars. Font drawing clamps to the full 240-line buffer, so render
 /// into a full-height scratch buffer and copy the top `h` lines the layout
 /// already targets.
-fn blit_menu(frame: &mut [u8], draw: impl FnOnce(&mut [u8], i32)) {
-    let h = frame.len() / (WIDTH * 4);
-    if h >= HEIGHT {
+///
+/// `fw` is the frame's width in pixels; a wider frame (Vs. DualSystem) gets
+/// the menu centred between black bars.
+fn blit_menu(frame: &mut [u8], fw: usize, draw: impl FnOnce(&mut [u8], i32)) {
+    let h = frame.len() / (fw * 4);
+    if h >= HEIGHT && fw == WIDTH {
         draw(frame, h as i32);
         return;
     }
     let mut full = vec![0u8; WIDTH * HEIGHT * 4];
     draw(&mut full, h as i32);
-    frame.copy_from_slice(&full[..h * WIDTH * 4]);
+    if fw == WIDTH {
+        frame.copy_from_slice(&full[..h * WIDTH * 4]);
+        return;
+    }
+    let (row, left) = (WIDTH * 4, (fw - WIDTH) / 2 * 4);
+    for (dst, src) in frame.chunks_exact_mut(fw * 4).zip(full.chunks_exact(row)) {
+        dst.as_chunks_mut::<4>().0.fill([0, 0, 0, 0xFF]);
+        dst[left..left + row].copy_from_slice(src);
+    }
+}
+
+/// Lay two screens' rows side by side into a frame twice as wide.
+fn side_by_side(frame: &mut [u8], left: &[u8], right: &[u8]) {
+    let row = WIDTH * 4;
+    for ((dst, l), r) in frame
+        .chunks_exact_mut(2 * row)
+        .zip(left.chunks_exact(row))
+        .zip(right.chunks_exact(row))
+    {
+        dst[..row].copy_from_slice(l);
+        dst[row..].copy_from_slice(r);
+    }
+}
+
+/// Run a single-screen overlay `draw` on the left screen of a frame `fw`
+/// pixels wide.
+fn on_left_screen(frame: &mut [u8], fw: usize, draw: impl FnOnce(&mut [u8])) {
+    if fw == WIDTH {
+        draw(frame);
+        return;
+    }
+    let (row, wide) = (WIDTH * 4, fw * 4);
+    let mut left = vec![0u8; WIDTH * HEIGHT * 4];
+    for (l, f) in left.chunks_exact_mut(row).zip(frame.chunks_exact(wide)) {
+        l.copy_from_slice(&f[..row]);
+    }
+    draw(&mut left);
+    for (l, f) in left.chunks_exact(row).zip(frame.chunks_exact_mut(wide)) {
+        f[..row].copy_from_slice(l);
+    }
 }
 
 /// Turn a caught panic payload into a printable message.
@@ -1593,6 +1662,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_frames_for_dualsystem() {
+        let row = WIDTH * 4;
+        let (l, r) = (vec![1u8; row * 2], vec![2u8; row * 2]);
+        let mut frame = vec![0u8; row * 4];
+        side_by_side(&mut frame, &l, &r);
+        assert!(frame[..row].iter().all(|&b| b == 1));
+        assert!(frame[row..2 * row].iter().all(|&b| b == 2));
+        // Overlays land on the left screen only.
+        on_left_screen(&mut frame, 2 * WIDTH, |f| f[0] = 9);
+        assert_eq!((frame[0], frame[row]), (9, 2));
+        // Menus centre between black bars.
+        let mut frame = vec![7u8; row * 2 * 10];
+        blit_menu(&mut frame, 2 * WIDTH, |f, h| {
+            assert_eq!(h, 10);
+            f.fill(5)
+        });
+        assert_eq!(&frame[..4], &[0, 0, 0, 0xFF]);
+        assert_eq!(frame[WIDTH / 2 * 4], 5);
+        assert_eq!(&frame[2 * row - 4..2 * row], &[0, 0, 0, 0xFF]);
+    }
 
     #[test]
     fn resample_changes_length_and_keeps_endpoints() {

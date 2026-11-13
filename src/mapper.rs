@@ -192,6 +192,12 @@ pub trait Mapper {
     /// Vs. System: observe $4016 writes (the controller strobe register),
     /// whose bit 2 drives the Vs. UniSystem board's bank select.
     fn vs_io_write(&mut self, _val: u8) {}
+    /// Vs. DualSystem: whether this board owns the shared work RAM.
+    fn vs_ram_access(&self) -> bool {
+        true
+    }
+    /// Vs. DualSystem: give or take this board's access to the shared RAM.
+    fn vs_set_ram_access(&mut self, _on: bool) {}
 
     /// Bytes persisted to the `.sav` file (when the header's battery bit is
     /// set). Defaults to the PRG RAM; flash-saving boards return their PRG

@@ -27,7 +27,9 @@ must be captured or the restore won't be bit-exact:
   BRK/interrupt poll-suppression and OAM-DMA bookkeeping). Skipping the pipeline
   flags would mis-time an interrupt that was one cycle from firing.
 - **Bus** - the 2 KB work RAM, the cycle counter, the PAL dot-phase counter,
-  the open-bus / internal-bus latches, and the pending OAM/DMC DMA latches.
+  the open-bus / internal-bus latches, the pending OAM/DMC DMA latches, and
+  on Vs. System boards the protection-chip / Vs. Zapper / DualSystem latches
+  (`vs_latch`).
 - **PPU** - the loopy `v`/`t`/`x`/`w` scroll state, `CTRL`/`MASK`/`STATUS`, OAM
   and secondary OAM, the 2 KB CIRAM, palette RAM, the background and sprite
   pipeline shifters/latches, and the scanline/dot position.
@@ -36,6 +38,9 @@ must be captured or the restore won't be bit-exact:
 - **Controller** - the strobe line and shift register.
 - **Cartridge / mapper** - banking registers, IRQ counters, PRG/CHR RAM, and any
   expansion-audio state (but not PRG or CHR ROM - see "The mapper boundary").
+- **Vs. DualSystem** - the second board's complete state, nested as
+  `vs_sub` (a whole `SaveState`); a state with or without it only loads into
+  the matching setup.
 
 ## What is deliberately left out
 

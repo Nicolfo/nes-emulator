@@ -13,6 +13,9 @@ pub struct Nes {
     battery: bool,
     /// RAM cheats forced at the start of every frame.
     ram_cheats: Vec<(u16, u8)>,
+    /// Vs. DualSystem: the second (sub) board, run in lockstep with this
+    /// (main) one. See [`Nes::run_frame`] and `sync_dual`.
+    sub: Option<Box<Nes>>,
 }
 
 impl Nes {
@@ -29,11 +32,24 @@ impl Nes {
         if nsf::is_nsf(rom) {
             return Self::new_nsf(rom);
         }
+        let vs = crate::vs::detect(rom);
+        if let Some(info) = vs.filter(|i| i.kind.is_dual()) {
+            return Self::new_dual(rom, region, info);
+        }
+        Self::build(rom, region, vs)
+    }
+
+    /// A cartridge machine with the Vs. hardware `vs` (if any).
+    fn build(
+        rom: &[u8],
+        region: Option<Region>,
+        vs: Option<crate::vs::VsInfo>,
+    ) -> Result<Self, String> {
         let (cart, header_region, battery) = load_rom(rom)?;
         let region = region.unwrap_or(header_region);
         let mut bus = Bus::with_region(cart, region);
         // Vs. System cabinet: RGB PPU and the coin-op I/O on $4016/$4017.
-        if let Some(info) = crate::vs::detect(rom) {
+        if let Some(info) = vs {
             bus.ppu.set_vs_ppu(Some(info.ppu));
             bus.vs = Some(crate::vs::VsIo::new(info));
             if info.input == crate::vs::VsInput::Zapper {
@@ -47,7 +63,81 @@ impl Nes {
             region,
             battery,
             ram_cheats: Vec::new(),
+            sub: None,
         })
+    }
+
+    /// Vs. DualSystem: one machine per board from the halves of the dump,
+    /// linked through the shared work RAM and each other's /IRQ.
+    fn new_dual(
+        rom: &[u8],
+        region: Option<Region>,
+        info: crate::vs::VsInfo,
+    ) -> Result<Self, String> {
+        let [main_rom, sub_rom] = crate::vs::split_dual(rom, info.kind)?;
+        let mut main = Self::build(&main_rom, region, Some(info))?;
+        let mut sub = Self::build(&sub_rom, region, Some(info))?;
+        sub.cpu.bus.vs.as_mut().expect("Vs. board").is_sub = true;
+        main.sub = Some(Box::new(sub));
+        main.power_on_link();
+        Ok(main)
+    }
+
+    /// DualSystem latches at power-on/reset: the main board's bit 1 low
+    /// (sub owns the RAM and is interrupted), the sub's high (as Mesen, which
+    /// Vs. Wrecking Crew needs).
+    fn power_on_link(&mut self) {
+        if let Some(sub) = self.sub.as_deref_mut() {
+            if let Some(vs) = &mut sub.cpu.bus.vs {
+                vs.latch.main_sub = true;
+            }
+            if let Some(vs) = &mut self.cpu.bus.vs {
+                vs.latch.main_sub = false;
+            }
+        }
+        self.sync_dual();
+    }
+
+    /// Apply the DualSystem wiring after either CPU ran: bit 1 of a board's
+    /// last $4016 write, when low, holds the other board's /IRQ; the main
+    /// board's bit 1 gives it (1) or the sub (0) the shared 2KB RAM. The RAM
+    /// changes hands by swapping the two mappers' buffers.
+    fn sync_dual(&mut self) {
+        let latch = |n: &Nes| n.cpu.bus.vs.as_ref().is_some_and(|v| v.latch.main_sub);
+        let main_bit = latch(self);
+        let Some(sub) = self.sub.as_deref_mut() else {
+            return;
+        };
+        let sub_bit = latch(sub);
+        sub.cpu.bus.vs_irq = !main_bit;
+        self.cpu.bus.vs_irq = !sub_bit;
+        let cart = &mut self.cpu.bus.cart;
+        if cart.vs_ram_access() != main_bit {
+            if let (Some(a), Some(b)) = (cart.prg_ram_mut(), sub.cpu.bus.cart.prg_ram_mut())
+                && a.len() == b.len()
+            {
+                a.swap_with_slice(b);
+            }
+            cart.vs_set_ram_access(main_bit);
+            sub.cpu.bus.cart.vs_set_ram_access(!main_bit);
+        }
+    }
+
+    /// Whether this is a Vs. DualSystem (two boards, two screens).
+    pub fn is_vs_dual(&self) -> bool {
+        self.sub.is_some()
+    }
+
+    /// Vs. DualSystem: the sub board's picture.
+    pub fn sub_framebuffer(&self) -> Option<&[u8]> {
+        self.sub.as_ref().map(|s| s.framebuffer())
+    }
+
+    /// Vs. DualSystem: DIP switches of the sub board (bit 0 = switch 1).
+    pub fn set_vs_dip_sub(&mut self, dip: u8) {
+        if let Some(sub) = &mut self.sub {
+            sub.set_vs_dip(dip);
+        }
     }
 
     /// Boot a Famicom Disk System image. `disk` is a fwNES (`FDS`) or
@@ -70,6 +160,7 @@ impl Nes {
             region,
             battery: true,
             ram_cheats: Vec::new(),
+            sub: None,
         })
     }
 
@@ -117,6 +208,7 @@ impl Nes {
             region,
             battery: false,
             ram_cheats: Vec::new(),
+            sub: None,
         })
     }
 
@@ -167,17 +259,24 @@ impl Nes {
         self.cpu.bus.ppu.reset();
         self.cpu.bus.apu.reset();
         self.cpu.reset();
+        if let Some(sub) = &mut self.sub {
+            sub.reset();
+            self.power_on_link();
+        }
     }
 
     /// Battery-backed save data to persist as a .sav file (PRG RAM, or the
     /// PRG flash of self-saving boards); None when the cartridge has no
     /// battery or nothing to save.
     pub fn battery_ram(&self) -> Option<&[u8]> {
-        if self.battery {
-            self.cpu.bus.cart.battery_save()
-        } else {
-            None
+        if !self.battery {
+            return None;
         }
+        // DualSystem: the shared RAM is wherever it currently lives.
+        self.cpu.bus.cart.battery_save().or_else(|| {
+            let sub = self.sub.as_ref()?;
+            sub.cpu.bus.cart.battery_save()
+        })
     }
 
     /// Restore a previously saved .sav file. Ignored when the cartridge has
@@ -188,6 +287,10 @@ impl Nes {
             return;
         }
         self.cpu.bus.cart.battery_restore(data);
+        // DualSystem: only the board owning the shared RAM takes it.
+        if let Some(sub) = &mut self.sub {
+            sub.cpu.bus.cart.battery_restore(data);
+        }
     }
 
     /// Serialize the full machine state to a savestate blob. The state is
@@ -209,6 +312,10 @@ impl Nes {
             controller: self.cpu.bus.controller1.clone(),
             controller2: Some(self.cpu.bus.controller2.clone()),
             mapper,
+            vs_sub: self
+                .sub
+                .as_ref()
+                .map(|s| Box::new(s.capture(s.cpu.bus.cart.save_state()))),
         }
     }
 
@@ -246,7 +353,7 @@ impl Nes {
         self.apply(state, &data[4 + len..])
     }
 
-    fn apply(&mut self, state: SaveState, mapper: &[u8]) -> Result<(), String> {
+    fn apply(&mut self, mut state: SaveState, mapper: &[u8]) -> Result<(), String> {
         if state.magic != MAGIC {
             return Err("not a savestate (bad magic)".into());
         }
@@ -258,6 +365,10 @@ impl Nes {
         }
         if state.region != self.region {
             return Err("savestate is for a different TV region".into());
+        }
+        let sub_state = state.vs_sub.take();
+        if self.sub.is_some() != sub_state.is_some() {
+            return Err("savestate is for a different Vs. System setup".into());
         }
         self.cpu.bus.cart.load_state(mapper)?;
         self.cpu.load_state(state.cpu);
@@ -275,6 +386,11 @@ impl Nes {
         }
         self.cpu.bus.controller1.set_four_score(wiring.0);
         self.cpu.bus.controller2.set_four_score(wiring.1);
+        if let (Some(sub), Some(s)) = (self.sub.as_deref_mut(), sub_state) {
+            let mapper = s.mapper.clone();
+            sub.apply(*s, &mapper)?;
+            self.sync_dual();
+        }
         Ok(())
     }
 
@@ -289,8 +405,28 @@ impl Nes {
             }
         }
         self.cpu.bus.ppu.frame_complete = false;
+        if self.sub.is_some() {
+            self.run_dual_frame();
+            return;
+        }
         while !self.cpu.bus.ppu.frame_complete {
             self.cpu.step();
+        }
+    }
+
+    /// DualSystem frame: the sub CPU follows the main one instruction by
+    /// instruction (both run off the same clock), with the link wiring
+    /// re-applied in between.
+    fn run_dual_frame(&mut self) {
+        while !self.cpu.bus.ppu.frame_complete {
+            self.cpu.step();
+            self.sync_dual();
+            let target = self.cpu.bus.cycles;
+            let sub = self.sub.as_deref_mut().expect("dual");
+            while sub.cpu.bus.cycles < target {
+                sub.cpu.step();
+            }
+            self.sync_dual();
         }
     }
 
@@ -301,16 +437,30 @@ impl Nes {
     /// Set the host audio output rate (resets the APU filter chain).
     pub fn set_sample_rate(&mut self, hz: f64) {
         self.cpu.bus.apu.set_sample_rate(hz);
+        if let Some(sub) = &mut self.sub {
+            sub.set_sample_rate(hz);
+        }
     }
 
     /// Nudge the resampling ratio for dynamic rate control.
     pub fn tune_audio(&mut self, hz: f64) {
         self.cpu.bus.apu.tune(hz);
+        if let Some(sub) = &mut self.sub {
+            sub.tune_audio(hz);
+        }
     }
 
     /// Drain audio samples generated since the last call.
     pub fn take_audio(&mut self) -> Vec<f32> {
-        self.cpu.bus.apu.take_samples()
+        let mut out = self.cpu.bus.apu.take_samples();
+        // DualSystem: both boards' sound, mixed half and half.
+        if let Some(sub) = &mut self.sub {
+            let other = sub.take_audio();
+            for (a, b) in out.iter_mut().zip(&other) {
+                *a = (*a + b) * 0.5;
+            }
+        }
+        out
     }
 
     /// Whether the loaded ROM is a Vs. System arcade dump.
@@ -336,11 +486,16 @@ impl Nes {
 
     /// Vs. System coin slots and service button, as held levels. The host
     /// pulses a coin for a few frames per insert. Ignored off Vs.
+    /// On a DualSystem, `coin2` feeds the sub board's first coin slot.
     pub fn set_vs_inputs(&mut self, coin1: bool, coin2: bool, service: bool) {
+        let dual = self.sub.is_some();
         if let Some(vs) = &mut self.cpu.bus.vs {
             vs.coin1 = coin1;
-            vs.coin2 = coin2;
+            vs.coin2 = coin2 && !dual;
             vs.service = service;
+        }
+        if let Some(sub) = &mut self.sub {
+            sub.set_vs_inputs(coin2, false, false);
         }
     }
 
@@ -361,8 +516,14 @@ impl Nes {
     }
 
     /// Button masks for players 1-4. Players 3 and 4 are only visible to
-    /// the game through a Four Score.
-    pub fn set_buttons(&mut self, masks: [u8; 4]) {
+    /// the game through a Four Score, or on a Vs. DualSystem, where they
+    /// play on the sub board.
+    pub fn set_buttons(&mut self, mut masks: [u8; 4]) {
+        if let Some(sub) = &mut self.sub {
+            sub.set_buttons([masks[2], masks[3], 0, 0]);
+            masks[2] = 0;
+            masks[3] = 0;
+        }
         let bus = &mut self.cpu.bus;
         let [p1, p2] = match &bus.vs {
             Some(vs) => vs.info.remap_buttons([masks[0], masks[1]]),
@@ -670,6 +831,99 @@ mod tests {
         let mut nes = Nes::new(&vs_rom()).unwrap();
         nes.set_buttons([crate::controller::BTN_START, 0, 0, 0]);
         assert_eq!(nes.cpu.bus.controller1.state, crate::controller::BTN_SELECT);
+    }
+
+    /// NES 2.0 Vs. DualSystem dump: 2 x 32KB PRG of NOPs (main $AA marker
+    /// at $8000, sub $BB), 2 x 16KB CHR (main $00, sub $22), battery.
+    fn dual_rom() -> Vec<u8> {
+        let mut data = vec![0u8; 16 + 0x10000 + 0x8000];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 4;
+        data[5] = 4;
+        data[6] = 0x3A; // mapper 99, four-screen, battery
+        data[7] = 0x69; // NES 2.0, Vs.
+        data[13] = 0x50; // DualSystem, RP2C03
+        let prg = &mut data[16..16 + 0x10000];
+        prg.fill(0xEA);
+        for (board, marker) in [(0, 0xAA), (1, 0xBB)] {
+            let base = board * 0x8000;
+            prg[base] = marker;
+            prg[base + 1] = 0xEA;
+            prg[base + 0x7FFC] = 0x01; // reset -> $8001
+            prg[base + 0x7FFD] = 0x80;
+        }
+        data[16 + 0x10000 + 0x4000..].fill(0x22);
+        data
+    }
+
+    #[test]
+    fn vs_dualsystem_links_two_boards() {
+        let mut nes = Nes::new(&dual_rom()).unwrap();
+        assert!(nes.is_vs_dual());
+        fn sub(n: &mut Nes) -> &mut Nes {
+            n.sub.as_deref_mut().unwrap()
+        }
+        // Each board runs its own half of the dump.
+        assert_eq!(nes.cpu.bus.read(0x8000), 0xAA);
+        assert_eq!(sub(&mut nes).cpu.bus.read(0x8000), 0xBB);
+        assert_eq!(nes.cpu.bus.cart.ppu_read(0), 0x00);
+        assert_eq!(sub(&mut nes).cpu.bus.cart.ppu_read(0), 0x22);
+        // $4016 bit 7 tells the boards apart.
+        assert_eq!(nes.cpu.bus.read(0x4016) & 0x80, 0);
+        assert_eq!(sub(&mut nes).cpu.bus.read(0x4016) & 0x80, 0x80);
+
+        // Power-on: the sub owns the shared RAM and is being interrupted.
+        assert!(sub(&mut nes).cpu.bus.vs_irq && !nes.cpu.bus.vs_irq);
+        sub(&mut nes).cpu.bus.write(0x6000, 0x55);
+        nes.cpu.bus.write(0x6000, 0x11); // no access: lost
+        // Main sets bit 1: RAM (with the sub's write) moves to main, and the
+        // sub's /IRQ is released.
+        nes.cpu.bus.write(0x4016, 0x02);
+        nes.sync_dual();
+        assert_eq!(nes.cpu.bus.read(0x6000), 0x55);
+        assert!(!sub(&mut nes).cpu.bus.vs_irq);
+        assert_eq!(nes.battery_ram().map(|r| r[0]), Some(0x55));
+        // The sub pulls bit 1 low: main's /IRQ.
+        sub(&mut nes).cpu.bus.write(0x4016, 0x00);
+        nes.sync_dual();
+        assert!(nes.cpu.bus.irq_asserted());
+
+        // Savestates carry the sub board and the RAM's owner.
+        let state = nes.save_state().unwrap();
+        nes.cpu.bus.write(0x4016, 0x00);
+        nes.sync_dual();
+        sub(&mut nes).cpu.bus.write(0x6000, 0x77);
+        nes.load_state(&state).unwrap();
+        assert_eq!(nes.cpu.bus.read(0x6000), 0x55);
+        assert!(nes.cpu.bus.vs_irq);
+        // A single-board state doesn't fit.
+        let single = Nes::new(&vs_rom()).unwrap().save_state().unwrap();
+        assert!(nes.load_state(&single).is_err());
+
+        // Players 3-4 play on the sub board (Start -> Select as on any Vs.).
+        nes.set_buttons([0, 0, crate::controller::BTN_START, 0]);
+        assert_eq!(nes.cpu.bus.controller1.state, 0);
+        assert_eq!(
+            sub(&mut nes).cpu.bus.controller1.state,
+            crate::controller::BTN_SELECT
+        );
+        // F2's coin goes to the sub board.
+        nes.set_vs_inputs(false, true, false);
+        assert_eq!(nes.cpu.bus.read(0x4016) & 0x60, 0);
+        assert_eq!(sub(&mut nes).cpu.bus.read(0x4016) & 0x60, 0x20);
+
+        // Both CPUs advance together and both screens render.
+        nes.run_frame();
+        nes.run_frame();
+        let (m, s) = (nes.cpu.bus.cycles, sub(&mut nes).cpu.bus.cycles);
+        assert!(s >= m && s - m < 8, "main {m} sub {s}");
+        assert_eq!(
+            nes.sub_framebuffer().map(|f| f.len()),
+            Some(nes.framebuffer().len())
+        );
+        nes.set_sample_rate(44_100.0);
+        nes.run_frame();
+        assert!(!nes.take_audio().is_empty());
     }
 
     #[test]

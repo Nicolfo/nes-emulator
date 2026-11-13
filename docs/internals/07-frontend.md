@@ -194,6 +194,11 @@ For Vs. System games (`Nes::is_vs_system`), F1/F2 pulse the coin slots for
 via `Nes::set_vs_dip`. F1, F2 and F4 are reserved hotkeys, never button
 bindings. Vs. Zapper games (`Nes::wants_vs_zapper`) take mouse aim and clicks
 like the Zapper input device, whatever device is configured (`gun_plugged`).
+On a Vs. DualSystem (`Nes::is_vs_dual`) the pixel buffer and window are two
+screens wide (`screen_width`): `side_by_side` lays main and sub pictures next
+to each other, the OSD goes on the left screen, and menus are centred between
+black bars (`blit_menu`). Players 3-4 and F2's coin go to the sub board;
+OPTIONS > VS SUB DIP 1-8 is `Config::vs_dip_sub`.
 
 ### Speech samples (Jaleco mappers 18 and 86)
 

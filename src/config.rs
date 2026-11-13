@@ -200,6 +200,9 @@ pub struct Config {
     /// Vs. System DIP switches (bit 0 = switch 1).
     #[serde(default)]
     pub vs_dip: u8,
+    /// Vs. DualSystem: the sub board's DIP switches.
+    #[serde(default)]
+    pub vs_dip_sub: u8,
 }
 
 /// Region setting: the ROM header's choice or a forced TV system.
@@ -345,6 +348,7 @@ impl Default for Config {
             region: RegionPref::Auto,
             fds_auto_disk: true,
             vs_dip: 0,
+            vs_dip_sub: 0,
         }
     }
 }
