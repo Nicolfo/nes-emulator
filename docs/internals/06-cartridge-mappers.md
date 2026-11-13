@@ -164,7 +164,9 @@ image (fwNES `FDS` header or headerless, 65500 bytes per side) plus the
 directly, bypassing `load_rom`. The RAM adapter maps 32 KB of PRG RAM at
 `$6000`–`$DFFF`, the BIOS at `$E000`, 8 KB of CHR RAM, a CPU-cycle timer IRQ
 (`$4020`–`$4022`), mirroring via `$4025` bit 3, and the wavetable/FM
-expansion sound (`FdsAudio` in `fds_audio.rs`, `$4040`–`$4092`).
+expansion sound (`FdsAudio` in `fds_audio.rs`, `$4040`–`$4092`). `$4087` bit 6
+forces the mod accumulator's carry, stepping the mod table on every
+16-cycle unit tick regardless of the mod frequency.
 
 The drive reads a per-side *gapped stream* rebuilt from the `.fds` data: a
 28300-bit leading gap, then per block a `$80` start mark, the block, its
