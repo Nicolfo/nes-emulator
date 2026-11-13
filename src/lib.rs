@@ -26,5 +26,6 @@ pub mod ppu;
 pub mod rewind;
 pub mod savestate;
 pub mod vs;
+mod vs_db;
 pub mod wav;
 pub mod zapper;

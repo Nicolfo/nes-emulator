@@ -180,11 +180,14 @@ empty for about a second so the BIOS notices the swap.
 ### Vs. System
 
 Nintendo's Vs. UniSystem arcade boards are NES hardware with an RGB PPU and
-coin-op I/O ([`src/vs.rs`](../../src/vs.rs)). `vs::detect` reads the header:
-NES 2.0 console type 1 with byte 13 naming the PPU, or the plain iNES flags7
-bit 0, which is trusted only when bytes 12-15 are clean and defaults to the
-RP2C03 since iNES can't name the PPU. Any mapper can be a Vs. game (1, 4, 206
-and others); mapper 99 is the dedicated discrete board.
+coin-op I/O ([`src/vs.rs`](../../src/vs.rs)). `vs::detect` builds a
+`VsInfo` (PPU, board kind, control wiring) from, in order: an NES 2.0 header
+with console type 1 (byte 13 low nibble = PPU, high nibble = protection /
+DualSystem, byte 15 = controls); the game database `src/vs_db.rs` (76 Vs.
+dumps keyed by PRG+CHR CRC32, extracted from Mesen2's DB); or the plain iNES
+flags7 bit 0, trusted only when bytes 12-15 are clean, with RP2C03 defaults.
+Any mapper can be a Vs. game (1, 4, 206 and others); mapper 99 is the
+dedicated discrete board.
 
 - **Palette.** `Ppu::set_vs_ppu` swaps the composite NES palette for the
   chip's colour ROM: 2C03 / RC2C03B, or one of the four scrambled RP2C04
@@ -196,9 +199,19 @@ and others); mapper 99 is the dedicated discrete board.
   coins (bits 5-6) to $4016 reads, and DIP 3-8 to $4017 bits 2-7. A $4016
   write also reaches `Mapper::vs_io_write`, where mapper 99 takes its bank
   bit. The host drives them via `Nes::set_vs_inputs` / `Nes::set_vs_dip`.
+- **Protection.** `VsIo::prot_read` answers $4020-$5FFF before the mapper:
+  RBI Baseball and TKO Boxing return a 32-byte sequence from $5E01 (rewound
+  by reading $5E00); Super Xevious answers $54FF/$5678/$578F/$5567 with two
+  alternating sets. Ice Climber (J) and Raid on Bungeling Bay see the Start
+  line held. The sequence position is savestated (`BusSave::vs_latch`).
+- **Controls.** `VsInfo::remap_buttons` (from `Nes::set_buttons`) swaps the
+  ports for "1P via $4017" games and P1 B / P2 A for Pinball (J), and always
+  trades Start for Select: the cabinet's start buttons are on the Select line.
+- **Vs. Zapper.** Serial on $4016 D0: a byte latched as the strobe falls,
+  D4 = 1, D6 = light seen, D7 = trigger. The gun is plugged in whatever the
+  configured input device (`Nes::wants_vs_zapper`).
 
-Not emulated: the Vs. DualSystem (two linked boards), and the RBI Baseball,
-TKO Boxing and Super Xevious protection chips.
+Not emulated: the Vs. DualSystem (two linked boards).
 
 ### Where to look
 

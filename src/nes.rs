@@ -33,9 +33,12 @@ impl Nes {
         let region = region.unwrap_or(header_region);
         let mut bus = Bus::with_region(cart, region);
         // Vs. System cabinet: RGB PPU and the coin-op I/O on $4016/$4017.
-        if let Some(ppu) = crate::vs::detect(rom) {
-            bus.ppu.set_vs_ppu(Some(ppu));
-            bus.vs = Some(crate::vs::VsIo::default());
+        if let Some(info) = crate::vs::detect(rom) {
+            bus.ppu.set_vs_ppu(Some(info.ppu));
+            bus.vs = Some(crate::vs::VsIo::new(info));
+            if info.input == crate::vs::VsInput::Zapper {
+                bus.set_input_device(InputDevice::Zapper);
+            }
         }
         let mut cpu = Cpu::new(bus);
         cpu.reset();
@@ -315,6 +318,22 @@ impl Nes {
         self.cpu.bus.vs.is_some()
     }
 
+    /// The Vs. System game's hardware (PPU, protection, control wiring).
+    pub fn vs_info(&self) -> Option<crate::vs::VsInfo> {
+        self.cpu.bus.vs.as_ref().map(|vs| vs.info)
+    }
+
+    /// Whether the game is aimed with a light gun: a Vs. Zapper game, which
+    /// the host should drive through [`Nes::set_zapper`] whatever input
+    /// device is configured.
+    pub fn wants_vs_zapper(&self) -> bool {
+        self.cpu
+            .bus
+            .vs
+            .as_ref()
+            .is_some_and(crate::vs::VsIo::has_zapper)
+    }
+
     /// Vs. System coin slots and service button, as held levels. The host
     /// pulses a coin for a few frames per insert. Ignored off Vs.
     pub fn set_vs_inputs(&mut self, coin1: bool, coin2: bool, service: bool) {
@@ -335,14 +354,22 @@ impl Nes {
     /// Choose what is plugged into the controller ports.
     pub fn set_input_device(&mut self, device: InputDevice) {
         self.cpu.bus.set_input_device(device);
+        // A Vs. Zapper cabinet always has its gun.
+        if self.wants_vs_zapper() && self.cpu.bus.zapper.is_none() {
+            self.cpu.bus.set_input_device(InputDevice::Zapper);
+        }
     }
 
     /// Button masks for players 1-4. Players 3 and 4 are only visible to
     /// the game through a Four Score.
     pub fn set_buttons(&mut self, masks: [u8; 4]) {
         let bus = &mut self.cpu.bus;
-        bus.controller1.state = masks[0];
-        bus.controller2.state = masks[1];
+        let [p1, p2] = match &bus.vs {
+            Some(vs) => vs.info.remap_buttons([masks[0], masks[1]]),
+            None => [masks[0], masks[1]],
+        };
+        bus.controller1.state = p1;
+        bus.controller2.state = p2;
         bus.controller1.state_hi = masks[2];
         bus.controller2.state_hi = masks[3];
     }
@@ -608,6 +635,41 @@ mod tests {
         assert!(!home.is_vs_system());
         home.set_vs_inputs(true, true, true); // no-op
         assert!(home.cpu.bus.vs.is_none());
+    }
+
+    #[test]
+    fn vs_protection_zapper_and_wiring_through_the_bus() {
+        // NES 2.0 Vs.: TKO Boxing board, Vs. Zapper, player 1 on $4016.
+        let mut data = vs_rom();
+        data[7] = 0x69;
+        data[13] = 0x20;
+        data[15] = 0x07;
+        let mut nes = Nes::new(&data).unwrap();
+        assert!(nes.wants_vs_zapper());
+        // The configured device can't unplug the cabinet's gun.
+        nes.set_input_device(InputDevice::Standard);
+        assert!(nes.cpu.bus.zapper.is_some());
+        let bus = &mut nes.cpu.bus;
+        bus.read(0x5E00);
+        assert_eq!(bus.read(0x5E01), 0xFF);
+        assert_eq!(bus.read(0x5E01), 0xBF);
+        // Trigger pulled, aimed off screen: $4016 shifts out $90.
+        nes.set_zapper(None, true);
+        let bus = &mut nes.cpu.bus;
+        bus.write(0x4016, 1);
+        bus.write(0x4016, 0);
+        let byte = (0..8).fold(0u8, |acc, i| acc | (bus.read(0x4016) & 1) << i);
+        assert_eq!(byte, 0x90);
+        // Savestates keep the protection position.
+        let state = nes.save_state().unwrap();
+        let next = nes.cpu.bus.read(0x5E01);
+        nes.load_state(&state).unwrap();
+        assert_eq!(nes.cpu.bus.read(0x5E01), next);
+
+        // Start/Select swap on the pads (Vs. start buttons are Select).
+        let mut nes = Nes::new(&vs_rom()).unwrap();
+        nes.set_buttons([crate::controller::BTN_START, 0, 0, 0]);
+        assert_eq!(nes.cpu.bus.controller1.state, crate::controller::BTN_SELECT);
     }
 
     #[test]

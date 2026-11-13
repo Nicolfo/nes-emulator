@@ -102,6 +102,10 @@ tracks.
 **Vs. System** arcade dumps (iNES Vs. flag / NES 2.0 console type 1) run with
 their RGB PPU palettes and coin-op inputs: F1/F2 insert coins, F4 is the
 service button, and OPTIONS > VS DIP 1-8 sets the cabinet's DIP switches.
+Plain iNES dumps get their PPU, protection chip and controller wiring from a
+built-in Vs. game database. On Vs. games the Start key presses the cabinet's
+start button (Select is the other way round), and Vs. Zapper games (Duck Hunt,
+Hogan's Alley, Freedom Force) are aimed with the mouse.
 **Speech**: the Jaleco boards' uPD7756 voice clips aren't in ROM dumps; drop
 recordings named `00.wav`-`31.wav` into a `<rom name>.samples/` folder next to
 the ROM to hear them (Moero!! Pro Yakyuu, Ninja Jajamaru: Ginga Daisakusen).

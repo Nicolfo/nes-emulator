@@ -36,7 +36,7 @@ impl Zapper {
         trigger | dark
     }
 
-    fn light_sensed(&self, ppu: &Ppu) -> bool {
+    pub fn light_sensed(&self, ppu: &Ppu) -> bool {
         let (beam_y, beam_x) = (ppu.scanline as i32, ppu.dot as i32 - 1);
         // The pre-render line (-1) starts a new frame: nothing lit yet. In
         // vblank the last visible rows are still within the photodiode's
