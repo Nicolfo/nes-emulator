@@ -192,7 +192,8 @@ For Vs. System games (`Nes::is_vs_system`), F1/F2 pulse the coin slots for
 `Nes::set_vs_inputs` every emulated frame. OPTIONS > VS DIP 1-8 edits the
 8 DIP switches (`Config::vs_dip`, shown switch 1 first) and applies them live
 via `Nes::set_vs_dip`. F1, F2 and F4 are reserved hotkeys, never button
-bindings.
+bindings. Vs. Zapper games (`Nes::wants_vs_zapper`) take mouse aim and clicks
+like the Zapper input device, whatever device is configured (`gun_plugged`).
 
 ### Speech samples (Jaleco mappers 18 and 86)
 

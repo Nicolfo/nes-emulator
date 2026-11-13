@@ -17,14 +17,31 @@
 //!   Vs. Gumshoe's extra PRG) with bit 2 of $4016 writes.
 //!
 //! The header says which PPU a dump needs: NES 2.0 byte 13 (low nibble).
-//! Plain iNES Vs. dumps can't, so they default to the RP2C03 - the right
-//! choice for most Vs. titles, though 2C04 games then show wrong colours.
+//! Plain iNES dumps can't, so they are looked up in a small game database
+//! (`vs_db`, by PRG+CHR CRC32); unknown ones default to the RP2C03 - the
+//! right choice for most Vs. titles.
 //!
-//! Not emulated: the Vs. DualSystem (two linked boards: Vs. Tennis, Vs.
-//! Baseball, Raid on Bungeling Bay...), and the protection chips of
-//! RBI Baseball, TKO Boxing and Super Xevious.
+//! Per-game extras, from NES 2.0 bytes 13 (high nibble) and 15 or the
+//! database:
+//!
+//! - **Protection chips.** RBI Baseball and TKO Boxing read a sequence from
+//!   $5E01 (reset by a $5E00 read); Super Xevious answers four magic
+//!   addresses in $5400-$57FF; Ice Climber (Japan) and Raid on Bungeling Bay
+//!   expect the Start line of each controller held high.
+//! - **Controller wiring.** Many games read player 1 from $4017 ("swapped");
+//!   Vs. Pinball (Japan) trades P1 B and P2 A. On every cabinet the start
+//!   buttons drive the Select line, so the host's Start and Select are
+//!   swapped to keep "Start starts the game".
+//! - **Vs. Zapper.** Duck Hunt, Hogan's Alley and Freedom Force read the gun
+//!   serially through $4016 D0: 8 bits latched on strobe, D4 always set, D6
+//!   light seen, D7 trigger.
+//! - **DualSystem.** Two complete boards that share 2KB of work RAM and can
+//!   interrupt each other (Vs. Tennis, Vs. Baseball, Wrecking Crew...): see
+//!   [`crate::nes::Nes`].
 
 use serde::{Deserialize, Serialize};
+
+use crate::controller::{BTN_A, BTN_B, BTN_SELECT, BTN_START};
 
 /// Which RGB PPU a Vs. board carries (NES 2.0 byte 13 low nibble).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,10 +60,11 @@ pub enum VsPpu {
 impl VsPpu {
     /// Decode NES 2.0 byte 13's low nibble.
     pub fn from_nes2(nibble: u8) -> Self {
-        match nibble & 0x0F {
-            2..=5 => VsPpu::Rp2c04(nibble - 1),
+        let n = nibble & 0x0F;
+        match n {
+            2..=5 => VsPpu::Rp2c04(n - 1),
             6 => VsPpu::Rc2c03b,
-            8..=0xC => VsPpu::Rc2c05(nibble - 7),
+            8..=0xC => VsPpu::Rc2c05(n - 7),
             _ => VsPpu::Rp2c03,
         }
     }
@@ -84,49 +102,318 @@ impl VsPpu {
         }
         rgb.map(|v| (v as u16 * 255 / 7) as u8)
     }
+
+    /// Decode a game-database PPU model (see [`crate::vs_db`]).
+    fn from_db(model: u8) -> Self {
+        match model {
+            2..=5 => VsPpu::Rp2c04(model - 1),
+            6..=10 => VsPpu::Rc2c05(model - 5),
+            _ => VsPpu::Rp2c03,
+        }
+    }
 }
 
-/// Coin-op inputs the host drives, read back through $4016/$4017.
+/// Board variant: protection hardware, or a DualSystem (NES 2.0 byte 13
+/// high nibble).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VsKind {
+    /// Plain Vs. UniSystem.
+    #[default]
+    Uni,
+    /// RBI Baseball: sequence read from $5E01.
+    RbiBaseball,
+    /// TKO Boxing: sequence read from $5E01.
+    TkoBoxing,
+    /// Super Xevious: four magic addresses in $5400-$57FF.
+    SuperXevious,
+    /// Vs. Ice Climber (Japan): Start lines held high.
+    IceClimber,
+    /// Vs. DualSystem: two linked boards.
+    Dual,
+    /// Raid on Bungeling Bay: DualSystem with Start lines held high.
+    DualBungeling,
+}
+
+impl VsKind {
+    pub fn from_nes2(nibble: u8) -> Self {
+        match nibble & 0x0F {
+            1 => VsKind::RbiBaseball,
+            2 => VsKind::TkoBoxing,
+            3 => VsKind::SuperXevious,
+            4 => VsKind::IceClimber,
+            5 => VsKind::Dual,
+            6 => VsKind::DualBungeling,
+            _ => VsKind::Uni,
+        }
+    }
+
+    /// Two linked consoles.
+    pub fn is_dual(self) -> bool {
+        matches!(self, VsKind::Dual | VsKind::DualBungeling)
+    }
+
+    /// The game checks that the controllers' Start line reads 1.
+    fn start_held(self) -> bool {
+        matches!(self, VsKind::IceClimber | VsKind::DualBungeling)
+    }
+}
+
+/// How the cabinet's controls reach the ports (NES 2.0 byte 15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VsInput {
+    /// Player 1 on $4016.
+    #[default]
+    Normal,
+    /// Player 1 on $4017.
+    Swapped,
+    /// Vs. Pinball (Japan): P1's B and P2's A trade places.
+    SwapAB,
+    /// Vs. Zapper on $4016.
+    Zapper,
+}
+
+impl VsInput {
+    pub fn from_nes2(device: u8) -> Self {
+        match device & 0x3F {
+            5 => VsInput::Swapped,
+            6 => VsInput::SwapAB,
+            7 => VsInput::Zapper,
+            _ => VsInput::Normal,
+        }
+    }
+}
+
+/// Everything that sets one Vs. game's hardware apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VsInfo {
+    pub ppu: VsPpu,
+    pub kind: VsKind,
+    pub input: VsInput,
+}
+
+impl VsInfo {
+    /// Route host button masks for players 1-2 to the two ports the way
+    /// the cabinet is wired. Start and Select are swapped on every cabinet
+    /// (its start buttons drive the Select line), but stay with their
+    /// player when the ports are swapped.
+    pub fn remap_buttons(&self, [p1, p2]: [u8; 2]) -> [u8; 2] {
+        const SS: u8 = BTN_START | BTN_SELECT;
+        let bit = |m: u8, b: u8, to: u8| if m & b != 0 { to } else { 0 };
+        let (mut a, mut b) = match self.input {
+            VsInput::Swapped => ((p2 & !SS) | (p1 & SS), (p1 & !SS) | (p2 & SS)),
+            VsInput::SwapAB => (
+                (p1 & !BTN_B) | bit(p2, BTN_A, BTN_B),
+                (p2 & !BTN_A) | bit(p1, BTN_B, BTN_A),
+            ),
+            VsInput::Normal | VsInput::Zapper => (p1, p2),
+        };
+        for m in [&mut a, &mut b] {
+            *m = (*m & !SS) | bit(*m, BTN_START, BTN_SELECT) | bit(*m, BTN_SELECT, BTN_START);
+            if self.kind.start_held() {
+                *m |= BTN_START;
+            }
+        }
+        [a, b]
+    }
+}
+
+/// Vs. board latches that are machine state (savestated with the bus).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VsLatch {
+    /// Position in the RBI/TKO protection sequence.
+    prot_index: u8,
+    /// Super Xevious: which of its two answer sets is current.
+    xevious: bool,
+    /// Bit 1 of the last $4016 write. DualSystem: on the main board, 1
+    /// gives it the shared RAM; on either board, 0 interrupts the other.
+    pub main_sub: bool,
+    /// Vs. Zapper serial shift register and strobe level.
+    zapper_shift: u8,
+    zapper_strobe: bool,
+}
+
+/// RBI Baseball's protection chip, as read from $5E01 (Mesen).
+const PROT_RBI: [u8; 32] = [
+    0x00, 0x00, 0x00, 0x00, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x6F, 0x00, 0x00, 0x00, 0x00, 0x94, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// TKO Boxing's protection chip, as read from $5E01 (MAME, Mesen).
+const PROT_TKO: [u8; 32] = [
+    0xFF, 0xBF, 0xB7, 0x97, 0x97, 0x17, 0x57, 0x4F, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0x94, 0x14,
+    0x56, 0x4E, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0xD4, 0x5C, 0x3E, 0x26, 0x87, 0x83, 0x13, 0x00,
+];
+
+/// Coin-op inputs the host drives, read back through $4016/$4017, plus the
+/// board's protection and Zapper latches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VsIo {
     pub coin1: bool,
     pub coin2: bool,
     pub service: bool,
     /// DIP switches 1-8 (bit 0 = switch 1).
     pub dip: u8,
+    pub info: VsInfo,
+    /// This board is a DualSystem's sub (second) console.
+    pub is_sub: bool,
+    pub latch: VsLatch,
 }
 
 impl VsIo {
+    pub fn new(info: VsInfo) -> Self {
+        VsIo {
+            coin1: false,
+            coin2: false,
+            service: false,
+            dip: 0,
+            info,
+            is_sub: false,
+            latch: VsLatch::default(),
+        }
+    }
+
     /// Extra bits of a $4016 read (bit 0, the controller, is ORed in by
-    /// the bus): service (2), DIP 1-2 (3-4), coin 1 (5), coin 2 (6).
+    /// the bus): service (2), DIP 1-2 (3-4), coin 1 (5), coin 2 (6), and
+    /// 1 in bit 7 on a DualSystem's sub board.
     pub fn port1_bits(&self) -> u8 {
         (self.service as u8) << 2
             | (self.dip & 0x03) << 3
             | (self.coin1 as u8) << 5
             | (self.coin2 as u8) << 6
+            | (self.is_sub as u8) << 7
     }
 
     /// Extra bits of a $4017 read: DIP switches 3-8 in bits 2-7.
     pub fn port2_bits(&self) -> u8 {
         self.dip & 0xFC
     }
+
+    /// A $4020-$5FFF read the protection chip answers, if any.
+    pub fn prot_read(&mut self, addr: u16) -> Option<u8> {
+        let l = &mut self.latch;
+        let mut seq = |table: &[u8; 32]| {
+            let v = table[(l.prot_index & 0x1F) as usize];
+            l.prot_index = l.prot_index.wrapping_add(1);
+            v
+        };
+        match (self.info.kind, addr) {
+            (VsKind::RbiBaseball | VsKind::TkoBoxing, 0x5E00) => {
+                l.prot_index = 0;
+                Some(0)
+            }
+            (VsKind::RbiBaseball, 0x5E01) => Some(seq(&PROT_RBI)),
+            (VsKind::TkoBoxing, 0x5E01) => Some(seq(&PROT_TKO)),
+            (VsKind::SuperXevious, 0x54FF) => Some(0x05),
+            (VsKind::SuperXevious, 0x5678) => Some(if l.xevious { 0x00 } else { 0x01 }),
+            (VsKind::SuperXevious, 0x578F) => Some(if l.xevious { 0xD1 } else { 0x89 }),
+            (VsKind::SuperXevious, 0x5567) => {
+                l.xevious = !l.xevious;
+                Some(if l.xevious { 0x37 } else { 0x3E })
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether $4016 D0 comes from a Vs. Zapper.
+    pub fn has_zapper(&self) -> bool {
+        self.info.input == VsInput::Zapper
+    }
+
+    fn zapper_byte(light: bool, trigger: bool) -> u8 {
+        0x10 | (light as u8) << 6 | (trigger as u8) << 7
+    }
+
+    /// A $4016 write: latch bit 1 and, with a Vs. Zapper, reload its shift
+    /// register as the strobe falls. `light`/`trigger` are the gun's state
+    /// now.
+    pub fn write_4016(&mut self, val: u8, light: bool, trigger: bool) {
+        self.latch.main_sub = val & 0x02 != 0;
+        let strobe = val & 0x01 != 0;
+        if self.latch.zapper_strobe && !strobe {
+            self.latch.zapper_shift = Self::zapper_byte(light, trigger);
+        }
+        self.latch.zapper_strobe = strobe;
+    }
+
+    /// Vs. Zapper: next serial bit for $4016 D0 (reloading while strobed).
+    pub fn zapper_read(&mut self, light: bool, trigger: bool) -> u8 {
+        if self.latch.zapper_strobe {
+            self.latch.zapper_shift = Self::zapper_byte(light, trigger);
+        }
+        let bit = self.latch.zapper_shift & 0x01;
+        self.latch.zapper_shift >>= 1;
+        bit
+    }
 }
 
-/// Vs. hardware described by a ROM header, if it is a Vs. dump.
-pub fn detect(header: &[u8]) -> Option<VsPpu> {
-    if header.len() < 16 || &header[0..4] != b"NES\x1A" {
+/// CRC-32 (IEEE), as used to key the game database.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+        }
+    }
+    !crc
+}
+
+/// Database entry for a ROM body (PRG+CHR, after header and trainer).
+fn lookup(body: &[u8]) -> Option<VsInfo> {
+    let crc = crc32(body);
+    let i = crate::vs_db::VS_GAMES
+        .binary_search_by_key(&crc, |e| e.0)
+        .ok()?;
+    let (_, kind, ppu, input) = crate::vs_db::VS_GAMES[i];
+    Some(VsInfo {
+        ppu: VsPpu::from_db(ppu),
+        kind: VsKind::from_nes2(kind),
+        input: VsInput::from_nes2(input),
+    })
+}
+
+/// Vs. hardware a ROM image needs, if it is a Vs. dump: from the NES 2.0
+/// header, else the game database, else the iNES Vs. flag with defaults.
+pub fn detect(rom: &[u8]) -> Option<VsInfo> {
+    if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {
         return None;
     }
-    let nes2 = header[7] & 0x0C == 0x08;
-    if nes2 {
-        // NES 2.0 console type 1 = Vs. System; byte 13 names the PPU.
-        (header[7] & 0x03 == 1).then(|| VsPpu::from_nes2(header[13]))
-    } else {
-        // Plain iNES: flags7 bit 0. Old dumps with junk in bytes 12-15
-        // ("DiskDude!") can't be trusted to mean it.
-        let clean = header[12..16].iter().all(|&b| b == 0);
-        (clean && header[7] & 0x01 != 0).then_some(VsPpu::Rp2c03)
+    let header = &rom[..16];
+    let body = 16 + if header[6] & 0x04 != 0 { 512 } else { 0 };
+    let db = rom.get(body..).and_then(lookup);
+    if header[7] & 0x0C == 0x08 {
+        // NES 2.0 console type 1 = Vs. System. Byte 13 names the PPU and
+        // board, byte 15 the controls (0 = unspecified: ask the database).
+        if header[7] & 0x03 != 1 {
+            return None;
+        }
+        let input = match header[15] & 0x3F {
+            0 => db.map_or(VsInput::Normal, |d| d.input),
+            dev => VsInput::from_nes2(dev),
+        };
+        return Some(VsInfo {
+            ppu: VsPpu::from_nes2(header[13]),
+            kind: VsKind::from_nes2(header[13] >> 4),
+            input,
+        });
     }
+    if db.is_some() {
+        return db;
+    }
+    // Plain iNES: flags7 bit 0. Old dumps with junk in bytes 12-15
+    // ("DiskDude!") can't be trusted to mean it.
+    let clean = header[12..16].iter().all(|&b| b == 0);
+    if !clean || header[7] & 0x01 == 0 {
+        return None;
+    }
+    // Mapper 99 with two boards' worth of PRG is a DualSystem (as Mesen).
+    let mapper = header[6] >> 4 | header[7] & 0xF0;
+    let dual = mapper == 99 && header[4] >= 4;
+    Some(VsInfo {
+        ppu: VsPpu::Rp2c03,
+        kind: if dual { VsKind::Dual } else { VsKind::Uni },
+        input: VsInput::Normal,
+    })
 }
 
 // Palette data from Nintendulator (Quietust), octal RGB with 3 bits per
@@ -203,16 +490,28 @@ mod tests {
     #[test]
     fn detection_from_ines_and_nes2() {
         assert_eq!(detect(&header(0x00, 0)), None);
-        assert_eq!(detect(&header(0x01, 0)), Some(VsPpu::Rp2c03));
+        assert_eq!(detect(&header(0x01, 0)).map(|i| i.ppu), Some(VsPpu::Rp2c03));
         // Junk in bytes 12-15 voids the iNES Vs. bit.
         let mut junk = header(0x01, 0);
         junk[12..16].copy_from_slice(b"Dude");
         assert_eq!(detect(&junk), None);
         // NES 2.0 console type 1 with PPU types from byte 13.
-        assert_eq!(detect(&header(0x09, 0x03)), Some(VsPpu::Rp2c04(2)));
-        assert_eq!(detect(&header(0x09, 0x06)), Some(VsPpu::Rc2c03b));
-        assert_eq!(detect(&header(0x09, 0x09)), Some(VsPpu::Rc2c05(2)));
-        assert_eq!(detect(&header(0x09, 0x01)), Some(VsPpu::Rp2c03));
+        assert_eq!(
+            detect(&header(0x09, 0x03)).map(|i| i.ppu),
+            Some(VsPpu::Rp2c04(2))
+        );
+        assert_eq!(
+            detect(&header(0x09, 0x06)).map(|i| i.ppu),
+            Some(VsPpu::Rc2c03b)
+        );
+        assert_eq!(
+            detect(&header(0x09, 0x09)).map(|i| i.ppu),
+            Some(VsPpu::Rc2c05(2))
+        );
+        assert_eq!(
+            detect(&header(0x09, 0x01)).map(|i| i.ppu),
+            Some(VsPpu::Rp2c03)
+        );
         // NES 2.0 but a home console: not Vs. even with bit 0's twin unset.
         assert_eq!(detect(&header(0x08, 0x03)), None);
     }
@@ -252,15 +551,141 @@ mod tests {
         assert_eq!(VsPpu::Rc2c05(5).status_id(), None);
     }
 
+    fn info(kind: VsKind, input: VsInput) -> VsInfo {
+        VsInfo {
+            ppu: VsPpu::Rp2c03,
+            kind,
+            input,
+        }
+    }
+
+    #[test]
+    fn nes2_bytes_13_and_15_select_board_and_controls() {
+        let mut h = header(0x09, 0x14); // RBI Baseball board, RP2C04-0003
+        h[15] = 0x05;
+        let i = detect(&h).unwrap();
+        assert_eq!(
+            (i.ppu, i.kind, i.input),
+            (VsPpu::Rp2c04(3), VsKind::RbiBaseball, VsInput::Swapped)
+        );
+        let mut h = header(0x09, 0x50);
+        h[15] = 0x07;
+        let i = detect(&h).unwrap();
+        assert!(i.kind.is_dual());
+        assert_eq!(i.input, VsInput::Zapper);
+        assert_eq!(VsKind::from_nes2(6), VsKind::DualBungeling);
+        assert_eq!(VsKind::from_nes2(3), VsKind::SuperXevious);
+    }
+
+    #[test]
+    fn ines_mapper_99_with_64kb_prg_is_dual() {
+        let mut h = header(0x61, 0);
+        h[6] = 0x30;
+        h[4] = 4;
+        assert_eq!(detect(&h).unwrap().kind, VsKind::Dual);
+        h[4] = 2;
+        assert_eq!(detect(&h).unwrap().kind, VsKind::Uni);
+    }
+
+    #[test]
+    fn game_database_is_sorted_and_crc_is_ieee() {
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+        let db = &crate::vs_db::VS_GAMES;
+        assert!(db.windows(2).all(|w| w[0].0 < w[1].0));
+        // Vs. TKO Boxing (PRG+CHR CRC 52C501D0): TKO chip, RP2C04-0003.
+        let i = db.binary_search_by_key(&0x52C5_01D0, |e| e.0).unwrap();
+        let (_, kind, ppu, _) = db[i];
+        assert_eq!(VsKind::from_nes2(kind), VsKind::TkoBoxing);
+        assert_eq!(VsPpu::from_db(ppu), VsPpu::Rp2c04(3));
+        assert_eq!(VsPpu::from_db(6), VsPpu::Rc2c05(1));
+        assert_eq!(VsPpu::from_db(0), VsPpu::Rp2c03);
+    }
+
+    #[test]
+    fn rbi_and_tko_sequences_reset_by_5e00() {
+        let mut io = VsIo::new(info(VsKind::RbiBaseball, VsInput::Normal));
+        assert_eq!(io.prot_read(0x5E00), Some(0));
+        let seq: Vec<u8> = (0..15).map(|_| io.prot_read(0x5E01).unwrap()).collect();
+        assert_eq!((seq[4], seq[9], seq[14], seq[0]), (0xB4, 0x6F, 0x94, 0x00));
+        io.prot_read(0x5E00);
+        assert_eq!(io.prot_read(0x5E01), Some(0x00));
+        assert_eq!(io.prot_read(0x5000), None, "other addresses fall through");
+
+        let mut io = VsIo::new(info(VsKind::TkoBoxing, VsInput::Normal));
+        io.prot_read(0x5E00);
+        assert_eq!(io.prot_read(0x5E01), Some(0xFF));
+        assert_eq!(io.prot_read(0x5E01), Some(0xBF));
+        // A plain board has no chip.
+        let mut io = VsIo::new(info(VsKind::Uni, VsInput::Normal));
+        assert_eq!(io.prot_read(0x5E01), None);
+    }
+
+    #[test]
+    fn super_xevious_answers_alternate() {
+        let mut io = VsIo::new(info(VsKind::SuperXevious, VsInput::Normal));
+        let round =
+            |io: &mut VsIo| [0x54FF, 0x5678, 0x578F, 0x5567].map(|a| io.prot_read(a).unwrap());
+        assert_eq!(round(&mut io), [0x05, 0x01, 0x89, 0x37]);
+        assert_eq!(round(&mut io), [0x05, 0x00, 0xD1, 0x3E]);
+        assert_eq!(round(&mut io), [0x05, 0x01, 0x89, 0x37]);
+    }
+
+    #[test]
+    fn buttons_follow_cabinet_wiring() {
+        use crate::controller::{BTN_DOWN, BTN_UP};
+        let (p1, p2) = (BTN_A | BTN_START | BTN_UP, BTN_B | BTN_SELECT | BTN_DOWN);
+        // Start/Select always trade places.
+        let n = info(VsKind::Uni, VsInput::Normal).remap_buttons([p1, p2]);
+        assert_eq!(
+            n,
+            [BTN_A | BTN_SELECT | BTN_UP, BTN_B | BTN_START | BTN_DOWN]
+        );
+        // Swapped ports: the pads trade, start buttons stay with their side.
+        let s = info(VsKind::Uni, VsInput::Swapped).remap_buttons([p1, p2]);
+        assert_eq!(
+            s,
+            [BTN_B | BTN_SELECT | BTN_DOWN, BTN_A | BTN_START | BTN_UP]
+        );
+        // Pinball (J): P1 B <-> P2 A.
+        let ab = info(VsKind::Uni, VsInput::SwapAB).remap_buttons([BTN_B, 0]);
+        assert_eq!(ab, [0, BTN_A]);
+        let ab = info(VsKind::Uni, VsInput::SwapAB).remap_buttons([0, BTN_A]);
+        assert_eq!(ab, [BTN_B, 0]);
+        // Ice Climber (J) protection: Start lines held.
+        let ic = info(VsKind::IceClimber, VsInput::Normal).remap_buttons([0, 0]);
+        assert_eq!(ic, [BTN_START, BTN_START]);
+    }
+
+    #[test]
+    fn vs_zapper_shifts_out_a_latched_byte() {
+        let mut io = VsIo::new(info(VsKind::Uni, VsInput::Zapper));
+        assert!(io.has_zapper());
+        io.write_4016(1, true, true);
+        io.write_4016(0, true, true); // strobe falls: latch $D0
+        let bits: Vec<u8> = (0..8).map(|_| io.zapper_read(false, false)).collect();
+        assert_eq!(bits, [0, 0, 0, 0, 1, 0, 1, 1]);
+        // Dark, trigger released: only the always-set D4.
+        io.write_4016(1, false, false);
+        io.write_4016(0, false, false);
+        let byte = (0..8).fold(0u8, |acc, i| acc | io.zapper_read(true, true) << i);
+        assert_eq!(byte, 0x10);
+        // Bit 1 of the write is latched for the DualSystem link.
+        io.write_4016(0x02, false, false);
+        assert!(io.latch.main_sub);
+    }
+
     #[test]
     fn coin_dip_service_bits() {
-        let io = VsIo {
+        let mut io = VsIo {
             coin1: true,
-            coin2: false,
             service: true,
             dip: 0b1010_0110,
+            ..VsIo::new(info(VsKind::Uni, VsInput::Normal))
         };
         assert_eq!(io.port1_bits(), 0x04 | (0b10 << 3) | 0x20);
         assert_eq!(io.port2_bits(), 0b1010_0100);
+        // A DualSystem sub board reads 1 in bit 7.
+        io.is_sub = true;
+        assert_eq!(io.port1_bits() & 0x80, 0x80);
     }
 }

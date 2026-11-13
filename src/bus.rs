@@ -6,7 +6,7 @@ use crate::cheats::RomPatch;
 use crate::controller::{Controller, FOUR_SCORE_SIG_4016, FOUR_SCORE_SIG_4017, InputDevice};
 use crate::mapper::Mapper;
 use crate::ppu::Ppu;
-use crate::vs::VsIo;
+use crate::vs::{VsIo, VsLatch};
 use crate::zapper::Zapper;
 
 /// RDY assertion delay (CPU cycles) for a DMC "load" DMA after a $4015 write.
@@ -33,6 +33,9 @@ pub struct Bus {
     /// add coin/service/DIP bits to $4016/$4017 reads. Host input, not
     /// machine state (never savestated).
     pub vs: Option<VsIo>,
+    /// Vs. DualSystem: the other board is pulling this CPU's /IRQ low.
+    /// Driven by [`crate::nes::Nes`] from the other board's $4016 latch.
+    pub vs_irq: bool,
     /// Active Game Genie / raw ROM patches applied to $8000-$FFFF reads.
     pub rom_patches: Vec<RomPatch>,
     pub cycles: u64,
@@ -85,6 +88,7 @@ impl Bus {
             controller2: Controller::default(),
             zapper: None,
             vs: None,
+            vs_irq: false,
             rom_patches: Vec::new(),
             cycles: 0,
             region,
@@ -127,18 +131,29 @@ impl Bus {
             // Controller reads drive D0-D4 only; D5-D7 stay open bus.
             0x4016 => {
                 let ctrl_val = self.controller1.read();
-                let r = match &self.vs {
-                    // Vs.: D0 pad, D2 service, D3-4 DIP 1-2, D5-6 coins.
-                    Some(vs) => (ctrl_val & 0x01) | vs.port1_bits() | (self.open_bus & 0x80),
+                let r = match &mut self.vs {
+                    // Vs.: D0 pad (or Vs. Zapper), D2 service, D3-4 DIP 1-2,
+                    // D5-6 coins, D7 DualSystem sub board.
+                    Some(vs) => {
+                        let d0 = match &self.zapper {
+                            Some(z) if vs.has_zapper() => {
+                                vs.zapper_read(z.light_sensed(&self.ppu), z.trigger)
+                            }
+                            _ => ctrl_val & 0x01,
+                        };
+                        d0 | vs.port1_bits()
+                    }
                     None => (ctrl_val & 0x1F) | (self.open_bus & 0xE0),
                 };
                 self.open_bus = r;
                 r
             }
             0x4017 => {
+                // A Vs. Zapper answers on $4016 instead.
+                let vs_zapper = self.vs.as_ref().is_some_and(VsIo::has_zapper);
                 let ctrl_val = match &self.zapper {
-                    Some(z) => z.read(&self.ppu),
-                    None => self.controller2.read(),
+                    Some(z) if !vs_zapper => z.read(&self.ppu),
+                    _ => self.controller2.read(),
                 };
                 let r = match &self.vs {
                     // Vs.: D0 pad, D2-7 DIP switches 3-8.
@@ -149,7 +164,12 @@ impl Bus {
                 r
             }
             0x4000..=0x401F => self.open_bus,
-            0x4020..=0x5FFF => match self.cart.cpu_reg_read(addr) {
+            0x4020..=0x5FFF => match self
+                .vs
+                .as_mut()
+                .and_then(|vs| vs.prot_read(addr))
+                .or_else(|| self.cart.cpu_reg_read(addr))
+            {
                 Some(v) => {
                     self.open_bus = v;
                     v
@@ -243,7 +263,12 @@ impl Bus {
             0x4016 => {
                 self.controller1.write(val);
                 self.controller2.write(val);
-                if self.vs.is_some() {
+                if let Some(vs) = &mut self.vs {
+                    let (light, trigger) = match &self.zapper {
+                        Some(z) if vs.has_zapper() => (z.light_sensed(&self.ppu), z.trigger),
+                        _ => (false, false),
+                    };
+                    vs.write_4016(val, light, trigger);
                     self.cart.vs_io_write(val);
                 }
             }
@@ -362,7 +387,7 @@ impl Bus {
 
     /// Level-triggered IRQ line (APU frame counter, DMC, and cartridge).
     pub fn irq_asserted(&self) -> bool {
-        self.apu.irq() || self.cart.irq()
+        self.apu.irq() || self.cart.irq() || self.vs_irq
     }
 
     /// Snapshot the bus's own state (work RAM and DMA/timing latches) for a
@@ -381,6 +406,7 @@ impl Bus {
             dmc_skip_align: self.dmc_skip_align,
             dmc_delay: self.dmc_delay,
             oam_dma_page: self.oam_dma_page,
+            vs_latch: self.vs.as_ref().map(|vs| vs.latch.clone()),
         }
     }
 
@@ -397,6 +423,9 @@ impl Bus {
         self.dmc_skip_align = s.dmc_skip_align;
         self.dmc_delay = s.dmc_delay;
         self.oam_dma_page = s.oam_dma_page;
+        if let (Some(vs), Some(latch)) = (&mut self.vs, s.vs_latch) {
+            vs.latch = latch;
+        }
     }
 }
 
@@ -415,6 +444,9 @@ pub struct BusSave {
     dmc_skip_align: bool,
     dmc_delay: u8,
     oam_dma_page: Option<u8>,
+    /// Vs. System protection / Zapper / DualSystem latches.
+    #[serde(default)]
+    vs_latch: Option<VsLatch>,
 }
 
 #[cfg(test)]

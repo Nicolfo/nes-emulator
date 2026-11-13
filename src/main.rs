@@ -317,9 +317,7 @@ impl App {
     /// Crosshair over the game while the Zapper is plugged in.
     fn update_cursor(&self) {
         if let Some(w) = &self.window {
-            let zapper = matches!(self.view, View::Running)
-                && self.nes.is_some()
-                && self.cfg.input_device == InputDevice::Zapper;
+            let zapper = matches!(self.view, View::Running) && self.gun_plugged();
             w.set_cursor(if zapper {
                 CursorIcon::Crosshair
             } else {
@@ -522,7 +520,9 @@ impl App {
                 );
             }
         }
-        if nes.is_vs_system() {
+        if nes.wants_vs_zapper() {
+            notice = Some("VS ZAPPER: MOUSE AIMS, F1 COIN".into());
+        } else if nes.is_vs_system() {
             notice = Some("VS SYSTEM: F1/F2 COIN, F4 SERVICE".into());
         }
         self.sav_path = Some(restore_battery_ram(&mut nes, path));
@@ -684,9 +684,15 @@ impl App {
     /// Whether mouse buttons currently drive the Zapper (so clicks must not
     /// toggle fullscreen).
     fn zapper_active(&self) -> bool {
-        matches!(self.view, View::Running)
-            && self.nes.is_some()
-            && self.cfg.input_device == InputDevice::Zapper
+        matches!(self.view, View::Running) && self.gun_plugged()
+    }
+
+    /// A game is loaded with a light gun attached: the configured Zapper,
+    /// or the Vs. Zapper a cabinet comes with.
+    fn gun_plugged(&self) -> bool {
+        self.nes
+            .as_ref()
+            .is_some_and(|n| self.cfg.input_device == InputDevice::Zapper || n.wants_vs_zapper())
     }
 
     fn mouse_input(&mut self, button: MouseButton, state: ElementState) {
