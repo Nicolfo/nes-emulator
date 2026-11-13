@@ -18,6 +18,12 @@ const MOD_DELTA: [i32; 8] = [0, 1, 2, 4, 0, -4, -2, -1];
 /// (1 - exp(-2*pi*2000/1789773)).
 const LOWPASS_ALPHA: f32 = 0.00700;
 
+/// The wave and mod units are clocked once every this many CPU cycles. The
+/// accumulators here run per CPU cycle with 4 extra bits instead (a 16-bit
+/// overflow per cycle equals a 12-bit carry per 16-cycle tick), so only
+/// behaviour tied to the tick itself needs the divider.
+const UNIT_TICK: u8 = 16;
+
 /// FDS full-scale output in APU units: about 2.4x one 2A03 square at
 /// maximum volume (0.149), per the nesdev mixing notes.
 const FULL_SCALE: f32 = 0.36;
@@ -88,6 +94,13 @@ pub(crate) struct FdsAudio {
     mod_halt: bool,
     mod_freq: u16,
     mod_acc: u32,
+    /// $4087 bit 6: force the carry out of the mod accumulator, so the table
+    /// steps on every unit tick (every 16 CPU cycles) whatever the frequency.
+    #[serde(default)]
+    mod_force_carry: bool,
+    /// CPU cycles into the current 16-cycle unit tick.
+    #[serde(default)]
+    unit_phase: u8,
     /// 7-bit signed sweep bias counter.
     mod_counter: i8,
     modulation: Envelope,
@@ -121,6 +134,8 @@ impl FdsAudio {
             mod_halt: true,
             mod_freq: 0,
             mod_acc: 0,
+            mod_force_carry: false,
+            unit_phase: 0,
             mod_counter: 0,
             modulation: Envelope::default(),
             level: 0,
@@ -160,6 +175,7 @@ impl FdsAudio {
             0x4087 => {
                 self.mod_freq = (self.mod_freq & 0x00FF) | ((val as u16 & 0x0F) << 8);
                 self.mod_halt = val & 0x80 != 0;
+                self.mod_force_carry = val & 0x40 != 0;
                 if self.mod_halt {
                     self.mod_acc = 0;
                 }
@@ -246,9 +262,18 @@ impl FdsAudio {
             self.modulation.tick(self.master_env_speed);
         }
 
-        if !self.mod_halt && self.mod_freq > 0 {
+        self.unit_phase = (self.unit_phase + 1) % UNIT_TICK;
+        if !self.mod_halt {
             self.mod_acc += self.mod_freq as u32;
-            if self.mod_acc > 0xFFFF {
+            let carry = if self.mod_force_carry {
+                // Forced carry: one step per unit tick; natural carries in
+                // between are absorbed (the carry line is already high).
+                self.mod_acc &= 0xFFFF;
+                self.unit_phase == 0
+            } else {
+                self.mod_acc > 0xFFFF
+            };
+            if carry {
                 self.mod_acc &= 0xFFFF;
                 let entry = self.mod_table[(self.mod_pos & 0x3F) as usize];
                 self.step_mod_counter(entry);
@@ -338,6 +363,46 @@ mod tests {
         a.write(0x4087, 0x00);
         a.write(0x4088, 5);
         assert_eq!(a.mod_table[2], 0);
+    }
+
+    #[test]
+    fn forced_carry_steps_mod_table_every_unit_tick() {
+        let mut a = FdsAudio::new();
+        a.write(0x4087, 0x80); // halt to load the table
+        for _ in 0..32 {
+            a.write(0x4088, 1); // +1 per step
+        }
+        a.write(0x4086, 0x00);
+        // Frequency 0 would never step; bit 6 forces a step every 16 cycles.
+        a.write(0x4087, 0x40);
+        for _ in 0..16 * 10 {
+            a.clock();
+        }
+        assert_eq!(a.mod_counter, 10);
+        assert_eq!(a.mod_pos, 10);
+
+        // Without the bit, frequency 0 holds the table still.
+        a.write(0x4087, 0x00);
+        for _ in 0..16 * 10 {
+            a.clock();
+        }
+        assert_eq!(a.mod_counter, 10);
+
+        // The maximum pitch can't step more than once per tick either.
+        a.write(0x4086, 0xFF);
+        a.write(0x4087, 0x4F);
+        for _ in 0..16 * 4 {
+            a.clock();
+        }
+        assert_eq!(a.mod_counter, 14);
+
+        // Halt (bit 7) still wins over the forced carry.
+        let before = a.mod_counter;
+        a.write(0x4087, 0xC0);
+        for _ in 0..16 * 4 {
+            a.clock();
+        }
+        assert_eq!(a.mod_counter, before);
     }
 
     #[test]
